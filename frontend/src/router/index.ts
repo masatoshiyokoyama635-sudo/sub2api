@@ -162,6 +162,30 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/ai/chat',
+    name: 'AiChat',
+    component: () => import('@/views/user/AiChatView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'AI Chat',
+      titleKey: 'aiChat.title',
+      descriptionKey: 'aiChat.description'
+    }
+  },
+  {
+    path: '/ai/images',
+    name: 'AiImages',
+    component: () => import('@/views/user/AiImageGenerationView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'AI Images',
+      titleKey: 'aiImages.title',
+      descriptionKey: 'aiImages.description'
+    }
+  },
+  {
     path: '/keys',
     name: 'Keys',
     component: () => import('@/views/user/KeysView.vue'),
