@@ -70,6 +70,12 @@ sub2api/
 - 连接池隔离策略（account/proxy/account_proxy）
 - Sora 视频生成支持
 
+### 支付界面
+- 用户侧充值/订阅页位于 `frontend/src/views/user/PaymentView.vue`
+- 充值自定义金额输入组件为 `frontend/src/components/payment/AmountInput.vue`
+- 订阅套餐卡组件为 `frontend/src/components/payment/SubscriptionPlanCard.vue`
+- 支付金额、订阅售价、原价使用人民币符号 `¥`；账户余额/订阅额度中明确命名为 `*_usd` 的字段仍按 USD 配额展示为 `$`
+
 ### 用户侧 AI 工具页
 - 前端新增 AI 对话与 AI 生图两个用户页面，入口位于左侧侧边栏
 - 页面复用用户可用分组与 API Key 数据，先选分组，再选择该分组下 active API Key
@@ -102,6 +108,7 @@ sub2api/
 - 官方 0.1.121 固定命令：`cd /opt/sub2api && sed -i 's#weishaw/sub2api:0\.1\.120#weishaw/sub2api:0.1.121#g; s#weishaw/sub2api:0\.1\.119#weishaw/sub2api:0.1.121#g; s#weishaw/sub2api:latest#weishaw/sub2api:0.1.121#g' docker-compose.yml && docker compose pull sub2api && docker compose up -d sub2api && docker compose ps`
 - 自定义镜像回滚官方 0.1.121 命令：`cd /opt/sub2api && sed -i 's#ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools#weishaw/sub2api:0.1.121#g; s#weishaw/sub2api:0\.1\.120#weishaw/sub2api:0.1.121#g; s#weishaw/sub2api:0\.1\.119#weishaw/sub2api:0.1.121#g; s#weishaw/sub2api:latest#weishaw/sub2api:0.1.121#g' docker-compose.yml && docker compose pull sub2api && docker compose up -d sub2api && docker compose ps`
 - 2026-04-30 已将官方 `v0.1.121` 合并到自定义分支，保留 AI 对话/AI 生图功能，并把 `backend/cmd/server/VERSION` 同步为 `0.1.121` 以构建 `0.1.121-zz` 自定义镜像
+- 2026-04-30 GitHub Actions run `25165651723` 成功构建并推送自定义镜像，用户已在 VPS 通过 Docker Compose 更新部署成功
 
 ### 备份存储
 - **对象存储**：腾讯云 COS（ap-shanghai）
