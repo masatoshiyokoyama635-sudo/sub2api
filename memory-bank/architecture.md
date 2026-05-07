@@ -93,7 +93,7 @@ sub2api/
 ### 部署信息
 - **服务器**：Oracle Cloud ARM
 - **域名**：`ai.zh-zh.top`
-- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前自定义构建版本基于官方 `v0.1.121`，镜像内版本显示为 `0.1.121-zz`；可回滚官方 `weishaw/sub2api:0.1.121`）
+- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前自定义构建版本基于官方 `v0.1.125`，镜像内版本显示为 `0.1.125-zz`；可回滚官方 `weishaw/sub2api:0.1.125`）
 - **部署路径**：`/opt/sub2api/`
 - **配置文件**：`/opt/sub2api/.env`
 
@@ -104,11 +104,15 @@ sub2api/
 - 自定义 GHCR 镜像稳定标签：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`
 - VPS 部署方式仍使用 Docker Compose，只替换 `sub2api` 服务的 `image:`，PostgreSQL、Redis、卷和 `.env` 不需要因自定义镜像而大改
 - 2026-04-29 用户已在原 VPS 测试自定义 GHCR 镜像成功，当前自定义镜像可作为正式部署镜像使用
-- 回滚官方镜像时只需把 `image:` 改回 `weishaw/sub2api:0.1.121` 或官方最新稳定标签，然后执行 `docker compose pull sub2api && docker compose up -d sub2api`
+- 回滚官方镜像时只需把 `image:` 改回 `weishaw/sub2api:0.1.125` 或官方最新稳定标签，然后执行 `docker compose pull sub2api && docker compose up -d sub2api`
 - 官方 0.1.121 固定命令：`cd /opt/sub2api && sed -i 's#weishaw/sub2api:0\.1\.120#weishaw/sub2api:0.1.121#g; s#weishaw/sub2api:0\.1\.119#weishaw/sub2api:0.1.121#g; s#weishaw/sub2api:latest#weishaw/sub2api:0.1.121#g' docker-compose.yml && docker compose pull sub2api && docker compose up -d sub2api && docker compose ps`
 - 自定义镜像回滚官方 0.1.121 命令：`cd /opt/sub2api && sed -i 's#ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools#weishaw/sub2api:0.1.121#g; s#weishaw/sub2api:0\.1\.120#weishaw/sub2api:0.1.121#g; s#weishaw/sub2api:0\.1\.119#weishaw/sub2api:0.1.121#g; s#weishaw/sub2api:latest#weishaw/sub2api:0.1.121#g' docker-compose.yml && docker compose pull sub2api && docker compose up -d sub2api && docker compose ps`
 - 2026-04-30 已将官方 `v0.1.121` 合并到自定义分支，保留 AI 对话/AI 生图功能，并把 `backend/cmd/server/VERSION` 同步为 `0.1.121` 以构建 `0.1.121-zz` 自定义镜像
 - 2026-04-30 GitHub Actions run `25165651723` 成功构建并推送自定义镜像，用户已在 VPS 通过 Docker Compose 更新部署成功
+- 2026-05-05 已将官方 `v0.1.123` 合并到自定义分支，保留 AI 对话/AI 生图功能和支付人民币符号补丁，并把 `backend/cmd/server/VERSION` 同步为 `0.1.123` 以构建 `0.1.123-zz` 自定义镜像
+- 2026-05-05 GitHub Actions run `25377558141` 成功构建并推送自定义镜像，用户已在 VPS 通过 Docker Compose 更新部署成功
+- 2026-05-07 已将官方 `v0.1.125` 合并到自定义分支，保留 AI 对话/AI 生图功能和支付人民币符号补丁，并把 `backend/cmd/server/VERSION` 同步为 `0.1.125` 以构建 `0.1.125-zz` 自定义镜像
+- 支付金额人民币符号修复作为 fork 上的长期补丁保留，后续官方更新时直接把 upstream 合并到 `feature/chat-image-tools`，只在同一块 UI 有冲突时再处理
 
 ### 备份存储
 - **对象存储**：腾讯云 COS（ap-shanghai）

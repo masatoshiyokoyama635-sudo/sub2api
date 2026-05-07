@@ -20,7 +20,7 @@
 - [x] 左侧侧边栏新增 AI 对话 / AI 生图入口，并补充中英文国际化文案
 - [x] 前端单元测试、类型检查、lint 和生产构建通过
 
-### 自定义 Docker 镜像流程（2026-04-29 / 2026-04-30）
+### 自定义 Docker 镜像流程（2026-04-29 / 2026-04-30 / 2026-05-05 / 2026-05-07）
 - [x] 新增 `.github/workflows/custom-docker.yml`，用于 `feature/chat-image-tools` 分支自动构建 GHCR 镜像
 - [x] 自定义镜像稳定标签规划为 `ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`
 - [x] 工作流已推送到 fork，GitHub Actions run `25124118394` 已成功构建并推送 GHCR 镜像；该次镜像内部版本号来自旧 `VERSION` 文件，显示为 `0.1.119-zz`
@@ -31,6 +31,13 @@
 - [x] 2026-04-30 官方发布 `v0.1.121` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图功能
 - [x] 2026-04-30 已将 `backend/cmd/server/VERSION` 同步为 `0.1.121`，用于重新构建 `0.1.121-zz` 自定义 GHCR 镜像
 - [x] 2026-04-30 GitHub Actions run `25165651723` 成功构建并推送自定义 GHCR 镜像，用户已在 VPS 更新部署成功
+- [x] 2026-05-05 官方发布 `v0.1.123` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图与支付人民币符号补丁
+- [x] 2026-05-05 已将 `backend/cmd/server/VERSION` 同步为 `0.1.123`，用于重新构建 `0.1.123-zz` 自定义 GHCR 镜像
+- [x] 2026-05-05 GitHub Actions run `25377558141` 成功构建并推送自定义 GHCR 镜像
+- [x] 2026-05-05 用户已在 VPS 通过 Docker Compose 拉取并更新自定义镜像成功
+- [x] 2026-05-07 官方发布 `v0.1.125` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图与支付人民币符号补丁
+- [x] 2026-05-07 已将 `backend/cmd/server/VERSION` 同步为 `0.1.125`，用于重新构建 `0.1.125-zz` 自定义 GHCR 镜像
+- [ ] 2026-05-07 等待 GitHub Actions 构建并推送 `0.1.125-zz` 自定义 GHCR 镜像
 
 ### 支付界面货币显示修复（2026-05-01）
 - [x] 确认用户侧充值/订阅页面存在支付金额符号显示问题：自定义充值金额输入框和订阅套餐卡价格使用了 `$`
@@ -38,6 +45,7 @@
 - [x] 保留 `daily_limit_usd` / `weekly_limit_usd` / `monthly_limit_usd` 等账户额度字段为 `$`，因为这些字段语义仍是 USD 配额
 - [x] 新增前端单元测试覆盖支付金额人民币符号与 USD 配额符号边界
 - [x] 相关单测和前端类型检查通过
+- [x] 作为 fork 上的长期补丁保留，后续官方更新时直接合并 upstream 到 `feature/chat-image-tools`，仅在同块 UI 冲突时处理
 
 ### 安全加固（2026-04-24）
 - [x] Redis 密码设置完成（密码已写入 /opt/sub2api/.env）
