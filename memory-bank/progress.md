@@ -8,6 +8,14 @@
 - [x] 域名 `ai.zh-zh.top` 配置完成
 - [x] 管理后台可正常访问
 
+### Kiro Gateway 接入（2026-05-10）
+- [x] 已将 `jwadow/kiro-gateway` 部署到同一 VPS，容器名为 `kiro-gateway`
+- [x] 已加入 `sub2api_sub2api-network` Docker 内网，未暴露公网端口
+- [x] 已启用多账号模式并成功加载 `/opt/kiro-gateway/accounts/acc1.json`
+- [x] 已确认 Sub2API Claude/Anthropic 分组可用 `http://kiro-gateway:8000` + `PROXY_API_KEY` 原始值接入，模型先填 `claude-opus-4.7`
+- [x] 已将状态文件改为目录挂载 `/opt/kiro-gateway/state:/app/state`，解决单文件挂载导致状态保存失败的问题
+- [x] 启动日志确认 `Loaded 1 account(s)`、`Successfully initialized account`、`Account system initialized successfully`，且不再出现 `Failed to save state`
+
 ### 源码
 - [x] 2026-04-23 从 GitHub 克隆源码到本地 `E:\vis project\zz sub2api`
 - [x] 2026-04-29 本地源码更新到 upstream `v0.1.120`，并创建 `feature/chat-image-tools` 分支继续开发
@@ -38,6 +46,9 @@
 - [x] 2026-05-07 官方发布 `v0.1.125` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图与支付人民币符号补丁
 - [x] 2026-05-07 已将 `backend/cmd/server/VERSION` 同步为 `0.1.125`，用于重新构建 `0.1.125-zz` 自定义 GHCR 镜像
 - [x] 2026-05-07 GitHub Actions run `25500374871` 成功构建并推送 `0.1.125-zz` 自定义 GHCR 镜像
+- [x] 2026-05-13 官方发布 `v0.1.126` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图与支付人民币符号补丁
+- [x] 2026-05-13 已将 `backend/cmd/server/VERSION` 同步为 `0.1.126`，用于重新构建 `0.1.126-zz` 自定义 GHCR 镜像
+- [ ] 2026-05-13 待推送 `feature/chat-image-tools` 到 fork 并等待 GitHub Actions 构建 `0.1.126-zz` 自定义 GHCR 镜像
 
 ### 支付界面货币显示修复（2026-05-01）
 - [x] 确认用户侧充值/订阅页面存在支付金额符号显示问题：自定义充值金额输入框和订阅套餐卡价格使用了 `$`
