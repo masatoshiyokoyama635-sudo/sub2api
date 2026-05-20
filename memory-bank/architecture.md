@@ -93,7 +93,7 @@ sub2api/
 ### 部署信息
 - **服务器**：Oracle Cloud ARM
 - **域名**：`ai.zh-zh.top`
-- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前本地源码已合并官方 `v0.1.129`，待构建镜像内版本应显示为 `0.1.129-zz`；可回滚官方 `weishaw/sub2api:0.1.129`）
+- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前自定义构建版本基于官方 `v0.1.129`，镜像内版本应显示为 `0.1.129-zz`；可回滚官方 `weishaw/sub2api:0.1.129`）
 - **部署路径**：`/opt/sub2api/`
 - **配置文件**：`/opt/sub2api/.env`
 
