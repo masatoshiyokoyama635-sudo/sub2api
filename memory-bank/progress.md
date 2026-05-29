@@ -7,6 +7,7 @@
 - [x] PostgreSQL + Redis 容器正常运行
 - [x] 域名 `ai.zh-zh.top` 配置完成
 - [x] 管理后台可正常访问
+- [x] 2026-05-28 新增国内备案入口备用线路 `ai.zh-zh.cloud`，通过国内服务器 `118.25.1.151` 的 Nginx 反代到现有 `ai.zh-zh.top` 新加坡加速链路，并验证 `/v1/models` 可返回模型列表
 
 ### Kiro Gateway 接入（2026-05-10）
 - [x] 已将 `jwadow/kiro-gateway` 部署到同一 VPS，容器名为 `kiro-gateway`
@@ -24,9 +25,14 @@
 
 ### AI 工具页面（2026-04-29）
 - [x] 新增用户侧 AI 对话页面，可选择分组与该分组下的 active API Key 调用现有 `/v1/chat/completions` 网关
-- [x] 新增用户侧 AI 生图页面，仅展示 OpenAI 分组，可选择分组下 active API Key 调用现有 `/v1/images/generations` 网关
+- [x] 新增用户侧 AI 生图页面，用户应选择 gpt-image 分组，可选择分组下 active API Key 调用现有 `/v1/images/generations` 网关
 - [x] 左侧侧边栏新增 AI 对话 / AI 生图入口，并补充中英文国际化文案
 - [x] 前端单元测试、类型检查、lint 和生产构建通过
+
+### 用户教程文档（2026-05-28）
+- [x] 基于原 `zh-ai 中转站说明文档.pdf` 的 12 页文本和当前源码事实，重写 zh-ai 用户使用说明
+- [x] 新增 `docs/ZH_AI_USER_GUIDE_CN.md`，覆盖真实控制台 URL、网关接口、鉴权方式、网页 AI 对话和网页 AI 生图功能
+- [x] 文档审查确认关键 URL、接口路径、鉴权方式、AI 对话/AI 生图说明与源码一致
 
 ### 自定义 Docker 镜像流程（2026-04-29 / 2026-04-30 / 2026-05-05 / 2026-05-07）
 - [x] 新增 `.github/workflows/custom-docker.yml`，用于 `feature/chat-image-tools` 分支自动构建 GHCR 镜像
@@ -60,6 +66,10 @@
 - [x] 2026-05-26 GitHub Actions run `26443782001` 成功构建并推送 `0.1.131-zz` 自定义 GHCR 镜像
 - [x] 2026-05-27 官方发布 `v0.1.132` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图与支付人民币符号补丁
 - [x] 2026-05-27 已将 `backend/cmd/server/VERSION` 同步为 `0.1.132`，用于重新构建 `0.1.132-zz` 自定义 GHCR 镜像
+- [x] 2026-05-28 GitHub Actions run `26549978144` 成功构建并推送 `0.1.132-zz` 自定义 GHCR 镜像
+- [x] 2026-05-29 官方发布 `v0.1.133` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图与支付人民币符号补丁
+- [x] 2026-05-29 已将 `backend/cmd/server/VERSION` 同步为 `0.1.133`，用于重新构建 `0.1.133-zz` 自定义 GHCR 镜像
+- [ ] 2026-05-29 已准备通过 fork GitHub Actions 构建并推送 `0.1.133-zz` 自定义 GHCR 镜像，等待 Actions 结果确认
 
 ### 支付界面货币显示修复（2026-05-01）
 - [x] 确认用户侧充值/订阅页面存在支付金额符号显示问题：自定义充值金额输入框和订阅套餐卡价格使用了 `$`

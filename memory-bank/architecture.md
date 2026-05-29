@@ -80,20 +80,34 @@ sub2api/
 - 前端新增 AI 对话与 AI 生图两个用户页面，入口位于左侧侧边栏
 - 页面复用用户可用分组与 API Key 数据，先选分组，再选择该分组下 active API Key
 - AI 对话直接使用选中的真实 API Key 调用现有 `POST /v1/chat/completions`
-- AI 生图仅展示 OpenAI 平台分组，直接调用现有 `POST /v1/images/generations`
+- AI 生图用户应选择 gpt-image 分组，底层属于 OpenAI 图片通道，直接调用现有 `POST /v1/images/generations`
 - 不新增 JWT 后端代理接口，继续复用现有网关的 API Key 鉴权、分组路由、账号调度、计费、限额和用量日志
+
+### 用户文档
+- `docs/ZH_AI_USER_GUIDE_CN.md` 是 zh-ai 用户使用说明，面向最终用户说明控制台入口、API Key 创建、网关地址、鉴权、网页 AI 对话、网页 AI 生图和常用客户端配置
+- 文档里的模型、价格、额度、套餐和可用渠道以后台实时显示为准，避免把运营配置写死成长期架构事实
 
 ## 部署架构
 ```
-用户请求 → ai.zh-zh.top (Cloudflare) → VPS(Oracle Cloud ARM, 149.118.145.171)
+主线路：用户请求 → ai.zh-zh.top → 新加坡加速服务器 → original-ai.zh-zh.top → VPS(Oracle Cloud ARM, 149.118.145.171)
   → Sub2API容器(8080) → PostgreSQL容器(5432, 仅内部网络)
                       ↘ Redis容器(6379, 仅内部网络, 有密码)
+
+备用线路：用户请求 → ai.zh-zh.cloud → 国内备案入口服务器(118.25.1.151) → ai.zh-zh.top → 新加坡加速服务器 → original-ai.zh-zh.top → Sub2API
 ```
+
+### 国内备案入口备用线路
+- **入口域名**：`ai.zh-zh.cloud`
+- **国内服务器**：OpenCloudOS 9.4，公网 IP `118.25.1.151`
+- **用途**：作为备用 API 入口，用户请求和响应经国内 Nginx 反向代理后再进入现有新加坡加速链路
+- **反代上游**：`https://ai.zh-zh.top`
+- **Nginx 要点**：启用 HTTPS 强制跳转；反代需保留 `Authorization`，开启 SNI（`proxy_ssl_server_name on`），关闭代理缓存/缓冲以支持 SSE 流式输出
+- **验证状态**：`https://ai.zh-zh.cloud/v1/models` 已可通过现有 Sub2API API Key 返回模型列表
 
 ### 部署信息
 - **服务器**：Oracle Cloud ARM
 - **域名**：`ai.zh-zh.top`
-- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前自定义构建版本基于官方 `v0.1.132`，镜像内版本应显示为 `0.1.132-zz`；可回滚官方 `weishaw/sub2api:0.1.132`）
+- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前自定义构建版本基于官方 `v0.1.133`，镜像内版本应显示为 `0.1.133-zz`；可回滚官方 `weishaw/sub2api:0.1.133`）
 - **部署路径**：`/opt/sub2api/`
 - **配置文件**：`/opt/sub2api/.env`
 
@@ -128,6 +142,7 @@ sub2api/
 - 2026-05-24 已将官方 `v0.1.130` 合并到自定义分支，保留 AI 对话/AI 生图功能和支付人民币符号补丁，并把 `backend/cmd/server/VERSION` 同步为 `0.1.130` 以构建 `0.1.130-zz` 自定义镜像
 - 2026-05-26 已将官方 `v0.1.131` 合并到自定义分支，保留 AI 对话/AI 生图功能和支付人民币符号补丁，并把 `backend/cmd/server/VERSION` 同步为 `0.1.131` 以构建 `0.1.131-zz` 自定义镜像
 - 2026-05-27 已将官方 `v0.1.132` 合并到自定义分支，保留 AI 对话/AI 生图功能和支付人民币符号补丁，并把 `backend/cmd/server/VERSION` 同步为 `0.1.132` 以构建 `0.1.132-zz` 自定义镜像
+- 2026-05-29 已将官方 `v0.1.133` 合并到自定义分支，保留 AI 对话/AI 生图功能和支付人民币符号补丁，并把 `backend/cmd/server/VERSION` 同步为 `0.1.133` 以构建 `0.1.133-zz` 自定义镜像
 - 支付金额人民币符号修复作为 fork 上的长期补丁保留，后续官方更新时直接把 upstream 合并到 `feature/chat-image-tools`，只在同一块 UI 有冲突时再处理
 
 ### 备份存储
