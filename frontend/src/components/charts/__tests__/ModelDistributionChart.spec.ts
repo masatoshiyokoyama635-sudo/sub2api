@@ -17,6 +17,7 @@ const messages: Record<string, string> = {
   'admin.dashboard.requests': 'Requests',
   'admin.dashboard.tokens': 'Tokens',
   'admin.dashboard.actual': 'Actual',
+  'admin.dashboard.accountCost': 'Account Cost',
   'admin.dashboard.standard': 'Standard',
   'admin.dashboard.metricTokens': 'By Tokens',
   'admin.dashboard.metricActualCost': 'By Actual Cost',
@@ -53,6 +54,7 @@ describe('ModelDistributionChart', () => {
       total_tokens: 1000,
       cost: 1.5,
       actual_cost: 0.2,
+      account_cost: 0.3,
     },
     {
       model: 'model-b',
@@ -64,6 +66,7 @@ describe('ModelDistributionChart', () => {
       total_tokens: 500,
       cost: 0.5,
       actual_cost: 1.4,
+      account_cost: 0.7,
     },
   ]
 
