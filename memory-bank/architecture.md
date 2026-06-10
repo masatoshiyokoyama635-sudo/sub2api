@@ -134,6 +134,7 @@ sub2api/
 - 长期自定义功能分支：`feature/chat-image-tools`
 - GitHub Actions workflow：`.github/workflows/custom-docker.yml`
 - 自定义 GHCR 镜像稳定标签：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`
+- 官方 v0.1.136 起，前端会 raw import `docs/legal/admin-compliance.zh.md` 与 `docs/legal/admin-compliance.en.md`；根 `Dockerfile` 的 frontend builder 阶段必须在 `pnpm run build` 前复制 `docs/legal/` 到 `/app/docs/legal/`，且 `.dockerignore` 不能排除这两个文件
 - VPS 部署方式仍使用 Docker Compose，只替换 `sub2api` 服务的 `image:`，PostgreSQL、Redis、卷和 `.env` 不需要因自定义镜像而大改
 - 2026-04-29 用户已在原 VPS 测试自定义 GHCR 镜像成功，当前自定义镜像可作为正式部署镜像使用
 - 回滚官方镜像时只需把 `image:` 改回 `weishaw/sub2api:0.1.126` 或官方最新稳定标签，然后执行 `docker compose pull sub2api && docker compose up -d sub2api`
