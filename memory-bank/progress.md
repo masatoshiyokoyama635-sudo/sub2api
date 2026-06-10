@@ -34,6 +34,12 @@
 - [x] 新增 `docs/ZH_AI_USER_GUIDE_CN.md`，覆盖真实控制台 URL、网关接口、鉴权方式、网页 AI 对话和网页 AI 生图功能
 - [x] 文档审查确认关键 URL、接口路径、鉴权方式、AI 对话/AI 生图说明与源码一致
 
+### 专属客户端教程文档（2026-06-05）
+- [x] 学习 `lzz.docs.buildwithfern.com` 的 API 概览、快速入门和图像生成文档结构，提取 OpenAI 兼容接入、聊天、生图、充值订阅相关写法
+- [x] 新增 `docs/ZZ_AI_CLIENT_USER_GUIDE_CN.md`，只覆盖客户端接入、AI 对话、AI 生图、充值订阅、邀请返利教程
+- [x] 文档按当前 zz AI 中转站实际实现改写：OpenAI 兼容 Base URL 为 `https://ai.zh-zh.top/v1`，网页 AI 对话为 `/ai/chat`，网页 AI 生图为 `/ai/images` 且使用 `/v1/images/generations`，充值订阅为 `/purchase`，邀请返利为 `/affiliate`
+- [x] 2026-06-06 按用户反馈用本机 Chrome/CDP 重新读取 Fern 快速入门与客户端子页面，补全客户端接入章节：Cursor、Cline、Codex CLI、OpenCode、Qwen Code、Claude Code、Postman/cURL、OpenAI SDK
+
 ### 自定义 Docker 镜像流程（2026-04-29 / 2026-04-30 / 2026-05-05 / 2026-05-07）
 - [x] 新增 `.github/workflows/custom-docker.yml`，用于 `feature/chat-image-tools` 分支自动构建 GHCR 镜像
 - [x] 自定义镜像稳定标签规划为 `ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`
@@ -69,7 +75,18 @@
 - [x] 2026-05-28 GitHub Actions run `26549978144` 成功构建并推送 `0.1.132-zz` 自定义 GHCR 镜像
 - [x] 2026-05-29 官方发布 `v0.1.133` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图与支付人民币符号补丁
 - [x] 2026-05-29 已将 `backend/cmd/server/VERSION` 同步为 `0.1.133`，用于重新构建 `0.1.133-zz` 自定义 GHCR 镜像
-- [ ] 2026-05-29 已准备通过 fork GitHub Actions 构建并推送 `0.1.133-zz` 自定义 GHCR 镜像，等待 Actions 结果确认
+- [x] 2026-06-06 官方发布 `v0.1.134` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图、支付人民币符号补丁和历史图片计费识别逻辑
+- [x] 2026-06-06 已将 `backend/cmd/server/VERSION` 同步为 `0.1.134`，用于重新构建 `0.1.134-zz` 自定义 GHCR 镜像
+- [x] 2026-06-06 本地前端验证通过：`npm --prefix frontend run typecheck`、`npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results.json`（结果 `707/707` 通过，JSON 摘要 `success: true`，但该 npm 命令返回码异常为 1）、`npm --prefix frontend run build`；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`）
+- [ ] 2026-06-06 已准备通过 fork GitHub Actions 构建并推送 `0.1.134-zz` 自定义 GHCR 镜像，等待 Actions 结果确认
+- [x] 2026-06-09 官方发布 `v0.1.135` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图、支付人民币符号补丁和历史图片计费识别逻辑
+- [x] 2026-06-09 已将 `backend/cmd/server/VERSION` 同步为 `0.1.135`，用于重新构建 `0.1.135-zz` 自定义 GHCR 镜像
+- [x] 2026-06-09 本地前端验证通过：`npm --prefix frontend run typecheck`、`npm --prefix frontend run build`；`npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-135.json` 生成 JSON 摘要 `success: true`、`718/718` 通过，但 npm 命令返回码异常为 1；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`）
+- [x] 2026-06-09 GitHub Actions run `27190759099` 成功构建并推送 `0.1.135-zz` 自定义 GHCR 镜像（稳定标签 `chat-image-tools`）
+- [x] 2026-06-10 官方发布 `v0.1.136` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图、支付人民币符号补丁、历史图片计费识别逻辑和专属客户端教程文档
+- [x] 2026-06-10 已将 `backend/cmd/server/VERSION` 同步为 `0.1.136`，用于重新构建 `0.1.136-zz` 自定义 GHCR 镜像
+- [x] 2026-06-10 本地前端验证通过：`npm --prefix frontend run typecheck`、`npm --prefix frontend run build`；`npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-136.json` 生成 JSON 摘要 `success: true`、`726/726` 通过，但 npm 命令返回码异常为 1；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`）
+- [ ] 2026-06-10 已准备通过 fork GitHub Actions 构建并推送 `0.1.136-zz` 自定义 GHCR 镜像，等待推送和 Actions 结果确认
 
 ### 支付界面货币显示修复（2026-05-01）
 - [x] 确认用户侧充值/订阅页面存在支付金额符号显示问题：自定义充值金额输入框和订阅套餐卡价格使用了 `$`

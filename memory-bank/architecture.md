@@ -76,6 +76,11 @@ sub2api/
 - 订阅套餐卡组件为 `frontend/src/components/payment/SubscriptionPlanCard.vue`
 - 支付金额、订阅售价、原价使用人民币符号 `¥`；账户余额/订阅额度中明确命名为 `*_usd` 的字段仍按 USD 配额展示为 `$`
 
+### 管理端合规确认
+- 官方 v0.1.136 新增管理端合规确认门：`backend/internal/service/admin_compliance.go` 保存每个管理员对当前合规版本的确认记录，`backend/internal/server/middleware/admin_compliance.go` 在管理端接口上强制确认
+- 前端 `frontend/src/components/admin/AdminComplianceDialog.vue` 通过 `frontend/src/stores/adminCompliance.ts` 拉取状态，展示中英文合规文档并要求输入固定确认短语；确认后才允许继续使用管理端
+- 合规确认版本常量为 `AdminComplianceVersion`，升级该常量会让管理员重新确认；确认内容保存到 settings 表的 `admin_compliance_acknowledgement:<adminUserID>` 键
+
 ### 用户侧 AI 工具页
 - 前端新增 AI 对话与 AI 生图两个用户页面，入口位于左侧侧边栏
 - 页面复用用户可用分组与 API Key 数据，先选分组，再选择该分组下 active API Key
@@ -85,6 +90,8 @@ sub2api/
 
 ### 用户文档
 - `docs/ZH_AI_USER_GUIDE_CN.md` 是 zh-ai 用户使用说明，面向最终用户说明控制台入口、API Key 创建、网关地址、鉴权、网页 AI 对话、网页 AI 生图和常用客户端配置
+- `docs/ZZ_AI_CLIENT_USER_GUIDE_CN.md` 是按 Fern 文档风格整理的 zz AI 中转站专属窄范围教程，只覆盖客户端接入、AI 对话、AI 生图、充值订阅、邀请返利，避免把管理端或泛 API 参考内容混入用户教程
+- `docs/legal/admin-compliance.zh.md` 与 `docs/legal/admin-compliance.en.md` 是官方 v0.1.136 新增的管理端部署与运营合规承诺文档，前端合规确认弹窗会以内嵌 Markdown 形式展示
 - 文档里的模型、价格、额度、套餐和可用渠道以后台实时显示为准，避免把运营配置写死成长期架构事实
 
 ## 部署架构
@@ -107,7 +114,7 @@ sub2api/
 ### 部署信息
 - **服务器**：Oracle Cloud ARM
 - **域名**：`ai.zh-zh.top`
-- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前自定义构建版本基于官方 `v0.1.133`，镜像内版本应显示为 `0.1.133-zz`；可回滚官方 `weishaw/sub2api:0.1.133`）
+- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前自定义构建版本基于官方 `v0.1.136`，镜像内版本应显示为 `0.1.136-zz`；可回滚官方 `weishaw/sub2api:0.1.136`）
 - **部署路径**：`/opt/sub2api/`
 - **配置文件**：`/opt/sub2api/.env`
 
@@ -143,6 +150,9 @@ sub2api/
 - 2026-05-26 已将官方 `v0.1.131` 合并到自定义分支，保留 AI 对话/AI 生图功能和支付人民币符号补丁，并把 `backend/cmd/server/VERSION` 同步为 `0.1.131` 以构建 `0.1.131-zz` 自定义镜像
 - 2026-05-27 已将官方 `v0.1.132` 合并到自定义分支，保留 AI 对话/AI 生图功能和支付人民币符号补丁，并把 `backend/cmd/server/VERSION` 同步为 `0.1.132` 以构建 `0.1.132-zz` 自定义镜像
 - 2026-05-29 已将官方 `v0.1.133` 合并到自定义分支，保留 AI 对话/AI 生图功能和支付人民币符号补丁，并把 `backend/cmd/server/VERSION` 同步为 `0.1.133` 以构建 `0.1.133-zz` 自定义镜像
+- 2026-06-06 已将官方 `v0.1.134` 合并到自定义分支，保留 AI 对话/AI 生图功能、支付人民币符号补丁和历史图片计费识别逻辑，并把 `backend/cmd/server/VERSION` 同步为 `0.1.134` 以构建 `0.1.134-zz` 自定义镜像
+- 2026-06-09 已将官方 `v0.1.135` 合并到自定义分支，保留 AI 对话/AI 生图功能、支付人民币符号补丁和历史图片计费识别逻辑，并把 `backend/cmd/server/VERSION` 同步为 `0.1.135` 以构建 `0.1.135-zz` 自定义镜像
+- 2026-06-10 已将官方 `v0.1.136` 合并到自定义分支，保留 AI 对话/AI 生图功能、支付人民币符号补丁、历史图片计费识别逻辑和专属客户端教程文档，并把 `backend/cmd/server/VERSION` 同步为 `0.1.136` 以构建 `0.1.136-zz` 自定义镜像
 - 支付金额人民币符号修复作为 fork 上的长期补丁保留，后续官方更新时直接把 upstream 合并到 `feature/chat-image-tools`，只在同一块 UI 有冲突时再处理
 
 ### 备份存储

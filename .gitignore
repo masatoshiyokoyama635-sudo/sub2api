@@ -134,6 +134,8 @@ docs/*
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/legal/
 !docs/legal/*.md
+!docs/ZZ_AI_CLIENT_USER_GUIDE_CN.md
+!docs/ZH_AI_USER_GUIDE_CN.md
 .serena/
 .codex/
 frontend/coverage/
