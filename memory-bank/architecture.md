@@ -114,7 +114,7 @@ sub2api/
 ### 部署信息
 - **服务器**：Oracle Cloud ARM
 - **域名**：`ai.zh-zh.top`
-- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前自定义构建版本基于官方 `v0.1.136`，镜像内版本应显示为 `0.1.136-zz`；可回滚官方 `weishaw/sub2api:0.1.136`）
+- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前自定义构建版本基于官方 `v0.1.137`，镜像内版本应显示为 `0.1.137-zz`；可回滚官方 `weishaw/sub2api:0.1.137`）
 - **部署路径**：`/opt/sub2api/`
 - **配置文件**：`/opt/sub2api/.env`
 
@@ -154,6 +154,7 @@ sub2api/
 - 2026-06-06 已将官方 `v0.1.134` 合并到自定义分支，保留 AI 对话/AI 生图功能、支付人民币符号补丁和历史图片计费识别逻辑，并把 `backend/cmd/server/VERSION` 同步为 `0.1.134` 以构建 `0.1.134-zz` 自定义镜像
 - 2026-06-09 已将官方 `v0.1.135` 合并到自定义分支，保留 AI 对话/AI 生图功能、支付人民币符号补丁和历史图片计费识别逻辑，并把 `backend/cmd/server/VERSION` 同步为 `0.1.135` 以构建 `0.1.135-zz` 自定义镜像
 - 2026-06-10 已将官方 `v0.1.136` 合并到自定义分支，保留 AI 对话/AI 生图功能、支付人民币符号补丁、历史图片计费识别逻辑和专属客户端教程文档，并把 `backend/cmd/server/VERSION` 同步为 `0.1.136` 以构建 `0.1.136-zz` 自定义镜像
+- 2026-06-16 已将官方 `v0.1.137` 合并到自定义分支，保留 AI 对话/AI 生图功能、支付人民币符号补丁、历史图片计费识别逻辑和专属客户端教程文档，并把 `backend/cmd/server/VERSION` 同步为 `0.1.137` 以构建 `0.1.137-zz` 自定义镜像；GitHub Actions run `27637619001` 成功推送稳定标签 `chat-image-tools` 和短 SHA 标签 `chat-image-tools-3adefcb`
 - 支付金额人民币符号修复作为 fork 上的长期补丁保留，后续官方更新时直接把 upstream 合并到 `feature/chat-image-tools`，只在同一块 UI 有冲突时再处理
 
 ### 备份存储

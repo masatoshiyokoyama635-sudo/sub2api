@@ -89,6 +89,10 @@
 - [x] 2026-06-10 首次 GitHub Actions run `27275018452` 构建 `0.1.136-zz` 失败，原因为 Docker 前端构建阶段没有复制官方 v0.1.136 新增的 `docs/legal/admin-compliance.*.md`，导致 Vite raw import 解析失败
 - [x] 2026-06-10 已补充 `.dockerignore` 和根 `Dockerfile`，仅放行并复制 `docs/legal/admin-compliance.zh.md`、`docs/legal/admin-compliance.en.md` 到 Docker 前端构建环境
 - [x] 2026-06-10 GitHub Actions run `27275566706` 成功构建并推送 `0.1.136-zz` 自定义 GHCR 镜像（稳定标签 `chat-image-tools`，短 SHA 标签 `chat-image-tools-c5c5c51`）
+- [x] 2026-06-16 官方发布 `v0.1.137` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图、支付人民币符号补丁、历史图片计费识别逻辑和专属客户端教程文档；合并冲突仅出现在 `.dockerignore`，已保留官方 `docs/legal/*.md` 放行规则
+- [x] 2026-06-16 已将 `backend/cmd/server/VERSION` 同步为 `0.1.137`，用于重新构建 `0.1.137-zz` 自定义 GHCR 镜像
+- [x] 2026-06-16 本地前端验证通过：`npm --prefix frontend run typecheck`、`npm --prefix frontend run build`；`npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-137.json` 生成 JSON 摘要 `success: true`、`727/727` 通过，但 npm 命令返回码异常为 1；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`）
+- [x] 2026-06-16 GitHub Actions run `27637619001` 成功构建并推送 `0.1.137-zz` 自定义 GHCR 镜像（稳定标签 `chat-image-tools`，短 SHA 标签 `chat-image-tools-3adefcb`，manifest digest `sha256:963cad57d79c8b712a738bcb82d291d09682e6b4632a3e75d7528c519105b5db`）
 
 ### 支付界面货币显示修复（2026-05-01）
 - [x] 确认用户侧充值/订阅页面存在支付金额符号显示问题：自定义充值金额输入框和订阅套餐卡价格使用了 `$`
