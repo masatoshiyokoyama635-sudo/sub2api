@@ -93,6 +93,10 @@
 - [x] 2026-06-16 已将 `backend/cmd/server/VERSION` 同步为 `0.1.137`，用于重新构建 `0.1.137-zz` 自定义 GHCR 镜像
 - [x] 2026-06-16 本地前端验证通过：`npm --prefix frontend run typecheck`、`npm --prefix frontend run build`；`npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-137.json` 生成 JSON 摘要 `success: true`、`727/727` 通过，但 npm 命令返回码异常为 1；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`）
 - [x] 2026-06-16 GitHub Actions run `27637619001` 成功构建并推送 `0.1.137-zz` 自定义 GHCR 镜像（稳定标签 `chat-image-tools`，短 SHA 标签 `chat-image-tools-3adefcb`，manifest digest `sha256:963cad57d79c8b712a738bcb82d291d09682e6b4632a3e75d7528c519105b5db`）
+- [x] 2026-06-22 官方发布 `v0.1.138` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话/AI 生图、支付人民币符号补丁、历史图片计费识别逻辑和专属客户端教程文档；本次合并无冲突
+- [x] 2026-06-22 已将 `backend/cmd/server/VERSION` 同步为 `0.1.138`，用于重新构建 `0.1.138-zz` 自定义 GHCR 镜像
+- [x] 2026-06-22 本地前端验证通过：`npm --prefix frontend run typecheck`、`npm --prefix frontend run build`；`npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-138.json` 生成 JSON 摘要 `success: true`、`730/730` 通过，但 npm 命令返回码异常为 1；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`）
+- [x] 2026-06-22 GitHub Actions run `27957305480` 成功构建并推送 `0.1.138-zz` 自定义 GHCR 镜像（稳定标签 `chat-image-tools`，短 SHA 标签 `chat-image-tools-edd2425`，manifest digest `sha256:4fa76c3010ce58e39a02dd145518156b9e4f65668e8c69b9110a6225c3e2131c`）
 
 ### 支付界面货币显示修复（2026-05-01）
 - [x] 确认用户侧充值/订阅页面存在支付金额符号显示问题：自定义充值金额输入框和订阅套餐卡价格使用了 `$`
