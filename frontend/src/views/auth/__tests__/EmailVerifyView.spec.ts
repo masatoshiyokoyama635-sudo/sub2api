@@ -137,7 +137,6 @@ describe('EmailVerifyView', () => {
       JSON.stringify({
         email: 'fresh@example.com',
         password: 'secret-123',
-        aff_code: 'AFF123',
       })
     )
 
@@ -305,6 +304,7 @@ describe('EmailVerifyView', () => {
       JSON.stringify({
         email: 'fresh@example.com',
         password: 'secret-123',
+        aff_code: 'AFF123',
       })
     )
     apiClientPostMock.mockResolvedValue({
@@ -336,9 +336,7 @@ describe('EmailVerifyView', () => {
       email: 'fresh@example.com',
       password: 'secret-123',
       verify_code: '123456',
-      invitation_code: undefined,
-      adopt_display_name: undefined,
-      adopt_avatar: undefined,
+      aff_code: 'AFF123',
     })
     expect(persistOAuthTokenContextMock).toHaveBeenCalledWith({
       access_token: 'oauth-access-token',

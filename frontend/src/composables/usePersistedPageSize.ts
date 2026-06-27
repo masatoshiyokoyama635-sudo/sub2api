@@ -1,21 +1,14 @@
 import { getConfiguredTableDefaultPageSize, normalizeTablePageSize } from '@/utils/tablePreferences'
 
 const STORAGE_KEY = 'table-page-size'
-const LEGACY_SOURCE_KEY = 'table-page-size-source'
-
-const configuredDefaultPageSize = (fallback = getConfiguredTableDefaultPageSize()): number => {
-  return normalizeTablePageSize(getConfiguredTableDefaultPageSize() || fallback)
-}
 
 export function getPersistedPageSize(fallback = getConfiguredTableDefaultPageSize()): number {
+  if (typeof window !== 'undefined' && window.__APP_CONFIG__?.table_default_page_size !== undefined) {
+    return normalizeTablePageSize(getConfiguredTableDefaultPageSize())
+  }
+
   if (typeof window !== 'undefined') {
     try {
-      if (window.localStorage.getItem(LEGACY_SOURCE_KEY) !== null) {
-        window.localStorage.removeItem(STORAGE_KEY)
-        window.localStorage.removeItem(LEGACY_SOURCE_KEY)
-        return configuredDefaultPageSize(fallback)
-      }
-
       const stored = window.localStorage.getItem(STORAGE_KEY)
       if (stored !== null) {
         const parsed = Number(stored)
@@ -27,14 +20,13 @@ export function getPersistedPageSize(fallback = getConfiguredTableDefaultPageSiz
       console.warn('Failed to read persisted page size:', error)
     }
   }
-  return configuredDefaultPageSize(fallback)
+  return normalizeTablePageSize(getConfiguredTableDefaultPageSize() || fallback)
 }
 
 export function setPersistedPageSize(size: number): void {
   if (typeof window === 'undefined') return
   try {
     window.localStorage.setItem(STORAGE_KEY, String(size))
-    window.localStorage.removeItem(LEGACY_SOURCE_KEY)
   } catch (error) {
     console.warn('Failed to persist page size:', error)
   }
