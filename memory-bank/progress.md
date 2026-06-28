@@ -97,6 +97,10 @@
 - [x] 2026-06-22 已将 `backend/cmd/server/VERSION` 同步为 `0.1.138`，用于重新构建 `0.1.138-zz` 自定义 GHCR 镜像
 - [x] 2026-06-22 本地前端验证通过：`npm --prefix frontend run typecheck`、`npm --prefix frontend run build`；`npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-138.json` 生成 JSON 摘要 `success: true`、`730/730` 通过，但 npm 命令返回码异常为 1；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`）
 - [x] 2026-06-22 GitHub Actions run `27957305480` 成功构建并推送 `0.1.138-zz` 自定义 GHCR 镜像（稳定标签 `chat-image-tools`，短 SHA 标签 `chat-image-tools-edd2425`，manifest digest `sha256:4fa76c3010ce58e39a02dd145518156b9e4f65668e8c69b9110a6225c3e2131c`）
+- [x] 2026-06-27 官方发布 `v0.1.139` 后，已合并到自定义 `feature/chat-image-tools` 分支；按用户确认，长期二改仅保留 AI 对话、AI 生图和支付人民币符号补丁，图片计费相关逻辑跟随官方；合并冲突出现在 `frontend/src/components/admin/usage/UsageTable.vue`、`frontend/src/utils/billingMode.ts`、`frontend/src/views/user/UsageView.vue`，均采用官方版本
+- [x] 2026-06-27 已将 `backend/cmd/server/VERSION` 同步为 `0.1.139`，用于重新构建 `0.1.139-zz` 自定义 GHCR 镜像
+- [x] 2026-06-27 本地前端验证通过：`npm --prefix frontend run typecheck`、目标失败测试 `20/20` 通过、完整 `npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-139-fixed.json` 生成 JSON 摘要 `success: true`、`746/746` 通过、`npm --prefix frontend run build` 通过；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`）
+- [x] 2026-06-27 GitHub Actions run `28276433805` 成功构建并推送 `0.1.139-zz` 自定义 GHCR 镜像（稳定标签 `chat-image-tools`，短 SHA 标签 `chat-image-tools-338f326`，manifest digest `sha256:a83294cf99aae8147745440224125f5866a93f72e956c7dec892120f9e14ffed`）
 
 ### 支付界面货币显示修复（2026-05-01）
 - [x] 确认用户侧充值/订阅页面存在支付金额符号显示问题：自定义充值金额输入框和订阅套餐卡价格使用了 `$`
@@ -105,6 +109,13 @@
 - [x] 新增前端单元测试覆盖支付金额人民币符号与 USD 配额符号边界
 - [x] 相关单测和前端类型检查通过
 - [x] 作为 fork 上的长期补丁保留，后续官方更新时直接合并 upstream 到 `feature/chat-image-tools`，仅在同块 UI 冲突时处理
+
+### 订阅支付金额修复（2026-06-28）
+- [x] 确认后端订阅订单支付金额错误套用了 `BalanceRechargeMultiplier`，导致 200 元订阅在 1:3 充值倍率下被折算成约 66.67 元
+- [x] 已修复创建支付订单金额计算：充值倍率只影响余额充值入账额度，不再影响订阅订单提交给支付宝/微信等支付网关的金额
+- [x] 新增后端回归测试覆盖：200 元订阅在 1:3 充值倍率下仍支付 200 元，订阅手续费按 200 元基础计算，余额充值仍按现金金额支付并按倍率入账
+- [x] 已处理 code-reviewer 发现的未使用 `calculateGatewayPaymentAmount` 私有函数残留风险
+- [x] 本机验证 `git diff --check` 通过；Go 测试未能在本机执行，因为当前环境 PATH 中没有 `go`/`gofmt`
 
 ### 安全加固（2026-04-24）
 - [x] Redis 密码设置完成（密码已写入 /opt/sub2api/.env）
