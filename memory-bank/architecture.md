@@ -158,7 +158,7 @@ sub2api/
 - 2026-06-16 已将官方 `v0.1.137` 合并到自定义分支，保留 AI 对话/AI 生图功能、支付人民币符号补丁、历史图片计费识别逻辑和专属客户端教程文档，并把 `backend/cmd/server/VERSION` 同步为 `0.1.137` 以构建 `0.1.137-zz` 自定义镜像；GitHub Actions run `27637619001` 成功推送稳定标签 `chat-image-tools` 和短 SHA 标签 `chat-image-tools-3adefcb`
 - 2026-06-22 已将官方 `v0.1.138` 合并到自定义分支，保留 AI 对话/AI 生图功能、支付人民币符号补丁、历史图片计费识别逻辑和专属客户端教程文档，并把 `backend/cmd/server/VERSION` 同步为 `0.1.138` 以构建 `0.1.138-zz` 自定义镜像；GitHub Actions run `27957305480` 成功推送稳定标签 `chat-image-tools` 和短 SHA 标签 `chat-image-tools-edd2425`，manifest digest `sha256:4fa76c3010ce58e39a02dd145518156b9e4f65668e8c69b9110a6225c3e2131c`
 - 2026-06-27 已将官方 `v0.1.139` 合并到自定义分支；按用户确认，长期二改仅保留 AI 对话、AI 生图和支付人民币符号补丁，图片计费等其他逻辑跟随官方；已把 `backend/cmd/server/VERSION` 同步为 `0.1.139` 以构建 `0.1.139-zz` 自定义镜像；GitHub Actions run `28276433805` 成功推送稳定标签 `chat-image-tools` 和短 SHA 标签 `chat-image-tools-338f326`，manifest digest `sha256:a83294cf99aae8147745440224125f5866a93f72e956c7dec892120f9e14ffed`
-- 2026-06-30 已将官方 `v0.1.141` 合并到自定义分支，保留 AI 对话、AI 生图和支付人民币符号补丁；官方 `v0.1.141` 已修复订阅订单不应套用余额充值倍率的问题，本次支付订单逻辑和测试采用官方版本，并把 `backend/cmd/server/VERSION` 同步为 `0.1.141` 以构建 `0.1.141-zz` 自定义镜像
+- 2026-06-30 已将官方 `v0.1.141` 合并到自定义分支，保留 AI 对话、AI 生图和支付人民币符号补丁；官方 `v0.1.141` 已修复订阅订单不应套用余额充值倍率的问题，本次支付订单逻辑和测试采用官方版本，并把 `backend/cmd/server/VERSION` 同步为 `0.1.141` 以构建 `0.1.141-zz` 自定义镜像；GitHub Actions run `28452856490` 成功推送稳定标签 `chat-image-tools` 和短 SHA 标签预计为 `chat-image-tools-3097596`
 - 支付金额人民币符号修复作为 fork 上的长期补丁保留，后续官方更新时直接把 upstream 合并到 `feature/chat-image-tools`，只在同一块 UI 有冲突时再处理
 
 ### 备份存储
