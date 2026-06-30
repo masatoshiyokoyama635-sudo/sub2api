@@ -101,6 +101,10 @@
 - [x] 2026-06-27 已将 `backend/cmd/server/VERSION` 同步为 `0.1.139`，用于重新构建 `0.1.139-zz` 自定义 GHCR 镜像
 - [x] 2026-06-27 本地前端验证通过：`npm --prefix frontend run typecheck`、目标失败测试 `20/20` 通过、完整 `npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-139-fixed.json` 生成 JSON 摘要 `success: true`、`746/746` 通过、`npm --prefix frontend run build` 通过；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`）
 - [x] 2026-06-27 GitHub Actions run `28276433805` 成功构建并推送 `0.1.139-zz` 自定义 GHCR 镜像（稳定标签 `chat-image-tools`，短 SHA 标签 `chat-image-tools-338f326`，manifest digest `sha256:a83294cf99aae8147745440224125f5866a93f72e956c7dec892120f9e14ffed`）
+- [x] 2026-06-30 官方发布 `v0.1.141` 后，已合并到自定义 `feature/chat-image-tools` 分支；本次合并冲突出现在 `backend/cmd/server/VERSION`、`backend/internal/service/payment_order.go`、`backend/internal/service/payment_order_result_test.go`，其中支付订单逻辑和测试采用官方 `v0.1.141` 版本，保留 AI 对话、AI 生图和支付人民币符号补丁
+- [x] 2026-06-30 已确认官方 `v0.1.141` 已修复订阅订单支付金额错误套用 `BalanceRechargeMultiplier` 的问题：订阅订单按套餐售价加手续费计算支付金额，充值倍率仅影响余额充值入账额度
+- [x] 2026-06-30 已将 `backend/cmd/server/VERSION` 同步为 `0.1.141`，用于重新构建 `0.1.141-zz` 自定义 GHCR 镜像
+- [x] 2026-06-30 本地前端验证通过：`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run typecheck`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-141.json`（JSON 摘要 `success: true`、`758/758` 通过）、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run build`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run lint:check`；`git diff --check` 和精确冲突标记检查通过；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`）
 
 ### 支付界面货币显示修复（2026-05-01）
 - [x] 确认用户侧充值/订阅页面存在支付金额符号显示问题：自定义充值金额输入框和订阅套餐卡价格使用了 `$`
