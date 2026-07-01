@@ -106,6 +106,9 @@
 - [x] 2026-06-30 已将 `backend/cmd/server/VERSION` 同步为 `0.1.141`，用于重新构建 `0.1.141-zz` 自定义 GHCR 镜像
 - [x] 2026-06-30 本地前端验证通过：`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run typecheck`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-141.json`（JSON 摘要 `success: true`、`758/758` 通过）、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run build`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run lint:check`；`git diff --check` 和精确冲突标记检查通过；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`）
 - [x] 2026-06-30 已提交并推送 merge commit `3097596a`（`chore: merge upstream v0.1.141`）到 fork 的 `feature/chat-image-tools` 分支；GitHub Actions run `28452856490` 成功构建并推送 `0.1.141-zz` 自定义 GHCR 镜像（稳定标签 `chat-image-tools`，短 SHA 标签预计为 `chat-image-tools-3097596`）
+- [x] 2026-07-01 官方发布 `v0.1.142` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话、AI 生图和支付人民币符号补丁；本次合并无冲突
+- [x] 2026-07-01 已将 `backend/cmd/server/VERSION` 同步为 `0.1.142`，用于重新构建 `0.1.142-zz` 自定义 GHCR 镜像；同步修正 `BulkEditAccountModal` 测试中 Antigravity 图片映射预设的上游文案变更（`passthrough`）
+- [x] 2026-07-01 本地前端验证通过：`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run typecheck`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-142-fixed.json`（JSON 摘要 `success: true`、`770/770` 通过）、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run build`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run lint:check`；`git diff --check` 和精确冲突标记检查通过；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`），本地 Docker 构建未执行（本机 PATH 中没有 `docker`）
 
 ### 支付界面货币显示修复（2026-05-01）
 - [x] 确认用户侧充值/订阅页面存在支付金额符号显示问题：自定义充值金额输入框和订阅套餐卡价格使用了 `$`
