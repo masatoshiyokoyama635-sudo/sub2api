@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import AmountInput from '../AmountInput.vue'
 import SubscriptionPlanCard from '../SubscriptionPlanCard.vue'
 import type { SubscriptionPlan } from '@/types/payment'
@@ -62,6 +63,9 @@ describe('Payment currency display', () => {
     const wrapper = mount(SubscriptionPlanCard, {
       props: {
         plan: basePlan,
+      },
+      global: {
+        plugins: [createPinia()],
       },
     })
 
