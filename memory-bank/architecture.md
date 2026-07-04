@@ -83,10 +83,12 @@ sub2api/
 - 合规确认版本常量为 `AdminComplianceVersion`，升级该常量会让管理员重新确认；确认内容保存到 settings 表的 `admin_compliance_acknowledgement:<adminUserID>` 键
 
 ### 用户侧 AI 工具页
-- 前端新增 AI 对话与 AI 生图两个用户页面，入口位于左侧侧边栏
+- 前端新增 AI 对话与 AI 生图两个用户页面；当前左侧侧边栏保留 AI 对话入口，原 AI 生图入口已替换为“无限画布”外链入口
+- “无限画布”入口位于 `frontend/src/components/layout/AppSidebar.vue`，新标签页打开固定地址 `https://canvas.zh-zh.top`，并使用 `rel="noopener noreferrer"` 与 `referrerpolicy="no-referrer"`
+- “无限画布”入口不传 API Key、Base URL、用户 token、user_id 或任何 query/hash 参数；用户仍需在 Canvas 站点内手动填写 API Key
 - 页面复用用户可用分组与 API Key 数据，先选分组，再选择该分组下 active API Key
 - AI 对话直接使用选中的真实 API Key 调用现有 `POST /v1/chat/completions`
-- AI 生图用户应选择 gpt-image 分组，底层属于 OpenAI 图片通道，直接调用现有 `POST /v1/images/generations`
+- 旧 `/ai/images` 路由和 `AiImageGenerationView.vue` 暂保留，可直接访问；该页面用户应选择 gpt-image 分组，底层属于 OpenAI 图片通道，直接调用现有 `POST /v1/images/generations`
 - 不新增 JWT 后端代理接口，继续复用现有网关的 API Key 鉴权、分组路由、账号调度、计费、限额和用量日志
 
 ### 用户文档
@@ -115,7 +117,7 @@ sub2api/
 ### 部署信息
 - **服务器**：Oracle Cloud ARM
 - **域名**：`ai.zh-zh.top`
-- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前自定义构建版本基于官方 `v0.1.142`，镜像内版本应显示为 `0.1.142-zz`；可回滚官方 `weishaw/sub2api:0.1.142`）
+- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前自定义构建版本基于官方 `v0.1.144`，镜像内版本应显示为 `0.1.144-zz`；可回滚官方 `weishaw/sub2api:0.1.144`）
 - **部署路径**：`/opt/sub2api/`
 - **配置文件**：`/opt/sub2api/.env`
 
@@ -159,7 +161,9 @@ sub2api/
 - 2026-06-22 已将官方 `v0.1.138` 合并到自定义分支，保留 AI 对话/AI 生图功能、支付人民币符号补丁、历史图片计费识别逻辑和专属客户端教程文档，并把 `backend/cmd/server/VERSION` 同步为 `0.1.138` 以构建 `0.1.138-zz` 自定义镜像；GitHub Actions run `27957305480` 成功推送稳定标签 `chat-image-tools` 和短 SHA 标签 `chat-image-tools-edd2425`，manifest digest `sha256:4fa76c3010ce58e39a02dd145518156b9e4f65668e8c69b9110a6225c3e2131c`
 - 2026-06-27 已将官方 `v0.1.139` 合并到自定义分支；按用户确认，长期二改仅保留 AI 对话、AI 生图和支付人民币符号补丁，图片计费等其他逻辑跟随官方；已把 `backend/cmd/server/VERSION` 同步为 `0.1.139` 以构建 `0.1.139-zz` 自定义镜像；GitHub Actions run `28276433805` 成功推送稳定标签 `chat-image-tools` 和短 SHA 标签 `chat-image-tools-338f326`，manifest digest `sha256:a83294cf99aae8147745440224125f5866a93f72e956c7dec892120f9e14ffed`
 - 2026-06-30 已将官方 `v0.1.141` 合并到自定义分支，保留 AI 对话、AI 生图和支付人民币符号补丁；官方 `v0.1.141` 已修复订阅订单不应套用余额充值倍率的问题，本次支付订单逻辑和测试采用官方版本，并把 `backend/cmd/server/VERSION` 同步为 `0.1.141` 以构建 `0.1.141-zz` 自定义镜像；GitHub Actions run `28452856490` 成功推送稳定标签 `chat-image-tools` 和短 SHA 标签预计为 `chat-image-tools-3097596`
-- 2026-07-01 已将官方 `v0.1.142` 合并到自定义分支，保留 AI 对话、AI 生图和支付人民币符号补丁；本次合并无冲突，并把 `backend/cmd/server/VERSION` 同步为 `0.1.142` 以构建 `0.1.142-zz` 自定义镜像；本地 Docker 构建依赖 GitHub Actions，因为当前 Windows/Git Bash 环境没有 `docker` CLI
+- 2026-07-01 已将官方 `v0.1.142` 合并到自定义分支，保留 AI 对话、AI 生图和支付人民币符号补丁；本次合并无冲突，并把 `backend/cmd/server/VERSION` 同步为 `0.1.142` 以构建 `0.1.142-zz` 自定义镜像；GitHub Actions run `28523495316` 成功推送稳定标签 `chat-image-tools` 和短 SHA 标签预计为 `chat-image-tools-4a199c8`，本地 Docker 构建未执行（当前 Windows/Git Bash 环境没有 `docker` CLI）
+- 2026-07-02 已将官方 `v0.1.143` 合并到自定义分支，保留 AI 对话、AI 生图和支付人民币符号补丁；本次合并无冲突，并把 `backend/cmd/server/VERSION` 同步为 `0.1.143` 以构建 `0.1.143-zz` 自定义镜像；GitHub Actions run `28599090502` 成功推送稳定标签 `chat-image-tools` 和短 SHA 标签 `chat-image-tools-11e0b2a`，manifest digest `sha256:155fdb66a8d5cfe5517d50f6694e8ee330e7fc0565d57048ce418f8166433d22`
+- 2026-07-04 已将官方 `v0.1.144` 合并到自定义分支，保留 AI 对话、AI 生图和支付人民币符号补丁；本次合并无冲突，并把 `backend/cmd/server/VERSION` 同步为 `0.1.144` 以构建 `0.1.144-zz` 自定义镜像；本地前端验证通过，后端 `go test ./...` 未执行（当前 Windows/Git Bash 环境没有 `go` CLI）；GitHub Actions run `28699907706` 成功推送稳定标签 `chat-image-tools` 和短 SHA 标签 `chat-image-tools-0d5821b`，manifest digest `sha256:3473d4360628d050cbd5afc4224d3ca87530bb5e1bbc8762c0e0cf521005a581`
 - 支付金额人民币符号修复作为 fork 上的长期补丁保留，后续官方更新时直接把 upstream 合并到 `feature/chat-image-tools`，只在同一块 UI 有冲突时再处理
 
 ### 备份存储

@@ -398,6 +398,7 @@ export default {
     apiKeys: 'API 密钥',
     aiChat: 'AI 对话',
     aiImages: 'AI 生图',
+    infiniteCanvas: '无限画布',
     usage: '使用记录',
     redeem: '兑换',
     affiliate: '邀请返利',

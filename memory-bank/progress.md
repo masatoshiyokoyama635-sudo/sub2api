@@ -29,6 +29,12 @@
 - [x] 左侧侧边栏新增 AI 对话 / AI 生图入口，并补充中英文国际化文案
 - [x] 前端单元测试、类型检查、lint 和生产构建通过
 
+### Canvas 入口适配（2026-07-04）
+- [x] 按用户确认，将左侧侧边栏原“AI 生图”入口替换为“无限画布”入口，新标签页打开 `https://canvas.zh-zh.top`
+- [x] 第一阶段只做纯外链跳转，不传 API Key、Base URL、用户 token、user_id 或任何 query/hash 参数；旧 `/ai/images` 路由和页面暂保留但不再作为侧边栏入口
+- [x] 已补充 `nav.infiniteCanvas` 中英文文案，并新增 AppSidebar 目标测试覆盖固定 Canvas URL、新标签页、安全 rel/referrerpolicy 和不再使用 `nav.aiImages` 作为侧边栏图片入口
+- [x] 验证通过：`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run test:run -- src/components/layout/__tests__/AppSidebar.spec.ts`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run typecheck`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run lint:check`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run build`
+
 ### 用户教程文档（2026-05-28）
 - [x] 基于原 `zh-ai 中转站说明文档.pdf` 的 12 页文本和当前源码事实，重写 zh-ai 用户使用说明
 - [x] 新增 `docs/ZH_AI_USER_GUIDE_CN.md`，覆盖真实控制台 URL、网关接口、鉴权方式、网页 AI 对话和网页 AI 生图功能
@@ -109,6 +115,15 @@
 - [x] 2026-07-01 官方发布 `v0.1.142` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话、AI 生图和支付人民币符号补丁；本次合并无冲突
 - [x] 2026-07-01 已将 `backend/cmd/server/VERSION` 同步为 `0.1.142`，用于重新构建 `0.1.142-zz` 自定义 GHCR 镜像；同步修正 `BulkEditAccountModal` 测试中 Antigravity 图片映射预设的上游文案变更（`passthrough`）
 - [x] 2026-07-01 本地前端验证通过：`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run typecheck`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-142-fixed.json`（JSON 摘要 `success: true`、`770/770` 通过）、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run build`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run lint:check`；`git diff --check` 和精确冲突标记检查通过；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`），本地 Docker 构建未执行（本机 PATH 中没有 `docker`）
+- [x] 2026-07-01 已提交并推送 commit `4a199c82`（`chore: merge upstream v0.1.142`）到 fork 的 `feature/chat-image-tools` 分支；GitHub Actions run `28523495316` 成功构建并推送 `0.1.142-zz` 自定义 GHCR 镜像（稳定标签 `chat-image-tools`，短 SHA 标签预计为 `chat-image-tools-4a199c8`）
+- [x] 2026-07-02 官方发布 `v0.1.143` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话、AI 生图和支付人民币符号补丁；本次合并无冲突
+- [x] 2026-07-02 已将 `backend/cmd/server/VERSION` 同步为 `0.1.143`，用于重新构建 `0.1.143-zz` 自定义 GHCR 镜像；上游新增 `SubscriptionPlanCard` 依赖 Pinia 后，同步修复 `currencyDisplay.spec.ts` 的测试挂载环境
+- [x] 2026-07-02 本地前端验证通过：`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run typecheck`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run lint:check`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-143-fixed.json`（JSON 摘要 `success: true`、`813/813` 通过）、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run build`；`git diff --check` 通过；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`），本地 Docker 构建未执行（本机 PATH 中没有 `docker`）
+- [x] 2026-07-02 已提交并推送 commit `11e0b2a8`（`chore: merge upstream v0.1.143`）到 fork 的 `feature/chat-image-tools` 分支；GitHub Actions run `28599090502` 成功构建并推送 `0.1.143-zz` 自定义 GHCR 镜像（稳定标签 `chat-image-tools`，短 SHA 标签 `chat-image-tools-11e0b2a`，manifest digest `sha256:155fdb66a8d5cfe5517d50f6694e8ee330e7fc0565d57048ce418f8166433d22`）
+- [x] 2026-07-04 官方发布 `v0.1.144` 后，已合并到自定义 `feature/chat-image-tools` 分支并保留 AI 对话、AI 生图和支付人民币符号补丁；本次合并无冲突
+- [x] 2026-07-04 已将 `backend/cmd/server/VERSION` 同步为 `0.1.144`，用于重新构建 `0.1.144-zz` 自定义 GHCR 镜像
+- [x] 2026-07-04 本地前端验证通过：`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run typecheck`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run lint:check`、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run test:run -- --reporter=json --outputFile=vitest-results-144.json`（JSON 摘要 `success: true`、`820/820` 通过）、`npm_config_cache=E:/claude-cache/npm npm --prefix frontend run build`；`git diff --check` 和精确冲突标记检查通过；后端 `go test ./...` 未执行（本机 PATH 中没有 `go`）
+- [x] 2026-07-04 已提交并推送 commit `0d5821be`（`chore: merge upstream v0.1.144`）到 fork 的 `feature/chat-image-tools` 分支；GitHub Actions run `28699907706` 成功构建并推送 `0.1.144-zz` 自定义 GHCR 镜像（稳定标签 `chat-image-tools`，短 SHA 标签 `chat-image-tools-0d5821b`，manifest digest `sha256:3473d4360628d050cbd5afc4224d3ca87530bb5e1bbc8762c0e0cf521005a581`）；同提交的 CI 与 Security Scan 也成功
 
 ### 支付界面货币显示修复（2026-05-01）
 - [x] 确认用户侧充值/订阅页面存在支付金额符号显示问题：自定义充值金额输入框和订阅套餐卡价格使用了 `$`

@@ -398,6 +398,7 @@ export default {
     apiKeys: 'API Keys',
     aiChat: 'AI Chat',
     aiImages: 'AI Images',
+    infiniteCanvas: 'Infinite Canvas',
     usage: 'Usage',
     redeem: 'Redeem',
     affiliate: 'Affiliate Rebates',
