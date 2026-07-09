@@ -658,9 +658,22 @@ func parseVersion(v string) [3]int {
 	parts := strings.Split(v, ".")
 	result := [3]int{0, 0, 0}
 	for i := 0; i < len(parts) && i < 3; i++ {
-		if parsed, err := strconv.Atoi(parts[i]); err == nil {
+		part := leadingNumericVersionPart(parts[i])
+		if part == "" {
+			continue
+		}
+		if parsed, err := strconv.Atoi(part); err == nil {
 			result[i] = parsed
 		}
 	}
 	return result
+}
+
+func leadingNumericVersionPart(part string) string {
+	for i, r := range part {
+		if r < '0' || r > '9' {
+			return part[:i]
+		}
+	}
+	return part
 }

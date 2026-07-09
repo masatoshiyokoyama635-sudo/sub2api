@@ -69,6 +69,48 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
 }
 
+func TestUpdateServiceCheckUpdateTreatsCustomSuffixAsSameVersion(t *testing.T) {
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{
+			release: &GitHubRelease{
+				TagName: "v0.1.149",
+				Name:    "v0.1.149",
+			},
+		},
+		"0.1.149-zz",
+		"release",
+	)
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.False(t, info.HasUpdate)
+	require.Equal(t, "0.1.149-zz", info.CurrentVersion)
+	require.Equal(t, "0.1.149", info.LatestVersion)
+}
+
+func TestCompareVersionsHandlesSuffixes(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		latest  string
+		want    int
+	}{
+		{name: "same with custom suffix", current: "0.1.149-zz", latest: "v0.1.149", want: 0},
+		{name: "same when latest has custom suffix", current: "v0.1.149", latest: "0.1.149-zz", want: 0},
+		{name: "same with build metadata", current: "0.1.149+custom", latest: "v0.1.149", want: 0},
+		{name: "custom suffix older", current: "0.1.148-zz", latest: "v0.1.149", want: -1},
+		{name: "custom suffix newer", current: "0.1.150-zz", latest: "v0.1.149", want: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, compareVersions(tt.current, tt.latest))
+		})
+	}
+}
+
 func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateService {
 	return NewUpdateService(
 		&updateServiceCacheStub{},
@@ -129,6 +171,23 @@ func TestUpdateServiceListRollbackVersionsEmptyWhenNoneOlder(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Empty(t, versions)
+}
+
+func TestUpdateServiceListRollbackVersionsWithCustomRuntimeVersion(t *testing.T) {
+	releases := []*GitHubRelease{
+		{TagName: "v0.1.150"},
+		{TagName: "v0.1.149"},
+		{TagName: "v0.1.148"},
+		{TagName: "v0.1.147"},
+	}
+	svc := newRollbackTestService("0.1.149-zz", releases)
+
+	versions, err := svc.ListRollbackVersions(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, versions, 2)
+	require.Equal(t, "0.1.148", versions[0].Version)
+	require.Equal(t, "0.1.147", versions[1].Version)
 }
 
 func TestUpdateServiceListRollbackVersionsPropagatesFetchError(t *testing.T) {
