@@ -74,11 +74,11 @@ func TestUpdateServiceCheckUpdateTreatsCustomSuffixAsSameVersion(t *testing.T) {
 		&updateServiceCacheStub{},
 		&updateServiceGitHubClientStub{
 			release: &GitHubRelease{
-				TagName: "v0.1.150",
-				Name:    "v0.1.150",
+				TagName: "v0.1.151",
+				Name:    "v0.1.151",
 			},
 		},
-		"0.1.150-zz",
+		"0.1.151-zz",
 		"release",
 	)
 
@@ -86,8 +86,8 @@ func TestUpdateServiceCheckUpdateTreatsCustomSuffixAsSameVersion(t *testing.T) {
 
 	require.NoError(t, err)
 	require.False(t, info.HasUpdate)
-	require.Equal(t, "0.1.150-zz", info.CurrentVersion)
-	require.Equal(t, "0.1.150", info.LatestVersion)
+	require.Equal(t, "0.1.151-zz", info.CurrentVersion)
+	require.Equal(t, "0.1.151", info.LatestVersion)
 }
 
 func TestCompareVersionsHandlesSuffixes(t *testing.T) {
@@ -175,19 +175,19 @@ func TestUpdateServiceListRollbackVersionsEmptyWhenNoneOlder(t *testing.T) {
 
 func TestUpdateServiceListRollbackVersionsWithCustomRuntimeVersion(t *testing.T) {
 	releases := []*GitHubRelease{
+		{TagName: "v0.1.152"},
 		{TagName: "v0.1.151"},
 		{TagName: "v0.1.150"},
 		{TagName: "v0.1.149"},
-		{TagName: "v0.1.148"},
 	}
-	svc := newRollbackTestService("0.1.150-zz", releases)
+	svc := newRollbackTestService("0.1.151-zz", releases)
 
 	versions, err := svc.ListRollbackVersions(context.Background())
 
 	require.NoError(t, err)
 	require.Len(t, versions, 2)
-	require.Equal(t, "0.1.149", versions[0].Version)
-	require.Equal(t, "0.1.148", versions[1].Version)
+	require.Equal(t, "0.1.150", versions[0].Version)
+	require.Equal(t, "0.1.149", versions[1].Version)
 }
 
 func TestUpdateServiceListRollbackVersionsPropagatesFetchError(t *testing.T) {
