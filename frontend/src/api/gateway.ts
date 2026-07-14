@@ -48,11 +48,12 @@ async function parseGatewayResponse<T>(response: Response): Promise<T> {
   const contentType = response.headers.get('content-type') || ''
   const body = contentType.includes('application/json') ? await response.json() : await response.text()
 
-  if (!response.ok) {
-    if (body && typeof body === 'object') {
-      const error = (body as { error?: { message?: string }; message?: string }).error
-      throw new Error(error?.message || (body as { message?: string }).message || `Gateway request failed with status ${response.status}`)
+  if (body && typeof body === 'object') {
+    const errorBody = body as { error?: { message?: string }; message?: string }
+    if (!response.ok || errorBody.error) {
+      throw new Error(errorBody.error?.message || errorBody.message || `Gateway request failed with status ${response.status}`)
     }
+  } else if (!response.ok) {
     throw new Error(String(body || `Gateway request failed with status ${response.status}`))
   }
 

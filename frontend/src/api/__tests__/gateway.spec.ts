@@ -74,4 +74,18 @@ describe('gatewayAPI', () => {
       stream: false
     })).rejects.toThrow('quota exceeded')
   })
+
+  it('preserves image errors after JSON keepalive commits HTTP 200', async () => {
+    fetchMock.mockResolvedValue(new Response(' \n{"error":{"message":"image quota exceeded"}}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    }))
+
+    await expect(gatewayAPI.createImageGeneration('sk-image', {
+      model: 'gpt-image-2',
+      prompt: 'toy poster',
+      size: '1024x1024',
+      n: 1
+    })).rejects.toThrow('image quota exceeded')
+  })
 })
