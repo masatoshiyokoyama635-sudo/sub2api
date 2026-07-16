@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +10,10 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEmbeddedVersionMatchesRelease(t *testing.T) {
+	require.Equal(t, "0.1.156", strings.TrimSpace(embeddedVersion))
+}
 
 func TestProvideServiceBuildInfo(t *testing.T) {
 	in := handler.BuildInfo{
