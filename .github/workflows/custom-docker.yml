@@ -6,29 +6,88 @@ on:
       - feature/chat-image-tools
   workflow_dispatch:
 
+concurrency:
+  group: custom-docker-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
-  packages: write
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
   STABLE_TAG: chat-image-tools
 
 jobs:
-  build:
+  test:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Compile backend packages
+        working-directory: backend
+        run: go test ./... -run '^$'
+
+      - name: Run custom backend regressions
+        working-directory: backend
+        run: go test -tags unit ./cmd/server ./internal/service -run 'TestEmbeddedVersionMatchesRelease|TestUpdateService|TestCompareVersionsHandlesSuffixes|TestContentModerationRuntimeSnapshotRefreshFailureKeepsStaleConfig'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate frontend
+        working-directory: frontend
+        run: |
+          pnpm run typecheck
+          pnpm run lint:check
+          pnpm run test:run
+          pnpm run build
+
+  build:
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -46,8 +105,23 @@ jobs:
           echo "build_date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
+      - name: Protect immutable commit tag
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          TAG="chat-image-tools-${GITHUB_SHA}"
+          if docker buildx imagetools inspect "${IMAGE}:${TAG}" >/tmp/tag-inspect.txt 2>&1; then
+            echo "Refusing to overwrite existing immutable tag ${TAG}" >&2
+            exit 1
+          fi
+          if ! grep -Eqi 'not found|manifest unknown' /tmp/tag-inspect.txt; then
+            cat /tmp/tag-inspect.txt >&2
+            echo "Unable to verify immutable tag availability" >&2
+            exit 1
+          fi
+
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: ./Dockerfile
@@ -55,11 +129,13 @@ jobs:
           push: true
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}-zz
+            BUILD_TYPE=custom
             COMMIT=${{ github.sha }}
             DATE=${{ steps.meta.outputs.build_date }}
           tags: |
             ${{ steps.meta.outputs.image }}:${{ env.STABLE_TAG }}
             ${{ steps.meta.outputs.image }}:${{ env.STABLE_TAG }}-${{ steps.meta.outputs.short_sha }}
+            ${{ steps.meta.outputs.image }}:${{ env.STABLE_TAG }}-${{ github.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

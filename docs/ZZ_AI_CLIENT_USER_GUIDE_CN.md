@@ -541,14 +541,16 @@ POST https://ai.zh-zh.top/v1/images/generations
 
 > 注意：参考 Fern 文档里的图像生成示例使用 `/v1/chat/completions` + `modalities`。zz 中转站当前用户侧生图页面使用的是 OpenAI Images 路径 `/v1/images/generations`，请优先按本文档填写。
 
-### 3.1 网页 AI 生图
+### 3.1 无限画布与兼容网页 AI 生图
 
-入口：`https://ai.zh-zh.top/ai/images`
+左侧菜单的 **无限画布** 会在新标签页打开 `https://canvas.zh-zh.top`。跳转不会携带 API Key、登录 token、用户 ID 或其他参数，需要在画布站点内手动填写 API Key。
 
-操作步骤：
+旧版兼容入口：`https://ai.zh-zh.top/ai/images`（不再显示在左侧菜单）。
+
+兼容页操作步骤：
 
 1. 登录控制台。
-2. 点击左侧菜单 **AI 生图**。
+2. 直接访问 `https://ai.zh-zh.top/ai/images`。
 3. 选择 **gpt-image 分组**。
 4. 选择该分组下 active 状态的 API Key。
 5. 填写图片模型名，例如 `gpt-image-2`。

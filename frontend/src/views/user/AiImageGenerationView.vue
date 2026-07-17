@@ -181,6 +181,7 @@ import { gatewayAPI } from '@/api/gateway'
 import { useGatewayCredentials } from '@/composables/useGatewayCredentials'
 import { useAppStore } from '@/stores'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { createSafeImageSource } from '@/utils/imageSource'
 
 interface GeneratedImage {
   id: string
@@ -231,21 +232,6 @@ const canGenerate = computed(() => {
   return !submitting.value && !!selectedKey.value?.key && !!model.value.trim() && !!prompt.value.trim()
 })
 
-function createSafeImageSource(item: { url?: string; b64_json?: string }): string {
-  if (item.b64_json) {
-    return `data:image/png;base64,${item.b64_json}`
-  }
-
-  if (!item.url) return ''
-
-  try {
-    const url = new URL(item.url)
-    return url.protocol === 'https:' ? url.toString() : ''
-  } catch {
-    return ''
-  }
-}
-
 async function generateImages() {
   if (!canGenerate.value || !selectedKey.value) return
 
@@ -261,7 +247,8 @@ async function generateImages() {
         model: model.value.trim(),
         prompt: currentPrompt,
         size: String(size.value || '1024x1024'),
-        n: Number(count.value || 1)
+        n: Number(count.value || 1),
+        response_format: 'b64_json'
       },
       abortController.value.signal
     )
@@ -269,7 +256,7 @@ async function generateImages() {
     lastLatency.value = Math.round(performance.now() - startedAt)
     images.value = (response.data || [])
       .map((item): GeneratedImage | null => {
-        const src = createSafeImageSource(item)
+        const src = createSafeImageSource(item, window.location.origin)
         return src ? { id: crypto.randomUUID(), src, prompt: item.revised_prompt || currentPrompt } : null
       })
       .filter((item): item is GeneratedImage => item !== null)

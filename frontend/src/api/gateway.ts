@@ -1,3 +1,5 @@
+import { buildGatewayUrl } from '@/api/url'
+
 export interface GatewayChatMessage {
   role: 'system' | 'user' | 'assistant'
   content: string
@@ -30,6 +32,7 @@ export interface GatewayImageRequest {
   prompt: string
   size: string
   n: number
+  response_format: 'b64_json'
 }
 
 export interface GatewayImageItem {
@@ -60,8 +63,19 @@ async function parseGatewayResponse<T>(response: Response): Promise<T> {
   return body as T
 }
 
+function trustedGatewayUrl(path: string): string {
+  const resolved = buildGatewayUrl(path)
+  if (typeof window === 'undefined') return resolved
+
+  const target = new URL(resolved, window.location.origin)
+  if (target.origin !== window.location.origin) {
+    throw new Error('Gateway requests carrying API keys must use the current site origin')
+  }
+  return target.toString()
+}
+
 async function postGateway<T>(path: string, apiKey: string, payload: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(trustedGatewayUrl(path), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,

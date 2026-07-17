@@ -59,18 +59,23 @@ describe('Payment currency display', () => {
     expect(wrapper.text()).not.toContain('$')
   })
 
-  it('uses RMB symbol for subscription price while keeping USD quota symbols', () => {
+  it.each([
+    { currency: undefined, symbol: '¥', label: '' },
+    { currency: 'CNY', symbol: '¥', label: 'CNY' },
+    { currency: 'USD', symbol: '$', label: 'USD' },
+    { currency: 'NZD', symbol: 'NZ$', label: 'NZD' },
+  ])('uses $symbol for $currency subscription prices while keeping USD quota symbols', ({ currency, symbol, label }) => {
     const wrapper = mount(SubscriptionPlanCard, {
       props: {
-        plan: basePlan,
+        plan: { ...basePlan, currency },
       },
       global: {
         plugins: [createPinia()],
       },
     })
 
-    expect(wrapper.text()).toContain('¥128')
-    expect(wrapper.text()).toContain('¥168')
+    expect(wrapper.text()).toContain(`${symbol}128`)
+    expect(wrapper.text()).toContain(`${symbol}168${label}`)
     expect(wrapper.text()).toContain('$10')
   })
 })

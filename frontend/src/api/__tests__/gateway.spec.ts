@@ -1,4 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const buildGatewayUrlMock = vi.fn((path: string) => `${window.location.origin}${path}`)
+
+vi.mock('@/api/url', () => ({
+  buildGatewayUrl: (path: string) => buildGatewayUrlMock(path),
+}))
+
 import { gatewayAPI } from '@/api/gateway'
 
 const fetchMock = vi.fn()
@@ -6,6 +13,7 @@ const fetchMock = vi.fn()
 describe('gatewayAPI', () => {
   beforeEach(() => {
     fetchMock.mockReset()
+    buildGatewayUrlMock.mockImplementation((path: string) => `${window.location.origin}${path}`)
     vi.stubGlobal('fetch', fetchMock)
     localStorage.clear()
   })
@@ -23,7 +31,7 @@ describe('gatewayAPI', () => {
       stream: false
     })
 
-    expect(fetchMock).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/v1/chat/completions', expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({
         Authorization: 'Bearer sk-selected',
@@ -47,19 +55,33 @@ describe('gatewayAPI', () => {
       model: 'gpt-image-2',
       prompt: 'toy poster',
       size: '1024x1024',
-      n: 2
+      n: 2,
+      response_format: 'b64_json'
     })
 
-    expect(fetchMock).toHaveBeenCalledWith('/v1/images/generations', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/v1/images/generations', expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({ Authorization: 'Bearer sk-image' }),
       body: JSON.stringify({
         model: 'gpt-image-2',
         prompt: 'toy poster',
         size: '1024x1024',
-        n: 2
+        n: 2,
+        response_format: 'b64_json'
       })
     }))
+  })
+
+  it('fails closed before sending an API key to a cross-origin gateway', async () => {
+    buildGatewayUrlMock.mockReturnValue('https://api.example.com/v1/chat/completions')
+
+    await expect(gatewayAPI.createChatCompletion('sk-selected', {
+      model: 'gpt-5.5',
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: false
+    })).rejects.toThrow('must use the current site origin')
+
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('preserves OpenAI-compatible error messages', async () => {
@@ -85,7 +107,8 @@ describe('gatewayAPI', () => {
       model: 'gpt-image-2',
       prompt: 'toy poster',
       size: '1024x1024',
-      n: 1
+      n: 1,
+      response_format: 'b64_json'
     })).rejects.toThrow('image quota exceeded')
   })
 })

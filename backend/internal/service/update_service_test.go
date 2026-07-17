@@ -28,12 +28,14 @@ func (s *updateServiceCacheStub) SetUpdateInfo(_ context.Context, data string, _
 }
 
 type updateServiceGitHubClientStub struct {
-	release        *GitHubRelease
-	recentReleases []*GitHubRelease
-	recentErr      error
+	release          *GitHubRelease
+	recentReleases   []*GitHubRelease
+	recentErr        error
+	latestFetchCalls int
 }
 
 func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, string) (*GitHubRelease, error) {
+	s.latestFetchCalls++
 	return s.release, nil
 }
 
@@ -69,6 +71,43 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
 }
 
+func TestUpdateServiceCustomBuildRejectsOfficialOnlineUpdate(t *testing.T) {
+	githubClient := &updateServiceGitHubClientStub{
+		release: &GitHubRelease{TagName: "v0.1.160", Name: "v0.1.160"},
+	}
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		githubClient,
+		"0.1.159-zz",
+		"custom",
+	)
+
+	err := svc.PerformUpdate(context.Background())
+
+	require.ErrorIs(t, err, ErrCustomBuildOnlineUpdateUnsupported)
+	require.Zero(t, githubClient.latestFetchCalls)
+}
+
+func TestUpdateServiceCustomBuildRejectsOfficialOnlineRollback(t *testing.T) {
+	githubClient := &updateServiceGitHubClientStub{
+		recentReleases: []*GitHubRelease{{TagName: "v0.1.158"}},
+	}
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		githubClient,
+		"0.1.159-zz",
+		"custom",
+	)
+
+	_, listErr := svc.ListRollbackVersions(context.Background())
+	rollbackBackupErr := svc.Rollback()
+	rollbackErr := svc.RollbackToVersion(context.Background(), "0.1.158")
+
+	require.ErrorIs(t, listErr, ErrCustomBuildOnlineUpdateUnsupported)
+	require.ErrorIs(t, rollbackBackupErr, ErrCustomBuildOnlineUpdateUnsupported)
+	require.ErrorIs(t, rollbackErr, ErrCustomBuildOnlineUpdateUnsupported)
+}
+
 func TestUpdateServiceCheckUpdateTreatsCustomSuffixAsSameVersion(t *testing.T) {
 	svc := NewUpdateService(
 		&updateServiceCacheStub{},
@@ -102,6 +141,10 @@ func TestCompareVersionsHandlesSuffixes(t *testing.T) {
 		{name: "same with build metadata", current: "0.1.156+custom", latest: "v0.1.156", want: 0},
 		{name: "custom suffix older", current: "0.1.155-zz", latest: "v0.1.156", want: -1},
 		{name: "custom suffix newer", current: "0.1.157-zz", latest: "v0.1.156", want: 1},
+		{name: "release candidate remains older than release", current: "0.1.159-rc1", latest: "v0.1.159", want: -1},
+		{name: "beta remains older than release", current: "v0.1.159-beta.1", latest: "0.1.159", want: -1},
+		{name: "release remains newer than release candidate", current: "0.1.159", latest: "v0.1.159-rc1", want: 1},
+		{name: "invalid current version sorts below valid release", current: "0.1.159garbage", latest: "v0.1.159", want: -1},
 	}
 
 	for _, tt := range tests {
