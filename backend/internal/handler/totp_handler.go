@@ -217,6 +217,10 @@ func (h *TotpHandler) StepUp(c *gin.Context) {
 	}
 
 	sessionKey := middleware2.StepUpSessionKey(c, subject.UserID)
+	if sessionKey == "" {
+		response.Unauthorized(c, "A session-bound JWT is required for step-up verification")
+		return
+	}
 	ttl, err := h.totpService.VerifyStepUp(c.Request.Context(), subject.UserID, sessionKey, req.Code)
 	if err != nil {
 		response.ErrorFrom(c, err)

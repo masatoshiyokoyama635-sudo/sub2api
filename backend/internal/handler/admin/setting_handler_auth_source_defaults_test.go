@@ -17,8 +17,11 @@ import (
 )
 
 type settingHandlerRepoStub struct {
-	values      map[string]string
-	lastUpdates map[string]string
+	values       map[string]string
+	lastUpdates  map[string]string
+	atomicCalls  int
+	inAtomic     bool
+	beforeAtomic func(*settingHandlerRepoStub)
 }
 
 func (s *settingHandlerRepoStub) Get(ctx context.Context, key string) (*service.Setting, error) {
@@ -49,6 +52,32 @@ func (s *settingHandlerRepoStub) GetMultiple(ctx context.Context, keys []string)
 }
 
 func (s *settingHandlerRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
+	return s.applyUpdates(settings)
+}
+
+func (s *settingHandlerRepoStub) UpdateSettingsAtomic(_ context.Context, request service.SettingAtomicUpdate) error {
+	s.atomicCalls++
+	if s.beforeAtomic != nil {
+		s.beforeAtomic(s)
+	}
+	current := service.SettingSecurityBaseline{
+		StepUpEnabled:      s.values[service.SettingKeyStepUpEnabled] == "true",
+		RiskControlEnabled: s.values[service.SettingKeyRiskControlEnabled] == "true",
+	}
+	if current != request.Baseline {
+		return service.ErrSettingsUpdateConflict
+	}
+	s.inAtomic = true
+	defer func() { s.inAtomic = false }()
+	if request.Authorize != nil {
+		if err := request.Authorize(current); err != nil {
+			return err
+		}
+	}
+	return s.applyUpdates(request.Updates)
+}
+
+func (s *settingHandlerRepoStub) applyUpdates(settings map[string]string) error {
 	s.lastUpdates = make(map[string]string, len(settings))
 	for key, value := range settings {
 		s.lastUpdates[key] = value
@@ -204,6 +233,36 @@ func TestSettingHandler_UpdateSettings_PreservesOmittedAuthSourceDefaults(t *tes
 	require.Equal(t, 12.75, data["auth_source_default_email_balance"])
 	require.Equal(t, float64(8), data["auth_source_default_email_concurrency"])
 	require.Equal(t, true, data["force_email_on_third_party_signup"])
+}
+
+func TestSettingHandler_UpdateSettings_WritesMainAuthFastAndPaymentInOneAtomicUpsert(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerRepoStub{values: map[string]string{}}
+	svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
+	handler := NewSettingHandler(svc, nil, nil, nil, nil, nil, nil)
+
+	body := map[string]any{
+		"registration_enabled":              true,
+		"auth_source_default_email_balance": 12.75,
+		"openai_fast_policy_settings": map[string]any{
+			"rules": []map[string]any{{
+				"service_tier": "priority",
+				"action":       "pass",
+				"scope":        "all",
+			}},
+		},
+		"payment_enabled":                     true,
+		"payment_balance_recharge_multiplier": 2.5,
+	}
+	rec := doUpdateSettings(t, handler, body, nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, 1, repo.atomicCalls)
+	require.Equal(t, "true", repo.lastUpdates[service.SettingKeyRegistrationEnabled])
+	require.Equal(t, "12.75000000", repo.lastUpdates[service.SettingKeyAuthSourceDefaultEmailBalance])
+	require.JSONEq(t, `{"rules":[{"service_tier":"priority","action":"pass","scope":"all"}]}`, repo.lastUpdates[service.SettingKeyOpenAIFastPolicySettings])
+	require.Equal(t, "true", repo.lastUpdates[service.SettingPaymentEnabled])
+	require.Equal(t, "2.50", repo.lastUpdates[service.SettingBalanceRechargeMult])
 }
 
 func TestSettingHandler_UpdateSettings_PersistsPaymentVisibleMethodsAndAdvancedScheduler(t *testing.T) {

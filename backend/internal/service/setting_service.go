@@ -22,7 +22,32 @@ var (
 		"DEFAULT_SUBSCRIPTION_GROUP_DUPLICATE",
 		"default subscription group cannot be duplicated",
 	)
+	ErrSettingsUpdateConflict = infraerrors.Conflict(
+		"SETTINGS_UPDATE_CONFLICT",
+		"security settings changed while the update was being prepared; reload settings and retry",
+	)
+	ErrSettingsStrictAuthorizationRequired = infraerrors.Forbidden(
+		"SETTINGS_STRICT_AUTHORIZATION_REQUIRED",
+		"strict step-up authorization is required before disabling a security control",
+	)
 )
+
+// SettingSecurityBaseline is the concurrency-sensitive subset used to authorize
+// security-control transitions. Both values are read again under the repository's
+// transaction lock before any setting is written.
+type SettingSecurityBaseline struct {
+	StepUpEnabled      bool
+	RiskControlEnabled bool
+}
+
+// SettingAtomicUpdate describes one all-or-nothing settings write. Authorize is
+// invoked after the repository locks and reads the latest security baseline, but
+// before it writes any key.
+type SettingAtomicUpdate struct {
+	Updates   map[string]string
+	Baseline  SettingSecurityBaseline
+	Authorize func(current SettingSecurityBaseline) error
+}
 
 type SettingRepository interface {
 	Get(ctx context.Context, key string) (*Setting, error)

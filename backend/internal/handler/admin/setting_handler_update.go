@@ -11,10 +11,13 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
+
+var errSettingsAuthorizationResponseWritten = errors.New("settings authorization response written")
 
 // UpdateSettingsRequest 更新设置请求
 type UpdateSettingsRequest struct {
@@ -27,7 +30,8 @@ type UpdateSettingsRequest struct {
 	FrontendURL                      string                       `json:"frontend_url"`
 	InvitationCodeEnabled            bool                         `json:"invitation_code_enabled"`
 	TotpEnabled                      bool                         `json:"totp_enabled"`             // TOTP 双因素认证
-	SessionBindingEnabled            bool                         `json:"session_binding_enabled"`  // 会话 IP/UA 绑定
+	SessionBindingEnabled            *bool                        `json:"session_binding_enabled"`  // 会话 IP/UA 绑定（省略=保持现值）
+	StepUpEnabled                    *bool                        `json:"step_up_enabled"`          // 敏感操作 step-up 2FA（省略=保持现值）
 	AuditLogRetentionDays            int                          `json:"audit_log_retention_days"` // 审计日志保留天数
 	LoginAgreementEnabled            bool                         `json:"login_agreement_enabled"`
 	LoginAgreementMode               string                       `json:"login_agreement_mode"`
@@ -335,6 +339,41 @@ type UpdateSettingsRequest struct {
 
 // UpdateSettings 更新系统设置
 // PUT /api/v1/admin/settings
+// ensureActorTotpForStepUp 校验当前操作者具备开启 step-up 门控的条件：
+// 必须是真人管理员会话（admin API key 无法完成 TOTP step-up，拒绝）且本人已启用 TOTP。
+// 校验失败时写入错误响应并返回 false。
+func (h *SettingHandler) ensureActorTotpForStepUp(c *gin.Context) bool {
+	if c.GetString("auth_method") == service.AuditAuthMethodAdminAPIKey {
+		response.ErrorWithDetails(c, http.StatusForbidden,
+			"Admin API key cannot enable step-up verification; use an admin session with TOTP enabled",
+			"STEP_UP_ADMIN_API_KEY_FORBIDDEN", nil)
+		return false
+	}
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		response.ErrorWithDetails(c, http.StatusForbidden,
+			"Enabling step-up verification requires an authenticated admin session",
+			"STEP_UP_ENABLE_REQUIRES_TOTP", nil)
+		return false
+	}
+	if h.userService == nil {
+		response.InternalError(c, "Step-up precondition check unavailable")
+		return false
+	}
+	user, err := h.userService.GetByID(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return false
+	}
+	if !user.TotpEnabled {
+		response.ErrorWithDetails(c, http.StatusBadRequest,
+			"Enable two-factor authentication (TOTP) for your account before turning on step-up verification",
+			"STEP_UP_ENABLE_REQUIRES_TOTP", nil)
+		return false
+	}
+	return true
+}
+
 func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	var req UpdateSettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -351,6 +390,17 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+
+	// 两个安全开关的请求字段为指针：省略字段=保持现值，避免旧客户端/脚本
+	// 用不含新字段的全量 payload 保存设置时把安全开关静默重置。
+	sessionBindingEnabled := previousSettings.SessionBindingEnabled
+	if req.SessionBindingEnabled != nil {
+		sessionBindingEnabled = *req.SessionBindingEnabled
+	}
+	stepUpEnabled := previousSettings.StepUpEnabled
+	if req.StepUpEnabled != nil {
+		stepUpEnabled = *req.StepUpEnabled
 	}
 
 	// 验证参数
@@ -1181,7 +1231,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		FrontendURL:                      req.FrontendURL,
 		InvitationCodeEnabled:            req.InvitationCodeEnabled,
 		TotpEnabled:                      req.TotpEnabled,
-		SessionBindingEnabled:            req.SessionBindingEnabled,
+		SessionBindingEnabled:            sessionBindingEnabled,
+		StepUpEnabled:                    stepUpEnabled,
 		AuditLogRetentionDays:            req.AuditLogRetentionDays,
 		LoginAgreementEnabled:            req.LoginAgreementEnabled,
 		LoginAgreementMode:               loginAgreementMode,
@@ -1618,23 +1669,17 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		},
 		ForceEmailOnThirdPartySignup: boolValueOrDefault(req.ForceEmailOnThirdPartySignup, previousAuthSourceDefaults.ForceEmailOnThirdPartySignup),
 	}
-	if err := h.settingService.UpdateSettingsWithAuthSourceDefaults(c.Request.Context(), settings, authSourceDefaults); err != nil {
-		response.ErrorFrom(c, err)
-		return
+	securityBaseline := service.SettingSecurityBaseline{
+		StepUpEnabled:      previousSettings.StepUpEnabled,
+		RiskControlEnabled: previousSettings.RiskControlEnabled,
 	}
-
-	// Update OpenAI fast policy (stored under dedicated key, only when provided).
+	var fastPolicy *service.OpenAIFastPolicySettings
 	if req.OpenAIFastPolicySettings != nil {
-		if err := h.settingService.SetOpenAIFastPolicySettings(c.Request.Context(), openaiFastPolicySettingsFromDTO(req.OpenAIFastPolicySettings)); err != nil {
-			response.BadRequest(c, err.Error())
-			return
-		}
+		fastPolicy = openaiFastPolicySettingsFromDTO(req.OpenAIFastPolicySettings)
 	}
-
-	// Update payment configuration (integrated into system settings).
-	// Skip if no payment fields were provided (prevents accidental wipe).
-	if h.paymentConfigService != nil && hasPaymentFields(req) {
-		paymentReq := service.UpdatePaymentConfigRequest{
+	var paymentReq *service.UpdatePaymentConfigRequest
+	if hasPaymentFields(req) {
+		paymentReq = &service.UpdatePaymentConfigRequest{
 			Enabled:                   req.PaymentEnabled,
 			MinAmount:                 req.PaymentMinAmount,
 			MaxAmount:                 req.PaymentMaxAmount,
@@ -1658,14 +1703,42 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			CancelRateLimitMode:       req.PaymentCancelRateLimitMode,
 			AlipayForceQRCode:         req.PaymentAlipayForceQRCode,
 		}
-		if err := h.paymentConfigService.UpdatePaymentConfig(c.Request.Context(), paymentReq); err != nil {
+	}
+
+	err = h.settingService.UpdateSettingsAtomically(c.Request.Context(), service.SettingsAtomicUpdateInput{
+		Settings:                 settings,
+		AuthSourceDefaults:       authSourceDefaults,
+		OpenAIFastPolicySettings: fastPolicy,
+		PaymentConfig:            paymentReq,
+		SecurityBaseline:         securityBaseline,
+		Authorize: func(current service.SettingSecurityBaseline) error {
+			if settings.StepUpEnabled && !current.StepUpEnabled {
+				if !h.ensureActorTotpForStepUp(c) {
+					return errSettingsAuthorizationResponseWritten
+				}
+			}
+			stepUpDowngrade := current.StepUpEnabled && !settings.StepUpEnabled
+			riskControlDowngrade := current.RiskControlEnabled && req.RiskControlEnabled != nil && !*req.RiskControlEnabled
+			if stepUpDowngrade || riskControlDowngrade {
+				if !middleware.EnforceStepUpAlways(c, h.totpService, h.userService) {
+					return errSettingsAuthorizationResponseWritten
+				}
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		if !errors.Is(err, errSettingsAuthorizationResponseWritten) {
 			response.ErrorFrom(c, err)
-			return
 		}
-		// Refresh in-memory provider registry so config changes take effect immediately
-		if h.paymentService != nil {
-			h.paymentService.RefreshProviders(c.Request.Context())
-		}
+		return
+	}
+	// Runtime state is refreshed only after the atomic repository commit succeeds.
+	if h.opsService != nil {
+		h.opsService.SetMonitoringEnabled(settings.OpsMonitoringEnabled)
+	}
+	if paymentReq != nil && h.paymentService != nil {
+		h.paymentService.RefreshProviders(c.Request.Context())
 	}
 
 	h.auditSettingsUpdate(c, previousSettings, settings, previousAuthSourceDefaults, authSourceDefaults, req)
@@ -1710,6 +1783,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		TotpEnabled:                                            updatedSettings.TotpEnabled,
 		TotpEncryptionKeyConfigured:                            h.settingService.IsTotpEncryptionKeyConfigured(),
 		SessionBindingEnabled:                                  updatedSettings.SessionBindingEnabled,
+		StepUpEnabled:                                          updatedSettings.StepUpEnabled,
 		AuditLogRetentionDays:                                  updatedSettings.AuditLogRetentionDays,
 		LoginAgreementEnabled:                                  updatedSettings.LoginAgreementEnabled,
 		LoginAgreementMode:                                     updatedSettings.LoginAgreementMode,

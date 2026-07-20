@@ -16,6 +16,7 @@ func RegisterAdminRoutes(
 	adminAuth middleware.AdminAuthMiddleware,
 	auditLog middleware.AuditLogMiddleware,
 	stepUpAuth middleware.StepUpAuthMiddleware,
+	strictStepUpAuth middleware.StrictStepUpAuthMiddleware,
 	settingService *service.SettingService,
 ) {
 	admin := v1.Group("/admin")
@@ -108,11 +109,30 @@ func RegisterAdminRoutes(
 		// 风控中心
 		registerContentModerationRoutes(admin, h)
 
+		// 独立提示词输入审计
+		registerPromptAuditRoutes(admin, h, strictStepUpAuth)
+
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
 
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
+	}
+}
+
+func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StrictStepUpAuthMiddleware) {
+	promptAudit := admin.Group("/prompt-audit")
+	{
+		promptAudit.GET("/config", h.Admin.PromptAudit.GetConfig)
+		promptAudit.PUT("/config", gin.HandlerFunc(stepUpAuth), h.Admin.PromptAudit.UpdateConfig)
+		promptAudit.POST("/endpoints/probe", gin.HandlerFunc(stepUpAuth), h.Admin.PromptAudit.ProbeEndpoint)
+		promptAudit.GET("/runtime", h.Admin.PromptAudit.GetRuntime)
+		promptAudit.GET("/events", h.Admin.PromptAudit.ListEvents)
+		promptAudit.GET("/events/:id", gin.HandlerFunc(stepUpAuth), h.Admin.PromptAudit.GetEvent)
+		promptAudit.DELETE("/events/:id", gin.HandlerFunc(stepUpAuth), h.Admin.PromptAudit.DeleteEvent)
+		promptAudit.POST("/events/batch-delete", gin.HandlerFunc(stepUpAuth), h.Admin.PromptAudit.BatchDelete)
+		promptAudit.POST("/events/delete-preview", gin.HandlerFunc(stepUpAuth), h.Admin.PromptAudit.DeletePreview)
+		promptAudit.POST("/events/delete-by-filter", gin.HandlerFunc(stepUpAuth), h.Admin.PromptAudit.DeleteByFilter)
 	}
 }
 
@@ -215,6 +235,11 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		ops.GET("/request-errors/:id", h.Admin.Ops.GetRequestError)
 		ops.GET("/request-errors/:id/upstream-errors", h.Admin.Ops.ListRequestErrorUpstreamErrors)
 		ops.PUT("/request-errors/:id/resolve", h.Admin.Ops.ResolveRequestError)
+
+		// Bounded ingress-admission rejection aggregates.
+		ops.GET("/ingress-rejections", h.Admin.Ops.ListIngressRejects)
+		ops.GET("/ingress-rejections/health", h.Admin.Ops.GetIngressRejectHealth)
+		ops.GET("/auth-cache-invalidation/health", h.Admin.Ops.GetAuthCacheInvalidationHealth)
 
 		// Upstream errors (independent upstream failures)
 		ops.GET("/upstream-errors", h.Admin.Ops.ListUpstreamErrors)
@@ -567,8 +592,8 @@ func registerBackupRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAut
 		// 备份下载链接可直接取走整库数据——要求 step-up 2FA
 		backup.GET("/:id/download-url", gin.HandlerFunc(stepUpAuth), h.Admin.Backup.GetDownloadURL)
 
-		// 恢复操作
-		backup.POST("/:id/restore", h.Admin.Backup.RestoreBackup)
+		// 恢复操作：整库覆盖可回滚安全设置（含 step-up 开关本身）——要求 step-up 2FA
+		backup.POST("/:id/restore", gin.HandlerFunc(stepUpAuth), h.Admin.Backup.RestoreBackup)
 	}
 }
 

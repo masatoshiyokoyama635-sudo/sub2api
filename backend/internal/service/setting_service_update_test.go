@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"strconv"
 	"testing"
@@ -16,7 +17,10 @@ import (
 )
 
 type settingUpdateRepoStub struct {
-	updates map[string]string
+	updates      map[string]string
+	atomicCalls  int
+	atomicCommit bool
+	atomicErr    error
 }
 
 func (s *settingUpdateRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
@@ -36,11 +40,30 @@ func (s *settingUpdateRepoStub) GetMultiple(ctx context.Context, keys []string) 
 }
 
 func (s *settingUpdateRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
+	s.capture(settings)
+	return nil
+}
+
+func (s *settingUpdateRepoStub) UpdateSettingsAtomic(_ context.Context, request SettingAtomicUpdate) error {
+	s.atomicCalls++
+	if s.atomicErr != nil {
+		return s.atomicErr
+	}
+	if request.Authorize != nil {
+		if err := request.Authorize(request.Baseline); err != nil {
+			return err
+		}
+	}
+	s.capture(request.Updates)
+	s.atomicCommit = true
+	return nil
+}
+
+func (s *settingUpdateRepoStub) capture(settings map[string]string) {
 	s.updates = make(map[string]string, len(settings))
 	for k, v := range settings {
 		s.updates[k] = v
 	}
-	return nil
 }
 
 func (s *settingUpdateRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
@@ -48,6 +71,58 @@ func (s *settingUpdateRepoStub) GetAll(ctx context.Context) (map[string]string, 
 }
 
 func (s *settingUpdateRepoStub) Delete(ctx context.Context, key string) error {
+	panic("unexpected Delete call")
+}
+
+type settingAtomicFallbackRepoStub struct {
+	values  map[string]string
+	updates map[string]string
+	getErr  error
+	setErr  error
+}
+
+func (s *settingAtomicFallbackRepoStub) Get(context.Context, string) (*Setting, error) {
+	panic("unexpected Get call")
+}
+
+func (s *settingAtomicFallbackRepoStub) GetValue(_ context.Context, key string) (string, error) {
+	return s.values[key], nil
+}
+
+func (s *settingAtomicFallbackRepoStub) Set(context.Context, string, string) error {
+	panic("unexpected Set call")
+}
+
+func (s *settingAtomicFallbackRepoStub) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	values := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := s.values[key]; ok {
+			values[key] = value
+		}
+	}
+	return values, nil
+}
+
+func (s *settingAtomicFallbackRepoStub) SetMultiple(_ context.Context, settings map[string]string) error {
+	if s.setErr != nil {
+		return s.setErr
+	}
+	s.updates = make(map[string]string, len(settings))
+	for key, value := range settings {
+		s.updates[key] = value
+		s.values[key] = value
+	}
+	return nil
+}
+
+func (s *settingAtomicFallbackRepoStub) GetAll(context.Context) (map[string]string, error) {
+	return s.values, nil
+}
+
+func (s *settingAtomicFallbackRepoStub) Delete(context.Context, string) error {
 	panic("unexpected Delete call")
 }
 
@@ -553,4 +628,308 @@ func TestSettingService_UpdateSettings_RejectsInvalidPaymentVisibleMethodSource(
 	require.Error(t, err)
 	require.Equal(t, "INVALID_PAYMENT_VISIBLE_METHOD_SOURCE", infraerrors.Reason(err))
 	require.Nil(t, repo.updates)
+}
+
+func TestSettingService_UpdateSettingsAtomicallyBuildsAllGroupsBeforeSingleWrite(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+	committedWhenRefreshed := false
+	svc.SetOnUpdateCallback(func() { committedWhenRefreshed = repo.atomicCommit })
+	enabled := true
+	multiplier := 2.5
+
+	err := svc.UpdateSettingsAtomically(context.Background(), SettingsAtomicUpdateInput{
+		Settings: &SystemSettings{RegistrationEnabled: true},
+		AuthSourceDefaults: &AuthSourceDefaultSettings{
+			Email: ProviderDefaultGrantSettings{Balance: 9.5},
+		},
+		OpenAIFastPolicySettings: &OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{{
+			ServiceTier: OpenAIFastTierPriority,
+			Action:      BetaPolicyActionPass,
+			Scope:       BetaPolicyScopeAll,
+		}}},
+		PaymentConfig: &UpdatePaymentConfigRequest{
+			Enabled:                   &enabled,
+			BalanceRechargeMultiplier: &multiplier,
+		},
+		SecurityBaseline: SettingSecurityBaseline{},
+		Authorize: func(current SettingSecurityBaseline) error {
+			require.Equal(t, SettingSecurityBaseline{}, current)
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.atomicCalls)
+	require.True(t, committedWhenRefreshed, "runtime refresh must happen only after the atomic commit returns")
+	require.Equal(t, "true", repo.updates[SettingKeyRegistrationEnabled])
+	require.Equal(t, "9.50000000", repo.updates[SettingKeyAuthSourceDefaultEmailBalance])
+	require.JSONEq(t, `{"rules":[{"service_tier":"priority","action":"pass","scope":"all"}]}`, repo.updates[SettingKeyOpenAIFastPolicySettings])
+	require.Equal(t, "true", repo.updates[SettingPaymentEnabled])
+	require.Equal(t, "2.50", repo.updates[SettingBalanceRechargeMult])
+}
+
+func TestSettingService_UpdateSettingsAtomicallyDoesNotRefreshAfterRepositoryFailure(t *testing.T) {
+	repo := &settingUpdateRepoStub{atomicErr: errors.New("commit failed")}
+	svc := NewSettingService(repo, &config.Config{})
+	refreshCalls := 0
+	svc.SetOnUpdateCallback(func() { refreshCalls++ })
+
+	err := svc.UpdateSettingsAtomically(context.Background(), SettingsAtomicUpdateInput{
+		Settings:         &SystemSettings{RegistrationEnabled: true},
+		SecurityBaseline: SettingSecurityBaseline{},
+	})
+
+	require.EqualError(t, err, "commit failed")
+	require.Zero(t, refreshCalls)
+	require.Nil(t, repo.updates)
+}
+
+func TestSettingService_UpdateSettingsAtomicallySupportsBasicFakeRepository(t *testing.T) {
+	repo := &settingAtomicFallbackRepoStub{values: map[string]string{
+		SettingKeyStepUpEnabled:      "true",
+		SettingKeyRiskControlEnabled: "false",
+	}}
+	svc := NewSettingService(repo, &config.Config{})
+	authorized := false
+
+	err := svc.UpdateSettingsAtomically(context.Background(), SettingsAtomicUpdateInput{
+		Settings: &SystemSettings{
+			RegistrationEnabled: true,
+			StepUpEnabled:       true,
+		},
+		SecurityBaseline: SettingSecurityBaseline{StepUpEnabled: true},
+		Authorize: func(current SettingSecurityBaseline) error {
+			authorized = true
+			require.Equal(t, SettingSecurityBaseline{StepUpEnabled: true}, current)
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, authorized)
+	require.Equal(t, "true", repo.updates[SettingKeyRegistrationEnabled])
+}
+
+func TestSettingService_UpdateSettingsAtomicallyRejectsSecurityDowngradeWithoutAuthorization(t *testing.T) {
+	repo := &settingAtomicFallbackRepoStub{values: map[string]string{
+		SettingKeyStepUpEnabled:      "true",
+		SettingKeyRiskControlEnabled: "true",
+	}}
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.UpdateSettingsAtomically(context.Background(), SettingsAtomicUpdateInput{
+		Settings: &SystemSettings{
+			StepUpEnabled:       false,
+			RiskControlEnabled:  false,
+			RegistrationEnabled: true,
+		},
+		SecurityBaseline: SettingSecurityBaseline{StepUpEnabled: true, RiskControlEnabled: true},
+	})
+
+	require.ErrorIs(t, err, ErrSettingsStrictAuthorizationRequired)
+	require.Nil(t, repo.updates)
+}
+
+func TestSettingService_UpdateSettingsAtomicallyFallbackErrorPaths(t *testing.T) {
+	readErr := errors.New("read failed")
+	writeErr := errors.New("write failed")
+	authErr := errors.New("authorize failed")
+	tests := []struct {
+		name      string
+		repo      *settingAtomicFallbackRepoStub
+		baseline  SettingSecurityBaseline
+		authorize func(SettingSecurityBaseline) error
+		wantErr   error
+	}{
+		{
+			name:    "read error",
+			repo:    &settingAtomicFallbackRepoStub{values: map[string]string{}, getErr: readErr},
+			wantErr: readErr,
+		},
+		{
+			name:     "baseline conflict",
+			repo:     &settingAtomicFallbackRepoStub{values: map[string]string{SettingKeyStepUpEnabled: "true"}},
+			baseline: SettingSecurityBaseline{},
+			wantErr:  ErrSettingsUpdateConflict,
+		},
+		{
+			name:      "authorization error",
+			repo:      &settingAtomicFallbackRepoStub{values: map[string]string{}},
+			authorize: func(SettingSecurityBaseline) error { return authErr },
+			wantErr:   authErr,
+		},
+		{
+			name:    "write error",
+			repo:    &settingAtomicFallbackRepoStub{values: map[string]string{}, setErr: writeErr},
+			wantErr: writeErr,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewSettingService(tt.repo, &config.Config{})
+			err := svc.UpdateSettingsAtomically(context.Background(), SettingsAtomicUpdateInput{
+				Settings:         &SystemSettings{RegistrationEnabled: true},
+				SecurityBaseline: tt.baseline,
+				Authorize:        tt.authorize,
+			})
+			require.ErrorIs(t, err, tt.wantErr)
+			require.Nil(t, tt.repo.updates)
+		})
+	}
+}
+
+func TestBuildPaymentConfigUpdatesValidatesNumericBoundaries(t *testing.T) {
+	zero := 0.0
+	negative := -1.0
+	nan := math.NaN()
+	positiveInf := math.Inf(1)
+	overPercent := 100.01
+	tooPrecise := 1.001
+	tests := []struct {
+		name string
+		req  UpdatePaymentConfigRequest
+	}{
+		{name: "zero multiplier", req: UpdatePaymentConfigRequest{BalanceRechargeMultiplier: &zero}},
+		{name: "nan multiplier", req: UpdatePaymentConfigRequest{BalanceRechargeMultiplier: &nan}},
+		{name: "infinite multiplier", req: UpdatePaymentConfigRequest{BalanceRechargeMultiplier: &positiveInf}},
+		{name: "negative subscription rate", req: UpdatePaymentConfigRequest{SubscriptionUSDToCNYRate: &negative}},
+		{name: "nan subscription rate", req: UpdatePaymentConfigRequest{SubscriptionUSDToCNYRate: &nan}},
+		{name: "infinite subscription rate", req: UpdatePaymentConfigRequest{SubscriptionUSDToCNYRate: &positiveInf}},
+		{name: "negative fee", req: UpdatePaymentConfigRequest{RechargeFeeRate: &negative}},
+		{name: "nan fee", req: UpdatePaymentConfigRequest{RechargeFeeRate: &nan}},
+		{name: "infinite fee", req: UpdatePaymentConfigRequest{RechargeFeeRate: &positiveInf}},
+		{name: "fee over one hundred", req: UpdatePaymentConfigRequest{RechargeFeeRate: &overPercent}},
+		{name: "fee precision", req: UpdatePaymentConfigRequest{RechargeFeeRate: &tooPrecise}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			updates, err := buildPaymentConfigUpdates(tt.req)
+			require.Error(t, err)
+			require.Nil(t, updates)
+		})
+	}
+}
+
+func TestBuildPaymentConfigUpdatesSerializesFullConfiguration(t *testing.T) {
+	enabled := true
+	minAmount := 1.25
+	maxAmount := 500.0
+	dailyLimit := 1000.0
+	timeout := 30
+	maxPending := 5
+	multiplier := 2.5
+	subscriptionRate := 7.123456
+	feeRate := 1.25
+	strategy := "round_robin"
+	prefix := "前缀"
+	suffix := "emoji-🧪"
+
+	updates, err := buildPaymentConfigUpdates(UpdatePaymentConfigRequest{
+		Enabled:                   &enabled,
+		MinAmount:                 &minAmount,
+		MaxAmount:                 &maxAmount,
+		DailyLimit:                &dailyLimit,
+		OrderTimeoutMin:           &timeout,
+		MaxPendingOrders:          &maxPending,
+		EnabledTypes:              []string{"alipay", "wxpay"},
+		BalanceRechargeMultiplier: &multiplier,
+		SubscriptionUSDToCNYRate:  &subscriptionRate,
+		RechargeFeeRate:           &feeRate,
+		LoadBalanceStrategy:       &strategy,
+		ProductNamePrefix:         &prefix,
+		ProductNameSuffix:         &suffix,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "true", updates[SettingPaymentEnabled])
+	require.Equal(t, "1.25", updates[SettingMinRechargeAmount])
+	require.Equal(t, "500.00", updates[SettingMaxRechargeAmount])
+	require.Equal(t, "1000.00", updates[SettingDailyRechargeLimit])
+	require.Equal(t, "30", updates[SettingOrderTimeoutMinutes])
+	require.Equal(t, "5", updates[SettingMaxPendingOrders])
+	require.Equal(t, "alipay,wxpay", updates[SettingEnabledPaymentTypes])
+	require.Equal(t, "2.50", updates[SettingBalanceRechargeMult])
+	require.Equal(t, "7.123456", updates[SettingSubscriptionUSDToCNYRate])
+	require.Equal(t, "1.25", updates[SettingRechargeFeeRate])
+	require.Equal(t, strategy, updates[SettingLoadBalanceStrategy])
+	require.Equal(t, prefix, updates[SettingProductNamePrefix])
+	require.Equal(t, suffix, updates[SettingProductNameSuffix])
+}
+
+func TestBuildOpenAIFastPolicySettingValidatesAndDoesNotMutateInput(t *testing.T) {
+	_, err := buildOpenAIFastPolicySetting(nil)
+	require.Error(t, err)
+
+	invalidRules := []OpenAIFastPolicyRule{
+		{ServiceTier: "turbo", Action: BetaPolicyActionPass, Scope: BetaPolicyScopeAll},
+		{ServiceTier: OpenAIFastTierPriority, Action: "invalid", Scope: BetaPolicyScopeAll},
+		{ServiceTier: OpenAIFastTierPriority, Action: BetaPolicyActionPass, Scope: "invalid"},
+		{ServiceTier: OpenAIFastTierPriority, Action: BetaPolicyActionPass, Scope: BetaPolicyScopeAll, UserIDs: []int64{0}},
+		{ServiceTier: OpenAIFastTierPriority, Action: BetaPolicyActionPass, Scope: BetaPolicyScopeAll, UserIDs: []int64{7, 7}},
+		{ServiceTier: OpenAIFastTierPriority, Action: BetaPolicyActionPass, Scope: BetaPolicyScopeAll, ModelWhitelist: []string{" "}},
+		{ServiceTier: OpenAIFastTierPriority, Action: BetaPolicyActionPass, Scope: BetaPolicyScopeAll, FallbackAction: "invalid"},
+	}
+	for i := range invalidRules {
+		_, err := buildOpenAIFastPolicySetting(&OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{invalidRules[i]}})
+		require.Error(t, err, "rule case %d", i)
+	}
+
+	input := &OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{{
+		ServiceTier:    " ",
+		Action:         BetaPolicyActionPass,
+		Scope:          BetaPolicyScopeAll,
+		UserIDs:        []int64{7},
+		ModelWhitelist: []string{"  gpt-5.*  "},
+		FallbackAction: BetaPolicyActionBlock,
+	}}}
+	value, err := buildOpenAIFastPolicySetting(input)
+	require.NoError(t, err)
+	require.Equal(t, " ", input.Rules[0].ServiceTier)
+	require.Equal(t, "  gpt-5.*  ", input.Rules[0].ModelWhitelist[0])
+	require.JSONEq(t, `{"rules":[{"service_tier":"all","action":"pass","scope":"all","user_ids":[7],"model_whitelist":["gpt-5.*"],"fallback_action":"block"}]}`, value)
+}
+
+func TestSettingService_UpdateSettingsAtomicallyValidatesEveryGroupBeforeWrite(t *testing.T) {
+	tests := []struct {
+		name  string
+		input SettingsAtomicUpdateInput
+	}{
+		{
+			name: "invalid fast policy",
+			input: SettingsAtomicUpdateInput{
+				Settings: &SystemSettings{RegistrationEnabled: true},
+				OpenAIFastPolicySettings: &OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{{
+					ServiceTier: OpenAIFastTierPriority,
+					Action:      "invalid",
+					Scope:       BetaPolicyScopeAll,
+				}}},
+			},
+		},
+		{
+			name: "invalid payment config",
+			input: func() SettingsAtomicUpdateInput {
+				invalid := 0.0
+				return SettingsAtomicUpdateInput{
+					Settings:      &SystemSettings{RegistrationEnabled: true},
+					PaymentConfig: &UpdatePaymentConfigRequest{BalanceRechargeMultiplier: &invalid},
+				}
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &settingUpdateRepoStub{}
+			svc := NewSettingService(repo, &config.Config{})
+
+			err := svc.UpdateSettingsAtomically(context.Background(), tt.input)
+
+			require.Error(t, err)
+			require.Zero(t, repo.atomicCalls)
+			require.Nil(t, repo.updates, "no setting group may be written before every group validates")
+		})
+	}
 }

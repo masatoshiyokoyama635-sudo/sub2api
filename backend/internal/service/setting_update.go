@@ -14,6 +14,117 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
+// AtomicSettingRepository is an optional repository capability used by the
+// administrative settings endpoint. Repositories that do not provide it remain
+// supported through the service's compatibility fallback.
+type AtomicSettingRepository interface {
+	UpdateSettingsAtomic(ctx context.Context, request SettingAtomicUpdate) error
+}
+
+// SettingsAtomicUpdateInput contains every settings group persisted by the
+// administrative settings endpoint.
+type SettingsAtomicUpdateInput struct {
+	Settings                 *SystemSettings
+	AuthSourceDefaults       *AuthSourceDefaultSettings
+	OpenAIFastPolicySettings *OpenAIFastPolicySettings
+	PaymentConfig            *UpdatePaymentConfigRequest
+	SecurityBaseline         SettingSecurityBaseline
+	Authorize                func(current SettingSecurityBaseline) error
+}
+
+// UpdateSettingsAtomically validates and serializes every supplied settings
+// group before issuing one repository write. Runtime caches are refreshed only
+// after the repository reports a successful commit.
+func (s *SettingService) UpdateSettingsAtomically(ctx context.Context, input SettingsAtomicUpdateInput) error {
+	if input.Settings == nil {
+		return infraerrors.BadRequest("INVALID_SETTINGS", "settings cannot be nil")
+	}
+
+	updates := make(map[string]string)
+	if input.PaymentConfig != nil {
+		paymentUpdates, err := buildPaymentConfigUpdates(*input.PaymentConfig)
+		if err != nil {
+			return err
+		}
+		mergeSettingUpdates(updates, paymentUpdates)
+	}
+
+	systemUpdates, err := s.buildSystemSettingsUpdates(ctx, input.Settings)
+	if err != nil {
+		return err
+	}
+	mergeSettingUpdates(updates, systemUpdates)
+
+	authUpdates, err := s.buildAuthSourceDefaultUpdates(ctx, input.AuthSourceDefaults)
+	if err != nil {
+		return err
+	}
+	mergeSettingUpdates(updates, authUpdates)
+
+	if input.OpenAIFastPolicySettings != nil {
+		value, err := buildOpenAIFastPolicySetting(input.OpenAIFastPolicySettings)
+		if err != nil {
+			return infraerrors.BadRequest("INVALID_OPENAI_FAST_POLICY_SETTINGS", err.Error())
+		}
+		updates[SettingKeyOpenAIFastPolicySettings] = value
+	}
+
+	request := SettingAtomicUpdate{
+		Updates:   updates,
+		Baseline:  input.SecurityBaseline,
+		Authorize: input.Authorize,
+	}
+	if repo, ok := s.settingRepo.(AtomicSettingRepository); ok {
+		err = repo.UpdateSettingsAtomic(ctx, request)
+	} else {
+		err = s.updateSettingsAtomicFallback(ctx, request)
+	}
+	if err != nil {
+		return err
+	}
+	s.refreshCachedSettings(input.Settings)
+	return nil
+}
+
+func (s *SettingService) updateSettingsAtomicFallback(ctx context.Context, request SettingAtomicUpdate) error {
+	values, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyStepUpEnabled, SettingKeyRiskControlEnabled})
+	if err != nil {
+		return err
+	}
+	current := securityBaselineFromValues(values)
+	if current != request.Baseline {
+		return ErrSettingsUpdateConflict
+	}
+	if securityDowngradeRequested(current, request.Updates) && request.Authorize == nil {
+		return ErrSettingsStrictAuthorizationRequired
+	}
+	if request.Authorize != nil {
+		if err := request.Authorize(current); err != nil {
+			return err
+		}
+	}
+	return s.settingRepo.SetMultiple(ctx, request.Updates)
+}
+
+func securityBaselineFromValues(values map[string]string) SettingSecurityBaseline {
+	return SettingSecurityBaseline{
+		StepUpEnabled:      values[SettingKeyStepUpEnabled] == "true",
+		RiskControlEnabled: values[SettingKeyRiskControlEnabled] == "true",
+	}
+}
+
+func securityDowngradeRequested(current SettingSecurityBaseline, updates map[string]string) bool {
+	stepUpDisabled := current.StepUpEnabled && updates[SettingKeyStepUpEnabled] == "false"
+	riskControlDisabled := current.RiskControlEnabled && updates[SettingKeyRiskControlEnabled] == "false"
+	return stepUpDisabled || riskControlDisabled
+}
+
+func mergeSettingUpdates(dst, src map[string]string) {
+	for key, value := range src {
+		dst[key] = value
+	}
+}
+
 // UpdateSettings 更新系统设置
 func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSettings) error {
 	updates, err := s.buildSystemSettingsUpdates(ctx, settings)
@@ -122,6 +233,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyInvitationCodeEnabled] = strconv.FormatBool(settings.InvitationCodeEnabled)
 	updates[SettingKeyTotpEnabled] = strconv.FormatBool(settings.TotpEnabled)
 	updates[SettingKeySessionBindingEnabled] = strconv.FormatBool(settings.SessionBindingEnabled)
+	updates[SettingKeyStepUpEnabled] = strconv.FormatBool(settings.StepUpEnabled)
 	updates[SettingKeyAuditLogRetentionDays] = strconv.Itoa(settings.AuditLogRetentionDays)
 	settings.LoginAgreementMode = normalizeLoginAgreementMode(settings.LoginAgreementMode)
 	settings.LoginAgreementUpdatedAt = strings.TrimSpace(settings.LoginAgreementUpdatedAt)

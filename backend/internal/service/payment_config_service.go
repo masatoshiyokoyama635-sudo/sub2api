@@ -295,29 +295,37 @@ func (s *PaymentConfigService) getStripePublishableKey(ctx context.Context) stri
 }
 
 // UpdatePaymentConfig updates the payment configuration settings.
-// NOTE: This function exceeds 30 lines because each field requires an independent
-// nil-check before serialisation — this is inherent to patch-style update patterns
-// and cannot be meaningfully decomposed without introducing unnecessary abstraction.
 func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req UpdatePaymentConfigRequest) error {
+	updates, err := buildPaymentConfigUpdates(req)
+	if err != nil {
+		return err
+	}
+	return s.settingRepo.SetMultiple(ctx, updates)
+}
+
+// buildPaymentConfigUpdates validates and serializes a full-replace payment
+// configuration without writing. The settings handler uses this to include
+// payment keys in the same transaction as all other settings groups.
+func buildPaymentConfigUpdates(req UpdatePaymentConfigRequest) (map[string]string, error) {
 	if req.BalanceRechargeMultiplier != nil {
 		if math.IsNaN(*req.BalanceRechargeMultiplier) || math.IsInf(*req.BalanceRechargeMultiplier, 0) || *req.BalanceRechargeMultiplier <= 0 {
-			return infraerrors.BadRequest("INVALID_BALANCE_RECHARGE_MULTIPLIER", "balance recharge multiplier must be greater than 0")
+			return nil, infraerrors.BadRequest("INVALID_BALANCE_RECHARGE_MULTIPLIER", "balance recharge multiplier must be greater than 0")
 		}
 	}
 	if req.SubscriptionUSDToCNYRate != nil {
 		v := *req.SubscriptionUSDToCNYRate
 		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
-			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_USD_TO_CNY_RATE", "subscription USD to CNY rate must be 0 (disabled) or a positive number")
+			return nil, infraerrors.BadRequest("INVALID_SUBSCRIPTION_USD_TO_CNY_RATE", "subscription USD to CNY rate must be 0 (disabled) or a positive number")
 		}
 	}
 	if req.RechargeFeeRate != nil {
 		v := *req.RechargeFeeRate
 		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 100 {
-			return infraerrors.BadRequest("INVALID_RECHARGE_FEE_RATE", "recharge fee rate must be between 0 and 100")
+			return nil, infraerrors.BadRequest("INVALID_RECHARGE_FEE_RATE", "recharge fee rate must be between 0 and 100")
 		}
 		// Enforce max 2 decimal places
 		if math.Round(v*100) != v*100 {
-			return infraerrors.BadRequest("INVALID_RECHARGE_FEE_RATE", "recharge fee rate allows at most 2 decimal places")
+			return nil, infraerrors.BadRequest("INVALID_RECHARGE_FEE_RATE", "recharge fee rate allows at most 2 decimal places")
 		}
 	}
 	m := map[string]string{
@@ -352,7 +360,7 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 	} else {
 		m[SettingEnabledPaymentTypes] = ""
 	}
-	return s.settingRepo.SetMultiple(ctx, m)
+	return m, nil
 }
 
 func formatBoolOrEmpty(v *bool) string {

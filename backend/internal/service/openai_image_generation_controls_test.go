@@ -277,7 +277,7 @@ func TestOpenAIGatewayServiceForward_AccountPolicyStripsImageNamespaceTools(t *t
 			require.Equal(t, "write code", gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
 			cached, known := getOpenAIImageIntentHint(c)
 			require.True(t, known)
-			require.True(t, cached)
+			require.False(t, cached, "passive image_gen namespace with tool_choice=auto is non-explicit")
 		})
 	}
 }
