@@ -283,6 +283,21 @@ type leaseHeartbeatError struct{ cause error }
 func (e *leaseHeartbeatError) Error() string { return "lease_heartbeat_failed" }
 func (e *leaseHeartbeatError) Unwrap() error { return e.cause }
 
+func (r *Runner) trustedAsyncConfig(groupID *int64) (ActiveConfig, error) {
+	current, ok := r.config.Active()
+	if !ok || current.EffectiveMode() != ModeAsync {
+		return current, &GuardError{Code: "audit_disabled", Retryable: false}
+	}
+	if r.config.EffectiveMode() != ModeAsync || !current.IncludesGroup(groupID) {
+		return current, &GuardError{Code: "audit_config_changed", Retryable: false}
+	}
+	expectedVersion, activeVersion, _, loadError := r.config.RuntimeState()
+	if loadError != "" || expectedVersion != current.ConfigVersion || activeVersion != current.ConfigVersion {
+		return current, &GuardError{Code: "audit_config_changed", Retryable: false}
+	}
+	return current, nil
+}
+
 func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig, job *Job) (returnErr error) {
 	if r == nil || r.config == nil || job == nil {
 		return &GuardError{Code: ErrorCodeUnavailable}
@@ -290,12 +305,10 @@ func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig,
 	// A job may remain queued while administrators rotate credentials or turn
 	// async auditing off. Re-read the active snapshot immediately before any
 	// scanner dispatch; the claim-time config is only a scheduling hint.
-	current, ok := r.config.Active()
-	if !ok || current.EffectiveMode() != ModeAsync {
-		if job != nil {
-			job.ConfigVersion = current.ConfigVersion
-		}
-		return r.finishFailure(ctx, job, &GuardError{Code: "audit_disabled", Retryable: false})
+	current, configErr := r.trustedAsyncConfig(job.Snapshot.GroupID)
+	if configErr != nil {
+		job.ConfigVersion = current.ConfigVersion
+		return r.finishFailure(ctx, job, configErr)
 	}
 	cfg = current
 	job.ConfigVersion = cfg.ConfigVersion
@@ -341,8 +354,8 @@ func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig,
 		if err := r.repo.RefreshLease(processingCtx, job.ID, job.ClaimVersion, r.clock.Now()); err != nil {
 			return err
 		}
-		current, ok := r.config.Active()
-		if !ok || current.EffectiveMode() != ModeAsync || !current.IncludesGroup(job.Snapshot.GroupID) || current.ConfigVersion != cfg.ConfigVersion {
+		current, configErr := r.trustedAsyncConfig(job.Snapshot.GroupID)
+		if configErr != nil || current.ConfigVersion != cfg.ConfigVersion {
 			return finishWithHeartbeat(&GuardError{Code: "audit_config_changed", Retryable: false})
 		}
 		currentEndpoints := current.EnabledEndpoints()

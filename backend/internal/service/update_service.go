@@ -78,6 +78,17 @@ func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, versi
 	}
 }
 
+func (s *UpdateService) supportsOfficialBinaryLifecycle() bool {
+	if s == nil || strings.TrimSpace(s.buildType) != "release" {
+		return false
+	}
+	version := strings.TrimSpace(s.currentVersion)
+	if !strings.HasPrefix(version, "v") {
+		version = "v" + version
+	}
+	return semver.IsValid(version) && semver.Prerelease(version) == "" && semver.Build(version) == ""
+}
+
 // UpdateInfo contains update information
 type UpdateInfo struct {
 	CurrentVersion string       `json:"current_version"`
@@ -164,7 +175,7 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 // PerformUpdate downloads and applies the update
 // Uses atomic file replacement pattern for safe in-place updates
 func (s *UpdateService) PerformUpdate(ctx context.Context) error {
-	if s.buildType == "custom" {
+	if !s.supportsOfficialBinaryLifecycle() {
 		return ErrCustomBuildOnlineUpdateUnsupported
 	}
 
@@ -286,7 +297,7 @@ func (s *UpdateService) applyReleaseAssets(ctx context.Context, releaseAssets []
 
 // Rollback restores the previous version
 func (s *UpdateService) Rollback() error {
-	if s.buildType == "custom" {
+	if !s.supportsOfficialBinaryLifecycle() {
 		return ErrCustomBuildOnlineUpdateUnsupported
 	}
 
@@ -316,7 +327,7 @@ func (s *UpdateService) Rollback() error {
 // strictly older than the current version (the current version itself is excluded),
 // newest first. Draft and prerelease entries are skipped.
 func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVersion, error) {
-	if s.buildType == "custom" {
+	if !s.supportsOfficialBinaryLifecycle() {
 		return nil, ErrCustomBuildOnlineUpdateUnsupported
 	}
 
@@ -340,7 +351,7 @@ func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVer
 // The target must be one of the versions returned by ListRollbackVersions;
 // anything else (including the current version) is rejected.
 func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) error {
-	if s.buildType == "custom" {
+	if !s.supportsOfficialBinaryLifecycle() {
 		return ErrCustomBuildOnlineUpdateUnsupported
 	}
 

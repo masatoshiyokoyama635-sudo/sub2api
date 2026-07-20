@@ -7,8 +7,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: custom-docker-${{ github.ref }}
-  cancel-in-progress: true
+  # Serialize all image publications so immutable-tag preflight checks cannot
+  # race across refs that point at the same commit or share a short SHA prefix.
+  group: custom-docker-publish-${{ github.repository }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -105,20 +107,22 @@ jobs:
           echo "build_date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Protect immutable commit tag
+      - name: Protect immutable commit tags
         env:
           IMAGE: ${{ steps.meta.outputs.image }}
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
         run: |
-          TAG="chat-image-tools-${GITHUB_SHA}"
-          if docker buildx imagetools inspect "${IMAGE}:${TAG}" >/tmp/tag-inspect.txt 2>&1; then
-            echo "Refusing to overwrite existing immutable tag ${TAG}" >&2
-            exit 1
-          fi
-          if ! grep -Eqi 'not found|manifest unknown' /tmp/tag-inspect.txt; then
-            cat /tmp/tag-inspect.txt >&2
-            echo "Unable to verify immutable tag availability" >&2
-            exit 1
-          fi
+          for TAG in "chat-image-tools-${GITHUB_SHA}" "chat-image-tools-${SHORT_SHA}"; do
+            if docker buildx imagetools inspect "${IMAGE}:${TAG}" >"/tmp/${TAG}-inspect.txt" 2>&1; then
+              echo "Refusing to overwrite existing immutable tag ${TAG}" >&2
+              exit 1
+            fi
+            if ! grep -Eqi 'not found|manifest unknown' "/tmp/${TAG}-inspect.txt"; then
+              cat "/tmp/${TAG}-inspect.txt" >&2
+              echo "Unable to verify immutable tag availability" >&2
+              exit 1
+            fi
+          done
 
       - name: Build and push Docker image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6

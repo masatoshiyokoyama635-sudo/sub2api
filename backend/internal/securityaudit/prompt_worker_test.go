@@ -36,6 +36,12 @@ type fakeConfigStore struct {
 	cfg    ActiveConfig
 	active bool
 
+	runtimeStateSet            bool
+	runtimeExpected            int64
+	runtimeActive              int64
+	runtimeLoadErr             string
+	blockingActivationDegraded bool
+
 	startEntered    chan struct{}
 	startRelease    <-chan struct{}
 	shutdownEntered chan struct{}
@@ -68,6 +74,18 @@ func (s *fakeConfigStore) Active() (ActiveConfig, bool) {
 func (s *fakeConfigStore) Set(cfg ActiveConfig, active bool) {
 	s.mu.Lock()
 	s.cfg, s.active = cloneActiveConfig(cfg), active
+	if !s.runtimeStateSet {
+		s.runtimeExpected = cfg.ConfigVersion
+		s.runtimeActive = cfg.ConfigVersion
+	}
+	s.mu.Unlock()
+}
+func (s *fakeConfigStore) SetRuntimeState(expected, active int64, loadError string) {
+	s.mu.Lock()
+	s.runtimeStateSet = true
+	s.runtimeExpected = expected
+	s.runtimeActive = active
+	s.runtimeLoadErr = loadError
 	s.mu.Unlock()
 }
 func (s *fakeConfigStore) EffectiveMode() Mode {
@@ -80,14 +98,18 @@ func (s *fakeConfigStore) EffectiveMode() Mode {
 	}
 	return cfg.EffectiveMode()
 }
-func (s *fakeConfigStore) BlockingActivationDegraded() bool { return false }
+func (s *fakeConfigStore) BlockingActivationDegraded() bool { return s.blockingActivationDegraded }
 func (s *fakeConfigStore) Public() PublicConfig             { return PublicConfig{} }
 func (s *fakeConfigStore) Save(context.Context, UpdateConfigRequest, int64) (PublicConfig, error) {
 	return PublicConfig{}, nil
 }
 func (s *fakeConfigStore) RuntimeState() (int64, int64, *time.Time, string) {
-	cfg, _ := s.Active()
-	return cfg.ConfigVersion, cfg.ConfigVersion, nil, ""
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.runtimeStateSet {
+		return s.runtimeExpected, s.runtimeActive, nil, s.runtimeLoadErr
+	}
+	return s.cfg.ConfigVersion, s.cfg.ConfigVersion, nil, ""
 }
 func (s *fakeConfigStore) Encrypt(value string) (string, error) { return value, nil }
 func (s *fakeConfigStore) Decrypt(value string) (string, error) { return value, nil }
@@ -691,6 +713,138 @@ func TestWorkerPendingJobUsesCurrentRotatedEndpointAndToken(t *testing.T) {
 	require.Equal(t, "https://new-guard.example.test", scanned.BaseURL)
 	require.Equal(t, "new-token", scanned.Token)
 	require.Equal(t, currentConfig.ConfigVersion, job.ConfigVersion)
+}
+
+func TestWorkerRejectsUntrustedRuntimeStateBeforeFirstDispatch(t *testing.T) {
+	tests := []struct {
+		name      string
+		expected  int64
+		active    int64
+		loadError string
+	}{
+		{name: "expected version is newer than active", expected: 8, active: 7},
+		{name: "active version has a load error", expected: 7, active: 7, loadError: "config_load_failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := asyncConfig()
+			configStore := &fakeConfigStore{cfg: cfg, active: true}
+			configStore.SetRuntimeState(tt.expected, tt.active, tt.loadError)
+			repo := &fakeJobRepository{}
+			payload := &fakePayloadStore{values: map[int64]string{51: "do not dispatch with stale credentials"}}
+			scannerCalls := 0
+			runner := NewRunner(configStore, repo, payload, PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
+				scannerCalls++
+				return integrationResult(EventPass), nil
+			}), NewAtomicMetrics())
+
+			err := runner.processJob(context.Background(), 0, cfg, workerJob(1, 3))
+
+			require.Error(t, err)
+			require.Zero(t, scannerCalls)
+			require.Equal(t, 1, repo.failed)
+			require.Equal(t, "audit_config_changed", repo.failedCode)
+		})
+	}
+}
+
+func TestWorkerRejectsUntrustedModeOrGroupBeforeFirstDispatch(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*fakeConfigStore, *ActiveConfig)
+	}{
+		{
+			name: "store effective mode is not async",
+			prepare: func(store *fakeConfigStore, _ *ActiveConfig) {
+				store.blockingActivationDegraded = true
+			},
+		},
+		{
+			name: "job group is no longer included",
+			prepare: func(_ *fakeConfigStore, cfg *ActiveConfig) {
+				cfg.AllGroups = false
+				cfg.GroupIDs = []int64{9}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := asyncConfig()
+			configStore := &fakeConfigStore{}
+			tt.prepare(configStore, &cfg)
+			configStore.Set(cfg, true)
+			repo := &fakeJobRepository{}
+			payload := &fakePayloadStore{values: map[int64]string{51: "do not dispatch outside trusted async scope"}}
+			scannerCalls := 0
+			runner := NewRunner(configStore, repo, payload, PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
+				scannerCalls++
+				return integrationResult(EventPass), nil
+			}), NewAtomicMetrics())
+
+			err := runner.processJob(context.Background(), 0, cfg, workerJob(1, 3))
+
+			require.Error(t, err)
+			require.Zero(t, scannerCalls)
+			require.Equal(t, 1, repo.failed)
+			require.Equal(t, "audit_config_changed", repo.failedCode)
+		})
+	}
+}
+
+func TestWorkerStopsDispatchingWhenRuntimeStateDriftsBetweenChunks(t *testing.T) {
+	tests := []struct {
+		name      string
+		expected  int64
+		active    int64
+		loadError string
+	}{
+		{name: "expected version advances", expected: 8, active: 7},
+		{name: "runtime active version diverges", expected: 7, active: 8},
+		{name: "load becomes untrusted", expected: 7, active: 7, loadError: "config_load_failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := asyncConfig()
+			cfg.Endpoints[0].InputLimit = 3
+			configStore := &fakeConfigStore{cfg: cfg, active: true}
+			repo := &fakeJobRepository{}
+			payload := &fakePayloadStore{values: map[int64]string{51: "abcdef"}}
+			scannerCalls := 0
+			runner := NewRunner(configStore, repo, payload, PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
+				scannerCalls++
+				if scannerCalls == 1 {
+					configStore.SetRuntimeState(tt.expected, tt.active, tt.loadError)
+				}
+				return integrationResult(EventPass), nil
+			}), NewAtomicMetrics())
+
+			err := runner.processJob(context.Background(), 0, cfg, workerJob(1, 3))
+
+			require.Error(t, err)
+			require.Equal(t, 1, scannerCalls)
+			require.Equal(t, 1, repo.failed)
+			require.Equal(t, "audit_config_changed", repo.failedCode)
+		})
+	}
+}
+
+func TestWorkerTrustedRuntimeStateExecutesAllChunks(t *testing.T) {
+	cfg := asyncConfig()
+	cfg.Endpoints[0].InputLimit = 3
+	configStore := &fakeConfigStore{cfg: cfg, active: true}
+	configStore.SetRuntimeState(cfg.ConfigVersion, cfg.ConfigVersion, "")
+	repo := &fakeJobRepository{}
+	payload := &fakePayloadStore{values: map[int64]string{51: "abcdef"}}
+	scannerCalls := 0
+	runner := NewRunner(configStore, repo, payload, PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
+		scannerCalls++
+		return integrationResult(EventPass), nil
+	}), NewAtomicMetrics())
+
+	require.NoError(t, runner.processJob(context.Background(), 0, cfg, workerJob(1, 3)))
+	require.Equal(t, 2, scannerCalls)
+	require.Equal(t, 1, repo.completeCount)
+	require.Zero(t, repo.failed)
 }
 
 func TestWorkerStopsDispatchingWhenConfigChangesBetweenChunks(t *testing.T) {

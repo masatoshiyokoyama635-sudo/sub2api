@@ -12,10 +12,13 @@ import (
 )
 
 type updateServiceCacheStub struct {
-	data string
+	data     string
+	getCalls int
+	setCalls int
 }
 
 func (s *updateServiceCacheStub) GetUpdateInfo(context.Context) (string, error) {
+	s.getCalls++
 	if s.data == "" {
 		return "", errors.New("cache miss")
 	}
@@ -23,15 +26,19 @@ func (s *updateServiceCacheStub) GetUpdateInfo(context.Context) (string, error) 
 }
 
 func (s *updateServiceCacheStub) SetUpdateInfo(_ context.Context, data string, _ time.Duration) error {
+	s.setCalls++
 	s.data = data
 	return nil
 }
 
 type updateServiceGitHubClientStub struct {
-	release          *GitHubRelease
-	recentReleases   []*GitHubRelease
-	recentErr        error
-	latestFetchCalls int
+	release            *GitHubRelease
+	recentReleases     []*GitHubRelease
+	recentErr          error
+	latestFetchCalls   int
+	recentFetchCalls   int
+	downloadCalls      int
+	checksumFetchCalls int
 }
 
 func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, string) (*GitHubRelease, error) {
@@ -40,15 +47,18 @@ func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, stri
 }
 
 func (s *updateServiceGitHubClientStub) FetchRecentReleases(context.Context, string, int) ([]*GitHubRelease, error) {
+	s.recentFetchCalls++
 	return s.recentReleases, s.recentErr
 }
 
 func (s *updateServiceGitHubClientStub) DownloadFile(context.Context, string, string, int64) error {
-	panic("DownloadFile should not be called when no update is available")
+	s.downloadCalls++
+	return errors.New("unexpected download")
 }
 
 func (s *updateServiceGitHubClientStub) FetchChecksumFile(context.Context, string) ([]byte, error) {
-	panic("FetchChecksumFile should not be called when no update is available")
+	s.checksumFetchCalls++
+	return nil, errors.New("unexpected checksum fetch")
 }
 
 func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
@@ -71,41 +81,87 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
 }
 
-func TestUpdateServiceCustomBuildRejectsOfficialOnlineUpdate(t *testing.T) {
-	githubClient := &updateServiceGitHubClientStub{
-		release: &GitHubRelease{TagName: "v0.1.160", Name: "v0.1.160"},
+func TestUpdateServiceOfficialBinaryLifecycleGuard(t *testing.T) {
+	builds := []struct {
+		name      string
+		version   string
+		buildType string
+		allowed   bool
+	}{
+		{name: "official release", version: "0.1.162", buildType: "release", allowed: true},
+		{name: "custom build type", version: "0.1.162", buildType: "custom"},
+		{name: "source build", version: "0.1.162", buildType: "source"},
+		{name: "empty build type", version: "0.1.162", buildType: ""},
+		{name: "unknown build type", version: "0.1.162", buildType: "nightly"},
+		{name: "official release with v prefix", version: "v0.1.162", buildType: "release", allowed: true},
+		{name: "custom version with release build type", version: "0.1.162-zz", buildType: "release"},
+		{name: "custom version with source build type", version: "0.1.162-zz", buildType: "source"},
+		{name: "custom version with custom build type", version: "0.1.162-zz", buildType: "custom"},
+		{name: "development version", version: "dev", buildType: "release"},
+		{name: "custom suffix", version: "0.1.162-custom", buildType: "release"},
+		{name: "dirty custom suffix", version: "0.1.162-zz+dirty", buildType: "release"},
+		{name: "uppercase custom suffix", version: "0.1.162-ZZ", buildType: "release"},
+		{name: "release candidate", version: "0.1.162-rc.1", buildType: "release"},
+		{name: "build metadata", version: "0.1.162+official", buildType: "release"},
 	}
-	svc := NewUpdateService(
-		&updateServiceCacheStub{},
-		githubClient,
-		"0.1.159-zz",
-		"custom",
-	)
 
-	err := svc.PerformUpdate(context.Background())
-
-	require.ErrorIs(t, err, ErrCustomBuildOnlineUpdateUnsupported)
-	require.Zero(t, githubClient.latestFetchCalls)
-}
-
-func TestUpdateServiceCustomBuildRejectsOfficialOnlineRollback(t *testing.T) {
-	githubClient := &updateServiceGitHubClientStub{
-		recentReleases: []*GitHubRelease{{TagName: "v0.1.158"}},
+	lifecycles := []struct {
+		name string
+		run  func(context.Context, *UpdateService) error
+	}{
+		{
+			name: "perform update",
+			run: func(ctx context.Context, svc *UpdateService) error {
+				return svc.PerformUpdate(ctx)
+			},
+		},
+		{
+			name: "rollback backup",
+			run: func(_ context.Context, svc *UpdateService) error {
+				return svc.Rollback()
+			},
+		},
+		{
+			name: "list rollback versions",
+			run: func(ctx context.Context, svc *UpdateService) error {
+				_, err := svc.ListRollbackVersions(ctx)
+				return err
+			},
+		},
+		{
+			name: "rollback to version",
+			run: func(ctx context.Context, svc *UpdateService) error {
+				return svc.RollbackToVersion(ctx, "0.1.160")
+			},
+		},
 	}
-	svc := NewUpdateService(
-		&updateServiceCacheStub{},
-		githubClient,
-		"0.1.159-zz",
-		"custom",
-	)
 
-	_, listErr := svc.ListRollbackVersions(context.Background())
-	rollbackBackupErr := svc.Rollback()
-	rollbackErr := svc.RollbackToVersion(context.Background(), "0.1.158")
+	for _, build := range builds {
+		for _, lifecycle := range lifecycles {
+			t.Run(build.name+"/"+lifecycle.name, func(t *testing.T) {
+				cache := &updateServiceCacheStub{}
+				githubClient := &updateServiceGitHubClientStub{
+					release:        &GitHubRelease{TagName: "v0.1.162", Name: "v0.1.162"},
+					recentReleases: []*GitHubRelease{{TagName: "v0.1.160"}},
+				}
+				svc := NewUpdateService(cache, githubClient, build.version, build.buildType)
 
-	require.ErrorIs(t, listErr, ErrCustomBuildOnlineUpdateUnsupported)
-	require.ErrorIs(t, rollbackBackupErr, ErrCustomBuildOnlineUpdateUnsupported)
-	require.ErrorIs(t, rollbackErr, ErrCustomBuildOnlineUpdateUnsupported)
+				err := lifecycle.run(context.Background(), svc)
+
+				if build.allowed {
+					require.NotErrorIs(t, err, ErrCustomBuildOnlineUpdateUnsupported)
+					return
+				}
+				require.ErrorIs(t, err, ErrCustomBuildOnlineUpdateUnsupported)
+				require.Zero(t, cache.getCalls, "guard must run before reading update cache")
+				require.Zero(t, cache.setCalls, "guard must run before writing update cache")
+				require.Zero(t, githubClient.latestFetchCalls, "guard must run before fetching the latest release")
+				require.Zero(t, githubClient.recentFetchCalls, "guard must run before fetching rollback releases")
+				require.Zero(t, githubClient.downloadCalls, "guard must run before downloading release files")
+				require.Zero(t, githubClient.checksumFetchCalls, "guard must run before fetching checksums")
+			})
+		}
+	}
 }
 
 func TestUpdateServiceCheckUpdateTreatsCustomSuffixAsSameVersion(t *testing.T) {
@@ -216,24 +272,22 @@ func TestUpdateServiceListRollbackVersionsEmptyWhenNoneOlder(t *testing.T) {
 	require.Empty(t, versions)
 }
 
-func TestUpdateServiceListRollbackVersionsWithCustomRuntimeVersion(t *testing.T) {
-	releases := []*GitHubRelease{
-		{TagName: "v0.1.157"},
-		{TagName: "v0.1.156"},
-		{TagName: "v0.1.155"},
-		{TagName: "v0.1.153"},
-		{TagName: "v0.1.152"},
-		{TagName: "v0.1.151"},
+func TestUpdateServiceListRollbackVersionsRejectsCustomRuntimeVersion(t *testing.T) {
+	githubClient := &updateServiceGitHubClientStub{
+		recentReleases: []*GitHubRelease{{TagName: "v0.1.155"}},
 	}
-	svc := newRollbackTestService("0.1.156-zz", releases)
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		githubClient,
+		"0.1.156-zz",
+		"release",
+	)
 
 	versions, err := svc.ListRollbackVersions(context.Background())
 
-	require.NoError(t, err)
-	require.Len(t, versions, 3)
-	require.Equal(t, "0.1.155", versions[0].Version)
-	require.Equal(t, "0.1.153", versions[1].Version)
-	require.Equal(t, "0.1.152", versions[2].Version)
+	require.ErrorIs(t, err, ErrCustomBuildOnlineUpdateUnsupported)
+	require.Nil(t, versions)
+	require.Zero(t, githubClient.recentFetchCalls)
 }
 
 func TestUpdateServiceListRollbackVersionsPropagatesFetchError(t *testing.T) {

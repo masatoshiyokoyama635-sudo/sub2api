@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +23,12 @@ type savedImage struct {
 	key         string
 	contentType string
 	data        []byte
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 type fakeImageStorage struct {
@@ -66,8 +74,10 @@ func TestImageResultUploaderRewritesB64JSON(t *testing.T) {
 	require.JSONEq(t, `"a cat"`, string(parsed.Data[0]["revised_prompt"]), "unrelated fields preserved")
 }
 
-func TestImageResultUploaderRewritesURL(t *testing.T) {
+func TestImageResultUploaderRejectsLoopbackURL(t *testing.T) {
+	hits := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
 		w.Header().Set("Content-Type", "image/png")
 		_, _ = w.Write(pngBytes)
 	}))
@@ -77,18 +87,46 @@ func TestImageResultUploaderRewritesURL(t *testing.T) {
 	uploader := NewImageResultUploader(storage, "images/", 0, nil)
 
 	result := json.RawMessage(`{"created":1,"data":[{"url":"` + upstream.URL + `/pic.png"}]}`)
-	out, err := uploader.Rewrite(context.Background(), "imgtask_xyz", result)
-	require.NoError(t, err)
+	_, err := uploader.Rewrite(context.Background(), "imgtask_xyz", result)
+	require.Error(t, err)
+	require.Zero(t, hits, "the default production downloader must reject loopback before connecting")
+	require.Empty(t, storage.saved)
+}
 
-	require.Len(t, storage.saved, 1)
-	require.Equal(t, pngBytes, storage.saved[0].data)
-	require.Equal(t, "image/png", storage.saved[0].contentType)
+func TestDefaultImageDownloadHTTPClientRejectsRedirectToLoopback(t *testing.T) {
+	privateHits := 0
+	private := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		privateHits++
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngBytes)
+	}))
+	defer private.Close()
 
-	var parsed struct {
-		Data []map[string]json.RawMessage `json:"data"`
-	}
-	require.NoError(t, json.Unmarshal(out, &parsed))
-	require.JSONEq(t, `"https://cdn.test/images/imgtask_xyz-0.png"`, string(parsed.Data[0]["url"]))
+	client := defaultImageDownloadHTTPClient()
+	var requests []string
+	client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req.URL.String())
+		if len(requests) > 1 {
+			return nil, errors.New("unexpected second request after SSRF redirect")
+		}
+		return &http.Response{
+			StatusCode: http.StatusFound,
+			Header:     http.Header{"Location": []string{private.URL + "/pic.png"}},
+			Body:       io.NopCloser(strings.NewReader("redirect")),
+			Request:    req,
+		}, nil
+	})
+	storage := &fakeImageStorage{}
+	uploader := NewImageResultUploader(storage, "images/", 0, client)
+
+	result := json.RawMessage(`{"created":1,"data":[{"url":"https://images.example.test/start"}]}`)
+	_, err := uploader.Rewrite(context.Background(), "imgtask_redirect", result)
+
+	require.Error(t, err)
+	require.Len(t, requests, 1)
+	require.Zero(t, privateHits, "redirect target must be rejected before connecting to loopback")
+	require.Contains(t, err.Error(), "blocked by SSRF policy")
+	require.Empty(t, storage.saved)
 }
 
 func TestImageResultUploaderPropagatesStorageError(t *testing.T) {

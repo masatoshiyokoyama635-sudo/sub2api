@@ -53,7 +53,28 @@ func NewImageResultUploader(storage ImageStorage, prefix string, maxDownloadByte
 }
 
 func defaultImageDownloadHTTPClient() *http.Client {
-	return &http.Client{Timeout: 60 * time.Second}
+	// Deliberately bypass environment proxies: when a proxy resolves the target,
+	// this process cannot enforce the destination IP policy against DNS rebinding.
+	client := newSSRFSafeHTTPClient(60 * time.Second)
+	client.CheckRedirect = imageDownloadCheckRedirect
+	return client
+}
+
+func imageDownloadCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("image download stopped after 10 redirects")
+	}
+	if req == nil || req.URL == nil {
+		return errors.New("image redirect has no destination URL")
+	}
+	blocked, err := isPrivateOrLoopbackHost(req.Context(), req.URL.Hostname())
+	if err != nil {
+		return fmt.Errorf("resolve image redirect destination: %w", err)
+	}
+	if blocked {
+		return fmt.Errorf("image redirect blocked by SSRF policy: %s", req.URL.Hostname())
+	}
+	return nil
 }
 
 // Rewrite 将 result（上游生图响应 JSON）里的每张图片转存到对象存储，
