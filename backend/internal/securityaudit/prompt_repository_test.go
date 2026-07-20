@@ -26,7 +26,7 @@ func TestPostgreSQLRepositoryJobStatusReadsCurrentState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := NewPostgreSQLRepository(db)
 	mock.ExpectQuery(`SELECT status FROM prompt_audit_jobs WHERE id=\$1`).WithArgs(int64(17)).WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("queued"))
 

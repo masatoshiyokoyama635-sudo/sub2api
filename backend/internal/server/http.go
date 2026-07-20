@@ -298,6 +298,7 @@ func (w *trackedResponseWriter) Flush() {
 }
 
 func (w *trackedResponseWriter) CloseNotify() <-chan bool {
+	//nolint:staticcheck // Preserve the optional legacy interface expected by gin's ResponseWriter wrapper.
 	if notifier, ok := w.ResponseWriter.(http.CloseNotifier); ok {
 		return notifier.CloseNotify()
 	}

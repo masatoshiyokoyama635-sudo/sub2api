@@ -1133,7 +1133,8 @@ func TestWorkerLeaseHeartbeatFailureCancelsLongScannerWithoutTerminalTransition(
 	)
 	cfg := asyncConfig()
 	cfg.Endpoints[0].InputLimit = MaxInputLimit
-	configStore := runner.config.(*fakeConfigStore)
+	configStore, ok := runner.config.(*fakeConfigStore)
+	require.True(t, ok)
 	configStore.Set(cfg, true)
 	runner.leaseHeartbeatInterval = 10 * time.Millisecond
 

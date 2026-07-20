@@ -493,13 +493,6 @@ func (m *ConfigManager) RuntimeState() (expected int64, active int64, loadedAt *
 func (m *ConfigManager) Encrypt(value string) (string, error) { return m.encryptor.Encrypt(value) }
 func (m *ConfigManager) Decrypt(value string) (string, error) { return m.encryptor.Decrypt(value) }
 
-func (m *ConfigManager) currentRiskControlEnabled() bool {
-	if snapshot := m.snapshot.Load(); snapshot != nil {
-		return snapshot.active.RiskControlEnabled
-	}
-	return false
-}
-
 func parseStoredRiskControl(raw string) (bool, error) {
 	switch strings.TrimSpace(raw) {
 	case "", "false":

@@ -123,7 +123,7 @@ func TestOpenAIGatewayServiceResponsesWebSocket_PassiveImageNamespaceRemainsNonE
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxyErr, clientCloseErr, upstreamWrites := runOpenAIWSImageIntentGateCase(t, tt.payload)
+			upstreamWrites, proxyErr, clientCloseErr := runOpenAIWSImageIntentGateCase(t, tt.payload)
 
 			if tt.wantForbidden {
 				var policyClose *OpenAIWSClientCloseError
@@ -145,7 +145,7 @@ func TestOpenAIGatewayServiceResponsesWebSocket_PassiveImageNamespaceRemainsNonE
 	}
 }
 
-func runOpenAIWSImageIntentGateCase(t *testing.T, payload string) (error, error, int) {
+func runOpenAIWSImageIntentGateCase(t *testing.T, payload string) (int, error, error) {
 	t.Helper()
 
 	cfg := &config.Config{}
@@ -267,5 +267,5 @@ func runOpenAIWSImageIntentGateCase(t *testing.T, payload string) (error, error,
 	upstreamConn.mu.Lock()
 	upstreamWrites := len(upstreamConn.writes)
 	upstreamConn.mu.Unlock()
-	return proxyErr, clientReadErr, upstreamWrites
+	return upstreamWrites, proxyErr, clientReadErr
 }

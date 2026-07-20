@@ -154,9 +154,40 @@
 - [x] S3 备份连接测试通过
 - [x] 手动备份测试成功（下载 .sql.gz 文件可正常解压）
 
+## v0.1.161 自定义候选（2026-07-18，未发布）
+- [x] 在独立工作区 `E:/claude-cache/sub2api-v161-candidate` 基于自定义 `0c77db2b4` 创建候选分支 `merge/v0.1.161-chat-image-tools`，核验官方 annotated tag `v0.1.161`（peeled commit `19149ca196ee`），未触碰原 v0.1.160 冻结 merge 工作树。
+- [x] 合入官方 v0.1.161 并解决 VERSION 冲突为 `0.1.161`；保留 AI Chat、AI Images、Canvas 外链、RMB/动态多币种支付补丁和 custom Docker `BUILD_TYPE`。
+- [x] 前端 frozen install、全量 Vitest `1241/1241`、typecheck、lint、production build 通过；Go 1.26.5 Windows 工具链可用，候选全包编译、go vet、定向测试和全包测试已运行，当前未做 Linux race/CI。
+- [x] 复审发现并修复 Prompt Audit 敏感路由未挂 step-up 的高风险缺陷：新增不受 `step_up_enabled` 开关影响的 `StrictStepUpAuthMiddleware`，配置、节点探测、完整事件详情和删除接口均强制 JWT+TOTP step-up；同步补充路由回归测试。
+- [x] 进一步修复 step-up grant 的旧 JWT 边界：grant 创建和消费均要求 session ID，无 `sid` 的 JWT 返回 `STEP_UP_SESSION_REQUIRED`；相关 middleware、TOTP handler 定向测试通过。
+- [ ] 当前仍未提交 merge、未 push、未构建 GHCR、未部署生产；生产继续运行 `0.1.159-zz`。候选仍需安全复审，特别是 Prompt Audit full_prompt/Redis 明文保留、出站节点 SSRF、step-up 设置读取错误 fail-open、Gemini query key 兼容，以及 Linux Go 1.26.5 race/CI。
+- [x] 2026-07-18 后续已移植 Prompt Audit 配置单调安装、payload/Redis 上限、worker 配置漂移停止、terminal job 清理、严格 step-up 前端 UX、S3 step-up 取消回归，以及 OpenAI 被动 `image_gen` HTTP/WS 显式意图修复；对应定向 Go/前端测试、Go 全包编译、核心 vet、前端 typecheck/lint/build 已通过。
+- [ ] 用户明确本轮不使用 Grok，Grok probe/CAS/媒体资格相关审查问题暂不处理，作为已知风险记录；不得将 Grok 相关失败误报为已修复。
+- [ ] 新窗口从 `E:/claude-cache/sub2api-v161-candidate` 继续，只修非 Grok 阻塞：Prompt Audit Start/Shutdown 生命周期竞态、Shutdown 超时后的依赖关闭错误传播、worker lease heartbeat、enqueue bounded cleanup，以及普通 settings 对 `risk_control_enabled` 的严格 step-up 绕过。完成后再执行最终验证；继续禁止 commit、push、镜像与部署。
+- [x] 2026-07-19 完成上述非 Grok 阻塞的 TDD RED 阶段：仅扩展 Go 测试/fake，覆盖 PromptService/ConfigManager/Runner Start-vs-Shutdown 串行与 terminal shutdown、长 scanner 独立 lease heartbeat、caller context 取消后的有界 enqueue 双补偿与错误可观察性、`risk_control_enabled` true→false 严格 session-bound step-up、Prompt Audit cleanup 错误/timeout 阻止 Redis/Ent close 并向调用方传播。Go 1.26.5 定向测试均真实运行并按预期失败；未改生产代码、未改 Grok 文件、未 commit/push/构建镜像/部署。
+- [x] 2026-07-19 已实现普通 settings 的 `risk_control_enabled` true→false 严格 session-bound step-up：在 handler 内与 `step_up_enabled` 降级合并为一次 `EnforceStepUpAlways`，不把整个路由挂 strict；Admin API Key、无 `sid`、无 grant 均在 settings 写入前拒绝，字段省略/开启/同值语义不变。E 盘 Go 1.26.5 定向 handler 测试通过；未改 Prompt Audit/Grok 文件，未 commit/push/构建/部署。
+- [x] 2026-07-19 完成 PromptService、ConfigManager、Runner 生命周期 GREEN：Start/Shutdown 使用单次运行状态机串行，Shutdown timeout 后后台继续 drain、禁止新 Start，后续 Shutdown 等待同一 completion；Starting 阶段 Shutdown 会先 cancel 启动 context，再等待 startup 完成后安全 drain，避免依赖 Start/Shutdown 并发和死锁；ConfigManager 初始 load error 与 PromptService config error 保持可恢复 degraded-running。E 盘 Go 1.26.5 生命周期定向测试通过（`ok`，0.466s）；未改 heartbeat/enqueue/wire cleanup/Grok 文件，未 commit/push/构建/部署。
+- [x] 2026-07-19 完成非 Grok 阻塞修复：processing job 增加可注入周期的 lease heartbeat，失败取消 scanner 且不写终态；enqueue Set/Publish 失败使用 `WithoutCancel` + bounded cleanup，Delete/Mark 错误可聚合观测；普通 settings 风险控制关闭执行 Strict JWT+TOTP；应用 cleanup 传播错误并在 Prompt Audit 未安全停止时阻止 Redis/Ent 关闭。Go 1.26.5 全包编译、全包 `go test`（未设置 `OPENAI_API_KEY` 以跳过外部 API 对比测试）、`go vet`、定向安全测试通过；全包测试仅在显式设置外部 OpenAI API key 时失败，原因为外部 API 不可达/超时。前端 pnpm 9.15.9 全量 Vitest `1243/1243`、typecheck、lint、production build 通过；pnpm audit exceptions 检查通过。Windows 无 C 编译器，`go test -race` 未执行；govulncheck 不可用；未 commit/push/构建镜像/部署。
+- [x] 2026-07-19 用户确认候选部署于不公开的私人服务器，并接受 Prompt Audit Redis 扫描正文与 `full_prompt` 持久化边界；该项不再作为候选发布阻塞。下一窗口仅继续 Linux Go 1.26.5 race/CI、剩余并发/安全复核、dirty 工作树核对，以及用户后续明确授权后的 commit/push/镜像/部署。
+
+## v0.1.161 非 Grok 阻塞修复（2026-07-19，未发布）
+- [x] HTTP shutdown 现在跟踪 serve loop、普通 handler 和 hijacked/WebSocket 连接；Shutdown 超时后先 Close 并等待，无法确认安全停止时跳过应用/Redis/Ent cleanup；partial-init cleanup 不再忽略 Prompt Audit Start 错误。
+- [x] Settings 管理更新改为主 settings、auth-source defaults、OpenAI fast policy、payment 的单事务原子写入；PostgreSQL 使用 advisory transaction lock，事务内重读安全开关并检测 baseline conflict；安全降级必须有 strict authorization，无授权服务层调用也 fail-closed。
+- [x] Prompt Audit heartbeat 正常 quiesce 与 failure cancel 分离，终态写入前 join heartbeat；heartbeat 丢失或 scanner panic 组合不再由外层 recover 写旧 owner 终态；PublishQueued ambiguous outcome 先查 job 状态，未确认 failed 不删 payload。
+- [x] Prompt Audit storage config 拒绝未知字段、未知 scanner、trailing JSON 和非法 risk-control 值；风险控制状态未知/配置不可信时 fail-closed；PromptService/Runner/ConfigManager stopped 状态保留 shutdown error。
+- [x] 验证：Windows Go 1.26.5 全包 `go test ./...`、全包 `go vet ./...`、目标 Go 包测试通过；前端 Corepack pnpm 10.33.2 typecheck、lint、全量 Vitest `180/180` 文件 `1243/1243` 测试、production build、pnpm audit exceptions 通过；Linux WSL Go 1.26.5 Prompt Audit race 通过，HTTP/Settings 目标包 race 受 E 盘空间耗尽影响未完整完成。
+- [x] 最终只读安全复审确认并修复两项 ConfigManager HIGH：`Save` 对 risk-control 使用严格解析且读取失败保持 unknown/untrusted，过期成功 Reload 不再覆盖最新失败 Reload 的 fail-closed 元数据；新增并发回归测试。修复后 Windows Go 1.26.5 全包 `go test ./...`、全包 `go vet ./...` 和 Linux Prompt Audit race 重新通过，复审确认没有新的 CRITICAL/HIGH/发布阻塞 MEDIUM。Settings fallback 仍是条件性 TOCTOU 风险，标准 PostgreSQL wire 路径使用原子实现。
+- [x] 2026-07-20 已创建并推送 merge commit `3540f755aa7cbf43c13cf0889e684445e32f62ab` 到 fork `feature/chat-image-tools`；Security Scan run `29711926123` 成功，Custom Docker Image run `29711926162` 成功，镜像 digest 为 `sha256:027692a1322c80b83a34f27748af199c041504cbb07f9fc97dd3bff81d55668a`，标签为 `chat-image-tools`、`chat-image-tools-3540f75` 和完整 SHA 标签。
+- [ ] CI run `29711926110` 的 frontend、shell 通过，但 unit tests 因用户明确排除的既有 Grok 测试 `TestGrokOAuthHandlerQueryQuotaProbesUpstream` 失败；golangci-lint 另报 7 个可修复 lint 问题，已在本地修复但尚未形成第二个 commit/push。当前不应把 CI 说成全绿。
+
 ## 当前问题
 
-（暂无）
+- lint 修复尚未 commit/push；下一窗口应先检查并暂存这些本地修复，再本地运行 golangci-lint（若可用）或按 CI 报告逐项验证，然后决定是否创建第二个修复 commit。
+- CI 的 Grok unit failure 按用户要求保留为已知风险，不修改 Grok 逻辑；如需要 CI 全绿，必须另行取得用户授权处理 Grok。
+- Linux 目标包 race 已在有足够空间后通过主要目标包；全包 race 的既有 `internal/service` Gin 全局 `SetMode`/测试桩竞争仍未归因于本轮改动。
+- `govulncheck` 本地不可用，但 GitHub Security Scan 已通过。
+- Grok probe/CAS/媒体资格风险按用户要求保留，不在本轮处理。
+
 
 ## 部署/回滚记录
 

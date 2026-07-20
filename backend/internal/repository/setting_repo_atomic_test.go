@@ -23,7 +23,10 @@ func newAtomicSettingRepoMock(t *testing.T) (*settingRepository, sqlmock.Sqlmock
 	t.Cleanup(func() { _ = db.Close() })
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 	t.Cleanup(func() { _ = client.Close() })
-	return NewSettingRepository(client).(*settingRepository), mock
+	repository := NewSettingRepository(client)
+	repo, ok := repository.(*settingRepository)
+	require.True(t, ok)
+	return repo, mock
 }
 
 func expectSettingsAdvisoryLock(mock sqlmock.Sqlmock) {
@@ -113,7 +116,9 @@ func TestSettingRepositoryUpdateSettingsAtomicNonPostgresSkipsAdvisoryLock(t *te
 	t.Cleanup(func() { _ = db.Close() })
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.SQLite, db)))
 	t.Cleanup(func() { _ = client.Close() })
-	repo := NewSettingRepository(client).(*settingRepository)
+	repository := NewSettingRepository(client)
+	repo, ok := repository.(*settingRepository)
+	require.True(t, ok)
 
 	mock.ExpectBegin()
 	expectSecurityBaselineRead(mock, securityBaselineRows(false, false))

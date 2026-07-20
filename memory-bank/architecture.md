@@ -171,6 +171,18 @@ sub2api/
 - **存储桶**：`sub2api-1400654985`（私有读写）
 - **访问方式**：子用户 + 最小权限策略
 
+## v0.1.161 候选架构与安全边界（2026-07-18，未发布）
+- 候选工作区位于 `E:/claude-cache/sub2api-v161-candidate`，基于自定义 `0c77db2b4` 合入官方 `v0.1.161`；当前仓库根目录仍是未提交的 v0.1.160 冻结现场，生产仍为 `0.1.159-zz`。
+- 官方 v0.1.161 的普通敏感操作使用可配置 `StepUpAuthMiddleware`，`step_up_enabled` 缺失/错误默认关闭；Prompt Audit 的配置写入、节点探测、完整事件详情和删除操作属于更高敏感度控制面，必须使用不受全局开关影响且拒绝 Admin API Key 的 `StrictStepUpAuthMiddleware`。
+- `StrictStepUpAuthMiddleware` 由 `backend/internal/server/middleware/step_up.go` 定义并由 `backend/internal/server/http.go` / `router.go` / `cmd/server/wire_gen.go` 注入；Prompt Audit 路由在 `backend/internal/server/routes/admin.go` 使用该严格门控，普通账号/备份/导出等路由继续使用开关感知门控。
+- Step-up grant 现在必须绑定 JWT 的 session ID；没有 `sid` 的旧 JWT 不能创建或消费 grant，`POST /user/totp/step-up` 对无 session-bound JWT fail-closed。
+- Prompt Audit 当前会把异步扫描正文写入 Redis、并按设计持久化 `full_prompt`；用户已确认候选部署在不公开的私人服务器上并接受该边界，因此它不再阻塞本轮候选发布。仍不得在日志、错误或公开回复中泄露实际 prompt/token 内容。
+- 2026-07-18 用户明确本轮不会使用 Grok，因此 Grok probe/CAS/媒体资格问题不作为本轮修复范围，但必须保留为已知风险，不能宣称已修复；候选发布前仅继续处理非 Grok 阻塞。
+- 非 Grok 待修边界：`PromptService`/`ConfigManager`/`Runner` 的 Start/Shutdown 需完整串行；Shutdown 超时必须向上层传播并阻止 Redis/PostgreSQL 提前关闭；processing job 需要独立 lease heartbeat 并在 heartbeat 失败时取消 scanner；enqueue 失败清理需要独立短时 context 和可观测错误；通用 settings 显式关闭 `risk_control_enabled` 等会削弱 Prompt Audit 的字段必须在任何写入前执行 Strict JWT+TOTP step-up，并拒绝 Admin API Key。
+- 2026-07-19 上述非 Grok 边界已完成实现：PromptService、ConfigManager、Runner 使用单次运行状态机和共享 shutdown completion，支持 Start/Shutdown 串行、timeout 后继续后台 drain、禁止 restart，且初始配置 load error 保持可恢复 degraded-running；Runner 为 processing job 启动独立 lease heartbeat，refresh 失败取消 scanner 并禁止旧 owner Complete/Retry/Fail，heartbeat stop 与 scanner 返回边界使用独立停止信号收敛；enqueue 的 Set/Publish 失败均使用 `context.WithoutCancel` + 独立 timeout 执行 payload Delete 和 staging failure 标记，并用稳定错误码聚合可观测错误；应用 cleanup 返回 error，仅在全部应用层（含 Prompt Audit）成功停止后按 Redis→Ent 关闭依赖，主服务退出不再用 `log.Fatalf` 跳过 cleanup。
+- 普通 `PUT /api/v1/admin/settings` 不整体挂 strict middleware；handler 仅在 `risk_control_enabled` 显式 true→false 或 `step_up_enabled` true→false 时复用 `middleware.EnforceStepUpAlways`。两者同请求降级合并为一次严格 JWT+TOTP 校验，Admin API Key、无 `sid`、无 grant 均在任何 settings 写入前拒绝；risk-control 字段省略、false→true 和同值保存维持原语义。
+- 2026-07-19 Settings 更新进一步收敛为 `SettingService.UpdateSettingsAtomically` + repository transaction：主 settings、auth-source defaults、OpenAI fast policy、payment 在一条事务内构造/校验/批量 upsert；PostgreSQL 通过固定 `pg_advisory_xact_lock` 串行化，锁内重读两个安全开关并检测 baseline conflict；无授权的服务层安全降级返回 `SETTINGS_STRICT_AUTHORIZATION_REQUIRED`。HTTP server 新增 serve/handler/hijacked connection tracker，无法确认请求安全结束时不关闭 Redis/Ent。Prompt Audit 对配置读取未知状态严格 fail-closed，heartbeat+scanner panic 不再允许外层 recover 写旧 owner 终态，PublishQueued 状态不确定时保留 payload。
+
 ## 安全状态（2026-04-24 审查）
 
 ### 已加固
