@@ -117,9 +117,11 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // promptAudit
 	)
 
+	var cleanupErr error
 	require.NotPanics(t, func() {
-		cleanup()
+		cleanupErr = cleanup()
 	})
+	require.NoError(t, cleanupErr)
 }
 
 type cleanupFailingConfigStore struct {
