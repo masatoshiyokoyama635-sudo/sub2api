@@ -205,8 +205,16 @@
 - [x] 从自定义 v0.1.162 提交 `b480d880c` 合入官方 `v0.1.163` peeled commit `d0bdd7e77`；解决 `backend/cmd/server/main.go`、`SubscriptionPlanCard.vue` 及其测试三处冲突，同时保留本地完整 shutdown/cleanup、默认 CNY 与上游周/月有效期修复；源码版本和版本测试更新为 `0.1.163`。
 - [x] 前端使用 E 盘缓存和 Corepack `pnpm 10.33.2` frozen install；typecheck、ESLint、合并定向测试 `15/15`、全量 Vitest `494/494` suites 和 `1309/1309` tests、production build 全部通过。
 - [x] Windows Go 1.26.5 使用 E 盘 GOPATH/module/build/tmp cache 完成 `go test -run '^$' ./...` 全包编译、无外部 OpenAI 凭据的 `go test ./...` 全量测试、`go vet ./...` 和 Windows amd64 构建；首次依赖下载因 `proxy.golang.org` IPv6 超时，切换 `goproxy.cn` 后通过，与候选源码无关。
-- [x] 本地二进制 `dist/sub2api-v0.1.163-windows-amd64.exe` 已用 `-version` 验证为 `0.1.163`，大小 `107972096` 字节，SHA256 `D1D17AA145F63973113173369E29FAEC4AA71F5CD2E9E205BDE9331086818F08`。
-- [ ] 当前只完成本地合并、验证和构建；尚未 push、触发 GHCR workflow 或部署生产。
+- [x] 最终 merge commit `826ecb06d4c4df47ced0c61e35870c081a64da90` 已推送到 fork `feature/chat-image-tools`；Custom Docker Image run `29979060018` 成功，manifest digest 为 `sha256:888cbb0398ac91e8e0d84a6df7b43c739befefa972a1bb21c4152374ccef3c4b`。
+- [x] 用户已按上述 digest 在 `/opt/sub2api/docker-compose.yml` 固定镜像并完成部署，容器 revision 为 `826ecb06d4c4df47ced0c61e35870c081a64da90`。临时 Windows 构建产物随后已清理。
+
+## v0.1.164 自定义候选（2026-07-23）
+- [x] 在唯一工作目录 `E:/vis project/zz sub2api` 从自定义 v0.1.163 提交 `826ecb06d` 合入官方 `v0.1.164` peeled commit `cd8bb98c4`；未创建额外 worktree 或候选文件夹。
+- [x] 解决 `wire_gen.go`、`setting_handler_update.go`、`http.go`、`router.go` 四处冲突：保留严格 step-up、原子设置写入和完整 shutdown/cleanup，同时接入 composite route resolver、支付宝移动 deep link 与 Ollama Cloud 用量服务。
+- [x] 修复合并后的 cleanup 测试夹具参数缺口；`backend/cmd/server/VERSION` 和嵌入版本测试更新为 `0.1.164`。
+- [x] Go 1.26.5 使用 E 盘 GOPATH/module/build/tmp cache 完成 `go test -run '^$' ./...`、Custom Docker workflow 同款回归、`go vet ./...` 和无外部 OpenAI 凭据的 `go test ./...`，全部通过。
+- [x] 前端 Corepack pnpm 10.33.2 的 typecheck、ESLint、全量 Vitest `192/192` files、`1341/1341` tests 和 production build 全部通过；仅有既有 Vite chunk 与 Browserslist 提示。
+- [x] 发布路径保持为推送 `feature/chat-image-tools` 后由 GitHub Actions 构建 GHCR 多架构镜像；本地不构建 Windows 可执行文件，部署以 Action 输出的 manifest digest 为准。
 
 ## 部署/回滚记录
 

@@ -25,7 +25,7 @@ import (
 )
 
 func TestEmbeddedVersionMatchesRelease(t *testing.T) {
-	require.Equal(t, "0.1.163", strings.TrimSpace(embeddedVersion))
+	require.Equal(t, "0.1.164", strings.TrimSpace(embeddedVersion))
 }
 
 func TestProvideServiceBuildInfo(t *testing.T) {
@@ -113,6 +113,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // channelMonitorRunner
 		nil, // quotaFlusher
 		nil, // upstreamBillingProbe
+		nil, // ollamaCloudUsage
 		nil, // auditLog
 		nil, // promptAudit
 	)
@@ -203,6 +204,7 @@ func newCleanupWithInfrastructure(
 		openAIOAuthSvc,
 		geminiOAuthSvc,
 		antigravityOAuthSvc,
+		nil,
 		nil,
 		nil,
 		nil,

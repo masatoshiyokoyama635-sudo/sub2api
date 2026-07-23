@@ -197,7 +197,14 @@ sub2api/
 - 当前候选从已发布自定义 v0.1.162 提交 `b480d880c252ae76f6610452545eeba6cefff25b` 合入官方 annotated tag `v0.1.163`（peeled commit `d0bdd7e771636a8d315f542cafd39484f39bd60c`），源码版本和嵌入版本断言统一为 `0.1.163`。
 - 官方 v0.1.163 的分组级 OpenAI reasoning effort 上限/映射通过 migration `185_group_reasoning_effort_policy.sql` 持久化，并在 HTTP、WebSocket v1/v2 请求入口统一应用；同时保留 Grok `/responses/compact`、Responses 客户端工具往返、Redis ACL username、调度器元数据与移动端修复。
 - 合并继续保留 fork 的 AI Chat、AI Images、同源图片 URL 防护、历史套餐默认 CNY、Prompt Audit 安全加固、自定义更新来源校验以及两阶段 HTTP shutdown/cleanup。后端 `main.go` 冲突采用本地可观测错误返回与完整 cleanup 路径，它覆盖上游避免 shutdown `log.Fatalf` 跳过清理的修复目标。
-- Windows 构建产物为 `dist/sub2api-v0.1.163-windows-amd64.exe`，内嵌版本 `0.1.163`，SHA256 `D1D17AA145F63973113173369E29FAEC4AA71F5CD2E9E205BDE9331086818F08`。`dist/` 按仓库规则忽略，不进入 Git merge commit。
+- v0.1.163 最终 merge commit 为 `826ecb06d4c4df47ced0c61e35870c081a64da90`；Custom Docker Image run `29979060018` 发布的 manifest digest 为 `sha256:888cbb0398ac91e8e0d84a6df7b43c739befefa972a1bb21c4152374ccef3c4b`，用户已按 digest 在 VPS 更新成功。临时 Windows 构建产物已删除，不属于后续发布流程。
+
+## v0.1.164 合并架构边界（2026-07-23）
+- 当前候选从已发布自定义 v0.1.163 提交 `826ecb06d4c4df47ced0c61e35870c081a64da90` 合入官方 annotated tag `v0.1.164`（peeled commit `cd8bb98c44303b2c8f04c0da340447c992f0cb7d`），源码版本与嵌入版本断言统一为 `0.1.164`。
+- 官方 v0.1.164 新增 composite groups/model routing 与 Ollama Cloud 用量同步，并包含支付宝移动端 deep link、OpenAI OAuth 输入标准化、流中断代理隔离、Grok 402 冷却和简单模式图片等修复。
+- 依赖注入与路由冲突采用组合结果：`StrictStepUpAuthMiddleware` 继续保护本地高敏感管理路由，`CompositeRouteResolver` 同时进入 gateway 路由；两阶段 HTTP shutdown、hijacked connection 跟踪和 cleanup 错误传播保持不变。
+- 设置更新仍通过 `UpdateSettingsAtomically` 一次提交主设置、认证默认值、OpenAI fast policy 与支付配置；v0.1.164 新增的 `AlipayMobilePrecreateDeepLink` 被纳入同一事务。`OllamaCloudUsageService` 已加入并行 cleanup 步骤，关闭依赖前会先停止后台同步。
+- 发布仍只通过推送 `feature/chat-image-tools` 触发 `.github/workflows/custom-docker.yml` 构建 Linux amd64/arm64 GHCR 镜像；本地不生成 Windows 可执行文件。生产部署继续固定 GitHub Actions 输出的 manifest digest。
 
 ## 安全状态（2026-04-24 审查）
 
