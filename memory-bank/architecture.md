@@ -181,7 +181,23 @@ sub2api/
 - 非 Grok 待修边界：`PromptService`/`ConfigManager`/`Runner` 的 Start/Shutdown 需完整串行；Shutdown 超时必须向上层传播并阻止 Redis/PostgreSQL 提前关闭；processing job 需要独立 lease heartbeat 并在 heartbeat 失败时取消 scanner；enqueue 失败清理需要独立短时 context 和可观测错误；通用 settings 显式关闭 `risk_control_enabled` 等会削弱 Prompt Audit 的字段必须在任何写入前执行 Strict JWT+TOTP step-up，并拒绝 Admin API Key。
 - 2026-07-19 上述非 Grok 边界已完成实现：PromptService、ConfigManager、Runner 使用单次运行状态机和共享 shutdown completion，支持 Start/Shutdown 串行、timeout 后继续后台 drain、禁止 restart，且初始配置 load error 保持可恢复 degraded-running；Runner 为 processing job 启动独立 lease heartbeat，refresh 失败取消 scanner 并禁止旧 owner Complete/Retry/Fail，heartbeat stop 与 scanner 返回边界使用独立停止信号收敛；enqueue 的 Set/Publish 失败均使用 `context.WithoutCancel` + 独立 timeout 执行 payload Delete 和 staging failure 标记，并用稳定错误码聚合可观测错误；应用 cleanup 返回 error，仅在全部应用层（含 Prompt Audit）成功停止后按 Redis→Ent 关闭依赖，主服务退出不再用 `log.Fatalf` 跳过 cleanup。
 - 普通 `PUT /api/v1/admin/settings` 不整体挂 strict middleware；handler 仅在 `risk_control_enabled` 显式 true→false 或 `step_up_enabled` true→false 时复用 `middleware.EnforceStepUpAlways`。两者同请求降级合并为一次严格 JWT+TOTP 校验，Admin API Key、无 `sid`、无 grant 均在任何 settings 写入前拒绝；risk-control 字段省略、false→true 和同值保存维持原语义。
-- 2026-07-19 Settings 更新进一步收敛为 `SettingService.UpdateSettingsAtomically` + repository transaction：主 settings、auth-source defaults、OpenAI fast policy、payment 在一条事务内构造/校验/批量 upsert；PostgreSQL 通过固定 `pg_advisory_xact_lock` 串行化，锁内重读两个安全开关并检测 baseline conflict；无授权的服务层安全降级返回 `SETTINGS_STRICT_AUTHORIZATION_REQUIRED`。HTTP server 新增 serve/handler/hijacked connection tracker，无法确认请求安全结束时不关闭 Redis/Ent。Prompt Audit 对配置读取未知状态严格 fail-closed，heartbeat+scanner panic 不再允许外层 recover 写旧 owner 终态，PublishQueued 状态不确定时保留 payload。
+- 2026-07-19 Settings 更新进一步收敛为 `SettingService.UpdateSettingsAtomically` + repository transaction：主 settings、auth-source defaults、OpenAI fast policy、payment 在一条事务内构造/校验/批量 upsert；PostgreSQL 通过固定 `pg_advisory_xact_lock` 串行化，锁内重读两个安全开关并检测 baseline conflict；无授权的服务层安全降级返回 `SETTINGS_STRICT_AUTHORIZATION_REQUIRED`。HTTP server 新增 serve/handler/hijacked connection tracker，无法确认请求安全结束时不关闭 Redis/Ent。Prompt Audit heartbeat+scanner panic 不再允许外层 recover 写旧 owner 终态，PublishQueued 状态不确定时保留 payload。
+- Prompt Audit 的准确故障策略是“仅已知 blocking intent 时 fail-closed”：当已观察到 `risk_control_enabled=true`、审计启用且 `blocking_enabled=true` 后，配置激活/重载失败会进入 blocking degradation；冷启动完全无法读取配置且没有任何历史 blocking intent 时保持默认关闭的 degraded-running，避免默认关闭功能因 settings 故障拖垮全网关。ConfigManager 使用 `installMu` 作为运行态线性化锁：Reload sequence 分配、成功/失败终态写入，以及 Save 的数据库 commit 与 post-commit fence 发布必须在同一协议下串行；风险开关读取/解析失败或新版本激活失败要记录稳定 load error、保留已知 blocking intent 并把旧 snapshot 标记为 untrusted，任何已读取旧版本的并发 Reload 均不得在新 Save 后安装快照或回写错误状态。
+
+## v0.1.162 候选架构边界（2026-07-20，未提交）
+- 独立候选工作区为 `E:/claude-cache/sub2api-v162-candidate`，从已发布自定义 v0.1.161 提交 `8ffbe61a74172efc90754570aa0f7afe4896c013` 创建；合并来源锁定 annotated tag object `34b7a5ad70b4b9b9bb96955562fe632ad625d783`，peeled commit `27f094e0960ebd8e52de7ff7e763c6fec2ff4057`。根目录 v0.1.160 冻结 merge 现场保持未触碰。
+- 自定义二进制更新/回滚只有 `BuildType=release` 且运行版本为无 prerelease/build metadata 的合法稳定 SemVer 时才允许；通用 Dockerfile 默认 `BUILD_TYPE=source`，自定义工作流显式注入 `BUILD_TYPE=custom` 和 `0.1.162-zz`，防止错误元数据让官方二进制覆盖 fork。
+- 自定义 GHCR 发布使用仓库级串行 concurrency，完整 SHA 与短 SHA 标签在 push 前都做 fail-closed availability 检查；注册表标签检查不是原子不可变存储，生产仍必须以构建输出的 manifest digest 为权威，短 SHA 仅作可读别名。
+- 异步图片上游 URL 下载默认使用直连 SSRF-safe transport，拒绝 loopback、私网、link-local、metadata 与 DNS rebinding，并在 redirect 前再次校验目标；为避免代理端解析绕过本地 IP 策略，该下载器有意不继承环境代理。
+- 旧 AI Images 页面允许 `b64_json` 或同源绝对/根相对 HTTPS 图片 URL；`currentOrigin` 的 path/query/hash 不会带入结果 URL，跨域、HTTP、userinfo、protocol-relative、data/javascript URL 均拒绝。
+- 支付展示继续遵守 fork 长期边界：历史空/缺失套餐币种默认 CNY，显式币种动态显示，`daily_limit_usd`/`weekly_limit_usd`/`monthly_limit_usd` 等额度始终使用美元语义。
+
+## v0.1.163 合并架构边界（2026-07-22，本地候选）
+- 项目已整理为单工作树：唯一工作目录为 `E:/vis project/zz sub2api`；`v0.1.160`、`v0.1.161`、`v0.1.162`、`v0.1.163` 分别由 `merge/v0.1.160-chat-image-tools` 至 `merge/v0.1.163-chat-image-tools` 分支保留，原 `E:/claude-cache/sub2api-v16x-candidate` worktree 已注销并清理。旧 v0.1.160 合并现场保存在本地检查点提交 `7a9033658`，不会混入当前候选。
+- 当前候选从已发布自定义 v0.1.162 提交 `b480d880c252ae76f6610452545eeba6cefff25b` 合入官方 annotated tag `v0.1.163`（peeled commit `d0bdd7e771636a8d315f542cafd39484f39bd60c`），源码版本和嵌入版本断言统一为 `0.1.163`。
+- 官方 v0.1.163 的分组级 OpenAI reasoning effort 上限/映射通过 migration `185_group_reasoning_effort_policy.sql` 持久化，并在 HTTP、WebSocket v1/v2 请求入口统一应用；同时保留 Grok `/responses/compact`、Responses 客户端工具往返、Redis ACL username、调度器元数据与移动端修复。
+- 合并继续保留 fork 的 AI Chat、AI Images、同源图片 URL 防护、历史套餐默认 CNY、Prompt Audit 安全加固、自定义更新来源校验以及两阶段 HTTP shutdown/cleanup。后端 `main.go` 冲突采用本地可观测错误返回与完整 cleanup 路径，它覆盖上游避免 shutdown `log.Fatalf` 跳过清理的修复目标。
+- Windows 构建产物为 `dist/sub2api-v0.1.163-windows-amd64.exe`，内嵌版本 `0.1.163`，SHA256 `D1D17AA145F63973113173369E29FAEC4AA71F5CD2E9E205BDE9331086818F08`。`dist/` 按仓库规则忽略，不进入 Git merge commit。
 
 ## 安全状态（2026-04-24 审查）
 

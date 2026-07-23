@@ -188,6 +188,25 @@
 - `govulncheck` 本地不可用，但 GitHub Security Scan 已通过。
 - Grok probe/CAS/媒体资格风险按用户要求保留，不在本轮处理。
 
+## v0.1.162 自定义候选（2026-07-20，未提交）
+- [x] 从已发布自定义 v0.1.161 提交 `8ffbe61a74172efc90754570aa0f7afe4896c013` 创建独立工作区 `E:/claude-cache/sub2api-v162-candidate` 和分支 `merge/v0.1.162-chat-image-tools`；精确核验官方 annotated tag object `34b7a5ad70b4b9b9bb96955562fe632ad625d783`、peeled commit `27f094e0960ebd8e52de7ff7e763c6fec2ff4057`，根目录 v0.1.160 冻结 merge 现场未触碰。
+- [x] 完成 `--no-commit` 三方融合并把 `backend/cmd/server/VERSION` 更新为 `0.1.162`；保留 AI Chat、旧 AI Images、Canvas 安全外链、默认 CNY/动态币种、自定义 Docker 与 v0.1.161 安全加固。
+- [x] 修复融合后非 Grok 阻塞：Prompt Audit worker 在首次 dispatch/每个 chunk 前验证 expected/active/load error/mode/group，配置提交后激活失败立即推进 expected version 并标记旧 snapshot untrusted；异步图片下载增加 socket/redirect SSRF 防护；自定义 updater/rollback 严格验证 official stable release provenance；Docker 默认 `BUILD_TYPE=source`；旧套餐空/缺失币种在用户端和管理员端统一保持 CNY；更新/回滚浏览器 timeout 为后端 deadline 加一分钟余量；补齐 Image Storage 前端保存/step-up/连接测试。
+- [x] 自定义 GHCR workflow 改为仓库级串行 concurrency，并在发布前同时保护完整 SHA 和短 SHA 标签；仍明确生产发布必须记录/固定 manifest digest，短 SHA 不作为唯一 provenance 锚点。
+- [x] Windows Go 1.26.5 验证：标准 `go test ./...`、全包编译 `go test -run '^$' ./...`、`go vet -tags unit ./...` 通过；`go test -p 1 -tags unit ./... -skip '^TestGrokOAuthHandlerQueryQuotaProbesUpstream$'` 全包通过。完整 unit 唯一失败为 Grok 专属测试桩未实现候选 `GrokBillingSnapshotCAS`，导致响应缺 `billing`；该问题来自 v0.1.161 自定义父线，官方 v0.1.162 同名测试与官方实现自洽，不得误报为官方/flaky 或 unit 全绿。生产 account repository 已实现 CAS，且用户当前不使用 Grok，因此按既定范围保留为已知 Grok-only CI failure。
+- [x] Linux WSL Go 1.26.5 `-race` 定向通过：Prompt Audit 配置提交激活失败/worker trust、图片 direct/redirect SSRF、custom updater 保护。
+- [x] 前端最终验证通过：Vitest `483/483` suites、`1282/1282` tests，typecheck、ESLint、production build；目标融合回归 `44/44` 通过。pnpm audit exceptions、workflow YAML、Linux installer GitHub token 测试、`git diff --cached --check`、冲突标记/临时 artifact/密钥模式检查通过。
+- [x] 2026-07-20 已创建本地 merge commit `b480d880c252ae76f6610452545eeba6cefff25b`（`chore: merge upstream v0.1.162`），父提交为自定义 v0.1.161 `8ffbe61a74172efc90754570aa0f7afe4896c013` 与官方 v0.1.162 peeled commit `27f094e0960ebd8e52de7ff7e763c6fec2ff4057`；二进制版本为 `0.1.162`。
+- [x] 2026-07-20 已将该提交推送到 fork 的 `feature/chat-image-tools`，触发 Custom Docker Image run `29764586330`；test job（后端编译/回归、前端 typecheck/lint/Vitest/build）和 build job 均成功。GHCR 多架构镜像已发布，manifest digest 为 `sha256:6a494d2ad820d713b67b630c03dc97d90997b47829b370fbdc7f917330e4ea86`，标签为 `chat-image-tools`、`chat-image-tools-b480d88` 和完整 SHA 标签。尚未部署生产。
+- [x] 2026-07-20 继续终审后确认初版 post-commit fence 仍有两个 HIGH 并发窗口：旧 Reload 可在 sequence 检查后、Save 提交栅栏前安装 N-1，或在成功 Save 后回写过期失败状态。现已把 Reload sequence 分配、成功/失败终态写入，以及 Save 的 commit+fence 发布统一纳入 `installMu` 线性化协议，并区分 locked/unlocked helper 防止自锁；新增旧 Reload 成功/失败两种跨 Save 回归测试。Windows Go 1.26.5 的 Prompt Audit 包测试、全包 compile、标准 `go test ./...`、`go vet -tags unit ./...` 已重新通过。Linux race 首次因全新 module cache 访问 `proxy.golang.org` 超时，改用 E 盘已有 module cache 和 `goproxy.cn` 后通过（`ok`，4.536s）。前端/CI 文件未变，沿用此前 `483/483` suites、`1282/1282` tests、typecheck/lint/build 全通过证据。最终只读 review 未发现新的 CRITICAL/HIGH/发布阻塞 MEDIUM；本轮新增 Go 修复已通过测试并包含在本地 merge commit 中。
+
+## v0.1.163 自定义候选（2026-07-22，本地构建）
+- [x] 将 v0.1.160、v0.1.161、v0.1.162、v0.1.163 候选从多个外部 worktree 整理为 `E:/vis project/zz sub2api` 单工作树内的 Git 基线分支；清理 `E:/claude-cache/sub2api-v161-candidate`、`sub2api-v162-candidate`、`sub2api-v163-candidate`，并用本地提交 `7a9033658` 保存旧 v0.1.160 合并现场。
+- [x] 从自定义 v0.1.162 提交 `b480d880c` 合入官方 `v0.1.163` peeled commit `d0bdd7e77`；解决 `backend/cmd/server/main.go`、`SubscriptionPlanCard.vue` 及其测试三处冲突，同时保留本地完整 shutdown/cleanup、默认 CNY 与上游周/月有效期修复；源码版本和版本测试更新为 `0.1.163`。
+- [x] 前端使用 E 盘缓存和 Corepack `pnpm 10.33.2` frozen install；typecheck、ESLint、合并定向测试 `15/15`、全量 Vitest `494/494` suites 和 `1309/1309` tests、production build 全部通过。
+- [x] Windows Go 1.26.5 使用 E 盘 GOPATH/module/build/tmp cache 完成 `go test -run '^$' ./...` 全包编译、无外部 OpenAI 凭据的 `go test ./...` 全量测试、`go vet ./...` 和 Windows amd64 构建；首次依赖下载因 `proxy.golang.org` IPv6 超时，切换 `goproxy.cn` 后通过，与候选源码无关。
+- [x] 本地二进制 `dist/sub2api-v0.1.163-windows-amd64.exe` 已用 `-version` 验证为 `0.1.163`，大小 `107972096` 字节，SHA256 `D1D17AA145F63973113173369E29FAEC4AA71F5CD2E9E205BDE9331086818F08`。
+- [ ] 当前只完成本地合并、验证和构建；尚未 push、触发 GHCR workflow 或部署生产。
 
 ## 部署/回滚记录
 
