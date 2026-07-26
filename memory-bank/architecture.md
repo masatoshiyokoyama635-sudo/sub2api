@@ -206,6 +206,14 @@ sub2api/
 - 设置更新仍通过 `UpdateSettingsAtomically` 一次提交主设置、认证默认值、OpenAI fast policy 与支付配置；v0.1.164 新增的 `AlipayMobilePrecreateDeepLink` 被纳入同一事务。`OllamaCloudUsageService` 已加入并行 cleanup 步骤，关闭依赖前会先停止后台同步。
 - 发布仍只通过推送 `feature/chat-image-tools` 触发 `.github/workflows/custom-docker.yml` 构建 Linux amd64/arm64 GHCR 镜像；本地不生成 Windows 可执行文件。生产部署继续固定 GitHub Actions 输出的 manifest digest。
 
+## v0.1.165 合并架构边界（2026-07-25，本地候选）
+- 当前候选从自定义 v0.1.164 提交 `ed9b3a84c7be2a93f4962459bc6e79f67255d9ed` 合入官方 annotated tag `v0.1.165`（tag object `892c8fa3ab80ada8a624668808c3e575da7c04d5`，peeled commit `e9a58c1cb8b5ef626a75c93b4d953fde5e67aa29`），源码版本与嵌入版本断言统一为 `0.1.165`。
+- 官方 ChatGPT Live 通过 `/v1/live` 与 `/backend-api/codex/realtime/calls` 暴露实时会话网关；分组实体新增 `allow_live`，并由 concurrency/gateway cache 管理 Live 租约和续租。migrations `187` 至 `190` 依次加入 usage `session_id`、Live request type、分组 Live 开关和邮箱别名去重索引。
+- Claude Opus 5 的模型常量、Bedrock 映射、内置定价、前端模型映射和限流 scope 均采用官方实现；Ollama Cloud 用量刷新改为请求驱动 debounce，并保留 PostgreSQL 14/15/16 到期查询兼容修复。
+- OpenAI Responses HTTP/WS 入口继续在渠道模型映射后使用本地 `IsExplicitImageGenerationIntent`，避免被动 `image_gen` namespace 误判，同时保留官方 item ID/namespace 净化、同账号重试与 Live 会话逻辑。Prompt Audit 的配置写入、节点探测、完整事件读取和删除仍由 `StrictStepUpAuthMiddleware` 保护，官方新增管理路由不削弱该边界。
+- 前端 `GroupsView` 在加载时调用官方 `getLiveCapability()` 决定 Live 开关的启用流程；本地列设置和复制分组测试必须提供同名 API mock，避免挂载后的未处理 Promise rejection。Live 探测结果只允许回写仍处于活动状态且平台/编辑分组未变化的表单，关闭弹窗或切换平台会使对应异步令牌失效。AI Chat、AI Images、Canvas 外链及相关路由/语言包继续保留。
+- Custom Docker 仍由根 `Dockerfile` 构建前端、嵌入 Go 后端并组装 PostgreSQL 客户端运行层；通用源码构建默认 `BUILD_TYPE=source`，`.github/workflows/custom-docker.yml` 显式注入 `0.1.165-zz` 与 `BUILD_TYPE=custom`。生产发布只认 GHCR workflow 输出的不可变完整 SHA 标签和 manifest digest。
+
 ## 安全状态（2026-04-24 审查）
 
 ### 已加固

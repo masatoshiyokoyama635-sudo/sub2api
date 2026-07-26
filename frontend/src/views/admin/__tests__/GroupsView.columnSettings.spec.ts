@@ -8,6 +8,7 @@ const {
   listGroups,
   getAllGroups,
   getModelsListCandidates,
+  getLiveCapability,
   getUsageSummary,
   getCapacitySummary,
   listAccounts,
@@ -19,6 +20,7 @@ const {
   listGroups: vi.fn(),
   getAllGroups: vi.fn(),
   getModelsListCandidates: vi.fn(),
+  getLiveCapability: vi.fn(),
   getUsageSummary: vi.fn(),
   getCapacitySummary: vi.fn(),
   listAccounts: vi.fn(),
@@ -49,6 +51,7 @@ vi.mock('@/api/admin', () => ({
       list: listGroups,
       getAll: getAllGroups,
       getModelsListCandidates,
+      getLiveCapability,
       getUsageSummary,
       getCapacitySummary,
       create: vi.fn(),
@@ -172,6 +175,11 @@ const BaseDialogStub = {
   template: '<div v-if="show"><slot /><slot name="footer" /></div>',
 }
 
+const ConfirmDialogStub = {
+  props: ['show'],
+  template: '<div v-if="show" data-testid="visible-confirm-dialog" />',
+}
+
 const IconStub = {
   props: ['name'],
   template: '<span data-test="icon">{{ name }}</span>',
@@ -186,7 +194,7 @@ const mountView = async () => {
         DataTable: DataTableStub,
         Pagination: true,
         BaseDialog: BaseDialogStub,
-        ConfirmDialog: true,
+        ConfirmDialog: ConfirmDialogStub,
         EmptyState: true,
         Select: SelectStub,
         PlatformIcon: true,
@@ -218,6 +226,14 @@ const clickColumnToggle = async (wrapper: ReturnType<typeof mount>, label: strin
   await flushPromises()
 }
 
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 describe('admin GroupsView column settings', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -225,6 +241,7 @@ describe('admin GroupsView column settings', () => {
     listGroups.mockReset()
     getAllGroups.mockReset()
     getModelsListCandidates.mockReset()
+    getLiveCapability.mockReset()
     getUsageSummary.mockReset()
     getCapacitySummary.mockReset()
     listAccounts.mockReset()
@@ -242,6 +259,7 @@ describe('admin GroupsView column settings', () => {
     })
     getAllGroups.mockResolvedValue([])
     getModelsListCandidates.mockResolvedValue([])
+    getLiveCapability.mockResolvedValue({ supported: false })
     getUsageSummary.mockResolvedValue([])
     getCapacitySummary.mockResolvedValue([])
     listAccounts.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
@@ -379,5 +397,44 @@ describe('admin GroupsView column settings', () => {
     await clickColumnToggle(wrapper, 'Capacity')
     expect(getUsageSummary).toHaveBeenCalledTimes(1)
     expect(getCapacitySummary).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores a supported Live capability response after closing the create dialog', async () => {
+    const capability = deferred<{ supported: boolean }>()
+    getLiveCapability.mockReturnValue(capability.promise)
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-tour="groups-create-btn"]').trigger('click')
+    await wrapper.get('[data-testid="create-group-platform"]').setValue('openai')
+    const liveToggle = wrapper.get('[data-testid="create-live-toggle"]')
+    await liveToggle.trigger('click')
+    expect(liveToggle.attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-testid="create-group-cancel"]').trigger('click')
+    capability.resolve({ supported: true })
+    await flushPromises()
+
+    await wrapper.get('[data-tour="groups-create-btn"]').trigger('click')
+    await wrapper.get('[data-testid="create-group-platform"]').setValue('openai')
+    expect(wrapper.get('[data-testid="create-live-toggle"]').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('does not open an unsupported Live confirmation after switching platforms', async () => {
+    const capability = deferred<{ supported: boolean }>()
+    getLiveCapability.mockReturnValue(capability.promise)
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-tour="groups-create-btn"]').trigger('click')
+    const platform = wrapper.get('[data-testid="create-group-platform"]')
+    await platform.setValue('openai')
+    await wrapper.get('[data-testid="create-live-toggle"]').trigger('click')
+    await platform.setValue('anthropic')
+
+    capability.resolve({ supported: false })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="visible-confirm-dialog"]').exists()).toBe(false)
+    await platform.setValue('openai')
+    expect(wrapper.get('[data-testid="create-live-toggle"]').attributes('aria-pressed')).toBe('false')
   })
 })

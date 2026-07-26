@@ -216,6 +216,16 @@
 - [x] 前端 Corepack pnpm 10.33.2 的 typecheck、ESLint、全量 Vitest `192/192` files、`1341/1341` tests 和 production build 全部通过；仅有既有 Vite chunk 与 Browserslist 提示。
 - [x] 发布路径保持为推送 `feature/chat-image-tools` 后由 GitHub Actions 构建 GHCR 多架构镜像；本地不构建 Windows 可执行文件，部署以 Action 输出的 manifest digest 为准。
 
+## v0.1.165 自定义候选（2026-07-25，本地验证）
+- [x] 在唯一工作目录 `E:/vis project/zz sub2api` 从自定义 v0.1.164 提交 `ed9b3a84c` 创建回滚分支 `backup/pre-v165-ed9b3a84c` 和候选分支 `merge/v0.1.165-chat-image-tools`，合入官方 annotated tag object `892c8fa3ab80ada8a624668808c3e575da7c04d5`（peeled commit `e9a58c1cb8b5ef626a75c93b4d953fde5e67aa29`）。三方合并无文本冲突。
+- [x] 保留 AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、Prompt Audit 严格 step-up、自定义 updater/shutdown 和 Custom Docker `BUILD_TYPE=custom`；同时接入官方 ChatGPT Live、Claude Opus 5、Ollama Cloud 请求驱动刷新、usage `session_id`、公告预览和注册邮箱别名去重等更新。
+- [x] 官方标签中的 `backend/cmd/server/VERSION` 仍为 `0.1.164`，候选已显式同步为 `0.1.165`，嵌入版本回归断言同步更新。
+- [x] 修复合并测试契约：上游 `GroupsView` 新增 `getLiveCapability()` 后，本地列设置与复制分组测试 mock 补齐该方法并默认返回 `{ supported: false }`；同时为 Live 开关加入按表单隔离的异步失效令牌、活动弹窗/平台/编辑分组校验和加载禁用态，避免关闭弹窗或切换平台后的延迟响应回写旧表单。新增 2 条竞态回归测试，前端全量 Vitest `194/194` files、`1356/1356` tests 通过。
+- [x] 前端 pnpm 9.15.9 frozen install、typecheck、ESLint、production build 全部通过；仅保留既有 Browserslist、chunk size 和静态/动态 import 提示。
+- [x] Windows Go 1.26.5 使用 E 盘 GOPATH/module/build/tmp cache 完成全包编译、无外部凭据的 `go test ./...`、Custom Docker workflow 同款 unit 回归和 `go vet ./...`，全部通过；首次模块下载访问 `proxy.golang.org` IPv6 超时，切换项目 Dockerfile 同款 `goproxy.cn` 后成功。
+- [x] 使用 Dockerfile 同款 `CGO_ENABLED=0`、`-tags embed`、`0.1.165-zz`、`BuildType=custom` 参数完成 Linux amd64/arm64 交叉编译并校验 ELF machine。amd64 SHA256 为 `688fdcc0d8a269a2cf1646175d5c584460d37ee4538e92cc8324100827246f7e`，arm64 SHA256 为 `87d7a30e4957e546c905ccaf5546bdc425a3e189fb0cecec371bd816f74d9513`。
+- [ ] 本机没有 Docker/Podman/buildah，WSL 当前启动异常，因此尚未组装/运行 OCI 镜像；候选尚未推送 `feature/chat-image-tools`、尚未触发 GHCR workflow、尚未部署生产。后续发布仍以 GitHub Actions 输出的 manifest digest 为准。
+
 ## 部署/回滚记录
 
 ### 使用自定义镜像部署
