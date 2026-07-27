@@ -41,6 +41,19 @@ func (r *grokQuotaHandlerAccountRepo) UpdateExtra(_ context.Context, id int64, u
 	return nil
 }
 
+func (r *grokQuotaHandlerAccountRepo) UpdateGrokBillingSnapshotIfIdentityUnchanged(
+	_ context.Context,
+	id int64,
+	_ service.GrokBillingProbeIdentity,
+	billing *xai.BillingSummary,
+) (bool, error) {
+	if r.updates == nil {
+		r.updates = make(map[int64]map[string]any)
+	}
+	r.updates[id] = map[string]any{service.GrokBillingExtraKey: billing}
+	return true, nil
+}
+
 type grokQuotaHandlerUpstream struct {
 	mu       sync.Mutex
 	requests []*http.Request

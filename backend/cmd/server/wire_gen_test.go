@@ -25,7 +25,7 @@ import (
 )
 
 func TestEmbeddedVersionMatchesRelease(t *testing.T) {
-	require.Equal(t, "0.1.165", strings.TrimSpace(embeddedVersion))
+	require.Equal(t, "0.1.166", strings.TrimSpace(embeddedVersion))
 }
 
 func TestProvideServiceBuildInfo(t *testing.T) {
@@ -144,8 +144,8 @@ func (cleanupFailingConfigStore) Active() (securityaudit.ActiveConfig, bool) {
 }
 func (cleanupFailingConfigStore) EffectiveMode() securityaudit.Mode { return securityaudit.ModeOff }
 func (cleanupFailingConfigStore) BlockingActivationDegraded() bool  { return false }
-func (cleanupFailingConfigStore) Public() securityaudit.PublicConfig {
-	return securityaudit.PublicConfig{}
+func (cleanupFailingConfigStore) Public() (securityaudit.PublicConfig, error) {
+	return securityaudit.PublicConfig{}, nil
 }
 func (cleanupFailingConfigStore) Save(context.Context, securityaudit.UpdateConfigRequest, int64) (securityaudit.PublicConfig, error) {
 	return securityaudit.PublicConfig{}, nil

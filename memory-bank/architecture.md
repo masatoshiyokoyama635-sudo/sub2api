@@ -214,6 +214,14 @@ sub2api/
 - 前端 `GroupsView` 在加载时调用官方 `getLiveCapability()` 决定 Live 开关的启用流程；本地列设置和复制分组测试必须提供同名 API mock，避免挂载后的未处理 Promise rejection。Live 探测结果只允许回写仍处于活动状态且平台/编辑分组未变化的表单，关闭弹窗或切换平台会使对应异步令牌失效。AI Chat、AI Images、Canvas 外链及相关路由/语言包继续保留。
 - Custom Docker 仍由根 `Dockerfile` 构建前端、嵌入 Go 后端并组装 PostgreSQL 客户端运行层；通用源码构建默认 `BUILD_TYPE=source`，`.github/workflows/custom-docker.yml` 显式注入 `0.1.165-zz` 与 `BUILD_TYPE=custom`。生产发布只认 GHCR workflow 输出的不可变完整 SHA 标签和 manifest digest。
 
+## v0.1.166 合并架构边界（2026-07-27，本地候选）
+- 当前候选从自定义 v0.1.165 提交 `9038f46f7a63c298b086f75f45db45c7ca38e2d5` 创建回滚分支 `backup/pre-v166-9038f46f7` 和候选分支 `merge/v0.1.166-chat-image-tools`，合入官方 annotated tag object `80255971d4a6aaa098ba2c5e74e5c7deee22e6e7`（peeled commit `dc893dd0b8eab41df5be595ae9fcd1aa74a062b8`）；源码版本与嵌入版本断言统一为 `0.1.166`。
+- 官方面板 API 限流器按认证用户或安全客户端 IP 作用于 auth/user/admin/payment 路由；路由融合同时保留本地 `StrictStepUpAuthMiddleware`，Prompt Audit 高敏感接口不会因新增 limiter 参数而退回普通 step-up。
+- 官方“部分 settings PUT 不覆盖未提交字段”已并入本地原子设置事务：handler 计算 `OmittedSettingKeys`，`UpdateSettingsAtomically` 在单次 repository transaction 前删除未提交键，并在部分更新提交成功后从存储重建运行时缓存；省略 `step_up_enabled` 不触发错误的降级授权判断。
+- OpenAI Responses WebSocket v2 同时保留官方逐轮模型映射、上游模型计费统计和响应模型恢复，以及本地图片生成权限门控。首帧与后续 `response.create` 都在模型映射后按实际上游模型识别显式图片意图，未授权分组仍以 policy violation 关闭连接。
+- Prompt Audit 配置接口采用官方 `Public() (PublicConfig, error)` 契约和 `prompt_audit_config_unavailable` 错误，同时保留本地 blocking degradation、生命周期串行与 shutdown drain 测试。Grok handler unit 测试桩补齐 identity-bound billing CAS，生产 CAS 逻辑未改。
+- Custom Docker 继续由 `.github/workflows/custom-docker.yml` 在 `feature/chat-image-tools` push 后构建并发布 GHCR amd64/arm64 镜像。本机 Docker Desktop 二进制缺失，WSL 也没有 Docker/Podman/buildah，因此本地只完成 Dockerfile 同参数的嵌入式 Linux 双架构构建；OCI 镜像仍以 GitHub Actions 输出的不可变标签和 manifest digest 为准。
+
 ## 安全状态（2026-04-24 审查）
 
 ### 已加固

@@ -226,6 +226,15 @@
 - [x] 使用 Dockerfile 同款 `CGO_ENABLED=0`、`-tags embed`、`0.1.165-zz`、`BuildType=custom` 参数完成 Linux amd64/arm64 交叉编译并校验 ELF machine。amd64 SHA256 为 `688fdcc0d8a269a2cf1646175d5c584460d37ee4538e92cc8324100827246f7e`，arm64 SHA256 为 `87d7a30e4957e546c905ccaf5546bdc425a3e189fb0cecec371bd816f74d9513`。
 - [ ] 本机没有 Docker/Podman/buildah，WSL 当前启动异常，因此尚未组装/运行 OCI 镜像；候选尚未推送 `feature/chat-image-tools`、尚未触发 GHCR workflow、尚未部署生产。后续发布仍以 GitHub Actions 输出的 manifest digest 为准。
 
+## v0.1.166 自定义候选（2026-07-27，本地验证）
+- [x] 在唯一工作目录 `E:/vis project/zz sub2api` 从自定义 v0.1.165 提交 `9038f46f7` 创建 `backup/pre-v166-9038f46f7` 与 `merge/v0.1.166-chat-image-tools`，合入官方 `v0.1.166` peeled commit `dc893dd0b`；解决设置更新、Prompt Audit、路由和 OpenAI WebSocket 适配层共 9 个文本冲突。
+- [x] 设置融合同时保留本地原子事务/安全基线与官方部分 PUT 语义；panel rate limiter 与 Strict Step-up 同时进入管理路由；WebSocket 逐轮模型映射、计费统计、响应模型恢复与图片生成权限门控均保留。`backend/cmd/server/VERSION` 和嵌入版本测试更新为 `0.1.166`。
+- [x] 修复合并后的测试契约：Prompt Audit fake store 使用新的 `Public() (PublicConfig, error)`；路由测试补齐 panel limiter 参数；Grok OAuth handler unit 测试桩实现 identity-bound billing CAS，使既有 `billing` 响应断言恢复，生产 Grok 逻辑未修改。
+- [x] Windows Go 1.26.5 使用 E 盘 GOPATH/module/build/tmp cache 完成冲突包定向测试、`go test -run '^$' ./...` 全包编译、Custom Docker workflow 同款 unit 回归、`go test -tags unit ./internal/handler/admin` 和 `go vet ./...`，全部通过。
+- [x] 前端使用 E 盘 pnpm store 与 Corepack `pnpm 9.15.9` frozen install；typecheck、ESLint、全量 Vitest `197/197` files、`1373/1373` tests 和 production build 全部通过；仅保留既有 Browserslist、chunk size 和静态/动态 import 提示。
+- [x] 使用 Dockerfile 同款 `CGO_ENABLED=0`、`-tags embed`、`0.1.166-zz`、`BuildType=custom` 参数完成 Linux amd64/arm64 交叉编译并校验 ELF machine。amd64 SHA256 为 `89b77f8f2b49ad7d6d1d7b178e904ef2a698757df171e4159754a5ed7a18e0f4`，arm64 SHA256 为 `6633ffaadafe98594e5aad649a51710e5370bf20e80e36199f788502bf06a284`。
+- [ ] 本机 Docker Desktop 仅剩指向缺失二进制的服务注册，WSL 中也没有 Docker/Podman/buildah，因此尚未组装/运行 OCI 镜像；候选尚未 push、未触发 GHCR workflow、未发布或部署。发布仍需用户明确确认，并以 GitHub Actions 输出的 manifest digest 为准。
+
 ## 部署/回滚记录
 
 ### 使用自定义镜像部署

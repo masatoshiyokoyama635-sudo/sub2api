@@ -122,7 +122,7 @@ func TestPromptAuditAdminRoutesRejectUnauthenticatedAndNonAdminRequests(t *testi
 	auditLog := servermiddleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() })
 	stepUp := servermiddleware.StepUpAuthMiddleware(func(c *gin.Context) { c.Next() })
 	strictStepUp := servermiddleware.StrictStepUpAuthMiddleware(func(c *gin.Context) { c.Next() })
-	RegisterAdminRoutes(router.Group("/api/v1"), handlers, adminAuth, auditLog, stepUp, strictStepUp, nil)
+	RegisterAdminRoutes(router.Group("/api/v1"), handlers, adminAuth, auditLog, stepUp, strictStepUp, nil, nil)
 
 	for _, tc := range []struct {
 		name       string
@@ -153,7 +153,7 @@ func TestPromptAuditSensitiveRoutesRequireStepUp(t *testing.T) {
 		servermiddleware.AbortWithError(c, http.StatusForbidden, "STEP_UP_REQUIRED", "Recent two-factor verification required")
 	})
 	strictStepUp := servermiddleware.StrictStepUpAuthMiddleware(stepUp)
-	RegisterAdminRoutes(router.Group("/api/v1"), promptAuditRouteTestHandlers(), adminAuth, auditLog, stepUp, strictStepUp, nil)
+	RegisterAdminRoutes(router.Group("/api/v1"), promptAuditRouteTestHandlers(), adminAuth, auditLog, stepUp, strictStepUp, nil, nil)
 
 	for _, tc := range []struct {
 		method string
