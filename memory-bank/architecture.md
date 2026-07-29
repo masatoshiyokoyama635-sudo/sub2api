@@ -117,7 +117,7 @@ sub2api/
 ### 部署信息
 - **服务器**：Oracle Cloud ARM
 - **域名**：`ai.zh-zh.top`
-- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前自定义构建版本基于官方 `v0.1.144`，镜像内版本应显示为 `0.1.144-zz`；可回滚官方 `weishaw/sub2api:0.1.144`）
+- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前源码基线为官方 `v0.1.168`，自定义镜像内版本应显示为 `0.1.168-zz`；生产部署固定 GitHub Actions 输出的 manifest digest）
 - **部署路径**：`/opt/sub2api/`
 - **配置文件**：`/opt/sub2api/.env`
 
@@ -221,6 +221,13 @@ sub2api/
 - OpenAI Responses WebSocket v2 同时保留官方逐轮模型映射、上游模型计费统计和响应模型恢复，以及本地图片生成权限门控。首帧与后续 `response.create` 都在模型映射后按实际上游模型识别显式图片意图，未授权分组仍以 policy violation 关闭连接。
 - Prompt Audit 配置接口采用官方 `Public() (PublicConfig, error)` 契约和 `prompt_audit_config_unavailable` 错误，同时保留本地 blocking degradation、生命周期串行与 shutdown drain 测试。Grok handler unit 测试桩补齐 identity-bound billing CAS，生产 CAS 逻辑未改。
 - Custom Docker 继续由 `.github/workflows/custom-docker.yml` 在 `feature/chat-image-tools` push 后构建并发布 GHCR amd64/arm64 镜像。本机 Docker Desktop 二进制缺失，WSL 也没有 Docker/Podman/buildah，因此本地只完成 Dockerfile 同参数的嵌入式 Linux 双架构构建；OCI 镜像仍以 GitHub Actions 输出的不可变标签和 manifest digest 为准。
+
+## v0.1.168 合并架构边界（2026-07-28）
+- 当前候选从已发布自定义 v0.1.166 merge commit `e5e78d42058cc8040b0aa850305e73a9ddc1c380` 创建回滚分支 `backup/pre-v168-e5e78d420` 和候选分支 `merge/v0.1.168-chat-image-tools`，合入官方 annotated tag object `58106606685b1b59c2986e77fb799ba27ea7d75e`（peeled commit `99c8e4bf7564823bafbab369acab6539e734c1bb`）；源码版本与嵌入版本断言统一为 `0.1.168`。
+- 官方 v0.1.168 引入 Passkey、Model Plaza、Kimi K3、`SKIP_SETUP` 和用户/API Key 字段级更新，并包含 Prompt Audit 解密死锁、Claude OAuth system cache breakpoint、Codex API Key Web Search、GPT-5.6 max effort、透传模型映射和 OpenAI Live store 韧性等修复。
+- 依赖注入与路由融合同时接入 Model Plaza 的 optional JWT，并保留本地 `StrictStepUpAuthMiddleware` 对 Prompt Audit 高敏感接口的保护；HTTP 两阶段 shutdown、普通连接和 hijacked connection 跟踪继续保留。
+- Prompt Audit 配置管理保留本地 reload/save 线性化 fence、blocking fail-closed 元数据和 shutdown 生命周期约束，同时接入官方无效密文降级：解密失败的端点仍保留在活动配置中但标记 `TokenInvalid` 且禁用，其他有效端点可继续工作。新写入端点令牌仍要求固定 `TOTP_ENCRYPTION_KEY`。
+- AI Chat、AI Images 路由、Infinite Canvas 外链、默认 CNY/动态币种和订阅 USD-to-CNY 显式换算继续保留。Custom Docker 仍由 `feature/chat-image-tools` push 触发 GitHub Actions 构建 Linux amd64/arm64 多架构镜像，生产部署只固定 workflow 输出的 manifest digest。
 
 ## 安全状态（2026-04-24 审查）
 

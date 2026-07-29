@@ -233,7 +233,16 @@
 - [x] Windows Go 1.26.5 使用 E 盘 GOPATH/module/build/tmp cache 完成冲突包定向测试、`go test -run '^$' ./...` 全包编译、Custom Docker workflow 同款 unit 回归、`go test -tags unit ./internal/handler/admin` 和 `go vet ./...`，全部通过。
 - [x] 前端使用 E 盘 pnpm store 与 Corepack `pnpm 9.15.9` frozen install；typecheck、ESLint、全量 Vitest `197/197` files、`1373/1373` tests 和 production build 全部通过；仅保留既有 Browserslist、chunk size 和静态/动态 import 提示。
 - [x] 使用 Dockerfile 同款 `CGO_ENABLED=0`、`-tags embed`、`0.1.166-zz`、`BuildType=custom` 参数完成 Linux amd64/arm64 交叉编译并校验 ELF machine。amd64 SHA256 为 `89b77f8f2b49ad7d6d1d7b178e904ef2a698757df171e4159754a5ed7a18e0f4`，arm64 SHA256 为 `6633ffaadafe98594e5aad649a51710e5370bf20e80e36199f788502bf06a284`。
-- [ ] 本机 Docker Desktop 仅剩指向缺失二进制的服务注册，WSL 中也没有 Docker/Podman/buildah，因此尚未组装/运行 OCI 镜像；候选尚未 push、未触发 GHCR workflow、未发布或部署。发布仍需用户明确确认，并以 GitHub Actions 输出的 manifest digest 为准。
+- [x] merge commit `e5e78d42058cc8040b0aa850305e73a9ddc1c380` 已推送到 fork `feature/chat-image-tools`；Custom Docker Image run `30259860571` 成功，manifest digest 为 `sha256:a950a5c94ebf7ee2fb84f18984caac4ca2e15b8cb5d5ec2f84428abab3292e8b`。生产部署结果尚未在项目记录中确认。
+
+## v0.1.168 自定义候选（2026-07-28，本地验证）
+- [x] 在唯一工作目录 `E:/vis project/zz sub2api` 从已发布自定义 v0.1.166 merge commit `e5e78d420` 创建 `backup/pre-v168-e5e78d420` 与 `merge/v0.1.168-chat-image-tools`，合入官方 `v0.1.168` peeled commit `99c8e4bf7`；官方在 v0.1.166 后直接发布 v0.1.168，本仓库不存在需要单独合并的官方 v0.1.167 tag。
+- [x] 解决 `wire_gen.go`、Prompt Audit 配置管理/类型/测试、HTTP server、router 和 settings update 测试共 7 个文本冲突；Model Plaza optional JWT 与本地 Strict Step-up、连接跟踪、原子设置更新和 Prompt Audit reload/save fence 均同时保留。
+- [x] 按官方 v0.1.168 语义适配 Prompt Audit：存量端点令牌解密失败时配置继续可见，对应端点标记无效并禁用；blocking/async 模式、版本 fence 与 runner 行为均增加或更新回归断言。AI Chat、AI Images、Canvas、默认 CNY/动态币种和订阅汇率定制均已核对保留。
+- [x] Windows Go 1.26.5 使用 E 盘 GOPATH/module/build/tmp cache 完成 `go test ./internal/securityaudit`、`go test -run '^$' ./...`、Custom Docker workflow 同款回归、无外部 OpenAI 凭据的 `go test ./...`、`go vet ./...`，以及 handler/securityaudit/routes/service 的 unit 测试，全部通过。
+- [x] 前端使用 E 盘 pnpm store 与 Corepack `pnpm 9.15.9` frozen install；typecheck、ESLint、全量 Vitest `200/200` files、`1391/1391` tests 和 production build 全部通过；仅保留既有 Browserslist、chunk size 和静态/动态 import 提示。
+- [x] 使用 Dockerfile 同款 `CGO_ENABLED=0`、`-tags embed`、`0.1.168-zz`、`BuildType=custom` 参数完成 Linux amd64/arm64 交叉编译并校验 ELF machine。amd64 SHA256 为 `551466978ad6766e554e7c60cceeb41484ecb7d880e69660437766c20930add8`，arm64 SHA256 为 `55a413a16f8e27264c060b6a088fe32b4e10ae5aae5816b3d481cf7e08393195`。
+- [x] 发布链路保持为将 merge commit 推送到 fork `feature/chat-image-tools`，由 `.github/workflows/custom-docker.yml` 完成测试和 GHCR 多架构镜像发布；本节记录本地验收，线上 run、不可变标签和 manifest digest 以 GitHub Actions 发布记录为准。
 
 ## 部署/回滚记录
 
