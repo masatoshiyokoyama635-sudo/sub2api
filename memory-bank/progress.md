@@ -244,6 +244,14 @@
 - [x] 使用 Dockerfile 同款 `CGO_ENABLED=0`、`-tags embed`、`0.1.168-zz`、`BuildType=custom` 参数完成 Linux amd64/arm64 交叉编译并校验 ELF machine。amd64 SHA256 为 `551466978ad6766e554e7c60cceeb41484ecb7d880e69660437766c20930add8`，arm64 SHA256 为 `55a413a16f8e27264c060b6a088fe32b4e10ae5aae5816b3d481cf7e08393195`。
 - [x] 发布链路保持为将 merge commit 推送到 fork `feature/chat-image-tools`，由 `.github/workflows/custom-docker.yml` 完成测试和 GHCR 多架构镜像发布；本节记录本地验收，线上 run、不可变标签和 manifest digest 以 GitHub Actions 发布记录为准。
 
+## v0.1.169 自定义候选（2026-07-31，本地验证）
+- [x] 从自定义 v0.1.168 merge commit `50d1c8880` 创建 `backup/pre-v169-50d1c8880` 与 `merge/v0.1.169-chat-image-tools`，合入官方 `v0.1.169` peeled commit `26d894ef4`；合并无文本冲突，保留 AI Chat、AI Images、Canvas、Prompt Audit、Model Plaza、默认 CNY/动态币种和订阅汇率定制。
+- [x] 将官方源码版本文件和嵌入版本测试从 `0.1.168` 同步为 `0.1.169`；同时接入 Responses/Gemini 上游路径闭集校验、`no-new-privileges` Compose 安全选项、定价资源复制、代理断流熔断改进、Qwen3Guard 辅助字段和官方费率更新。
+- [x] Windows Go 1.26.5 使用 E 盘 GOPATH/module/build/tmp cache 完成 `go test -run '^$' ./...` 全包编译、Custom Docker workflow 后端回归、完整 `go test ./...` 和 `go vet ./...`，全部通过。
+- [x] 前端使用 E 盘 pnpm store 与 Corepack `pnpm 9.15.9` frozen install；typecheck、ESLint、全量 Vitest `201/201` files、`1404/1404` tests 和 production build 全部通过；仅保留已有 Browserslist、动态 import 和 chunk size 提示。
+- [x] 使用 Dockerfile 同款 `CGO_ENABLED=0`、`-tags embed`、`0.1.169-zz`、`BuildType=custom` 参数完成 Linux amd64/arm64 交叉编译并校验 ELF machine。amd64 SHA256 为 `7a3d9b1868d7cb826a9d65d89adab01e33d31c2ca14070e92e71e722a71f801f`，arm64 SHA256 为 `75d7967f81d783e2c2507650e698615204ca1b430022984945d916bb66e1a791`。
+- [ ] 候选尚未提交、推送或触发本轮 GHCR workflow；发布完成后以 GitHub Actions 的 test/build 成功结论和 manifest digest 为准，生产部署另行执行。
+
 ## 部署/回滚记录
 
 ### 使用自定义镜像部署

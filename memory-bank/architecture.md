@@ -117,7 +117,7 @@ sub2api/
 ### 部署信息
 - **服务器**：Oracle Cloud ARM
 - **域名**：`ai.zh-zh.top`
-- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前源码基线为官方 `v0.1.168`，自定义镜像内版本应显示为 `0.1.168-zz`；生产部署固定 GitHub Actions 输出的 manifest digest）
+- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前源码基线为官方 `v0.1.169`，自定义镜像内版本应显示为 `0.1.169-zz`；生产部署固定 GitHub Actions 输出的 manifest digest）
 - **部署路径**：`/opt/sub2api/`
 - **配置文件**：`/opt/sub2api/.env`
 
@@ -228,6 +228,12 @@ sub2api/
 - 依赖注入与路由融合同时接入 Model Plaza 的 optional JWT，并保留本地 `StrictStepUpAuthMiddleware` 对 Prompt Audit 高敏感接口的保护；HTTP 两阶段 shutdown、普通连接和 hijacked connection 跟踪继续保留。
 - Prompt Audit 配置管理保留本地 reload/save 线性化 fence、blocking fail-closed 元数据和 shutdown 生命周期约束，同时接入官方无效密文降级：解密失败的端点仍保留在活动配置中但标记 `TokenInvalid` 且禁用，其他有效端点可继续工作。新写入端点令牌仍要求固定 `TOTP_ENCRYPTION_KEY`。
 - AI Chat、AI Images 路由、Infinite Canvas 外链、默认 CNY/动态币种和订阅 USD-to-CNY 显式换算继续保留。Custom Docker 仍由 `feature/chat-image-tools` push 触发 GitHub Actions 构建 Linux amd64/arm64 多架构镜像，生产部署只固定 workflow 输出的 manifest digest。
+
+## v0.1.169 合并架构边界（2026-07-31）
+- 当前候选从自定义 v0.1.168 merge commit `50d1c88802c31d427fda528b708f89770534cc97` 创建回滚分支 `backup/pre-v169-50d1c8880` 和候选分支 `merge/v0.1.169-chat-image-tools`，合入官方 annotated tag object `830b5f507396b858874b171feae1cbcfce1caded`（peeled commit `26d894ef4f50645a4bf1030e378ac892f17d0223`）；源码版本与嵌入版本断言统一为 `0.1.169`。
+- 官方 v0.1.169 收紧 Responses 子路径与 Gemini 模型名的上游 URL 闭集校验，容器 Compose 默认加入 `no-new-privileges:true`，补齐定价兜底资源复制，并修复代理断流熔断误隔离全部账号、GLM-5.2 子串定价、Anthropic `count_tokens` 参数、Claude Code 分类、订阅到期标签、Token 刷新和 SMTP 邮件格式等问题。
+- 网关路由保留本地 composite model routing、OpenAI 图片意图门控和 AI Chat/AI Images/Canvas 定制，同时接入官方 `guardResponsesSubpath` 与 Gemini action/model path guard；代理断流熔断保留本地调度流程，并合入官方 3 秒事件合并、可配置关闭和无账号时的 fail-open 重试。
+- 根 Dockerfile 已包含 `/app/backend/resources` 到 `/app/resources` 的定价兜底资源复制；`deploy/docker-compose.yml` 新增 `security_opt: no-new-privileges:true`。GHCR 仍由 `feature/chat-image-tools` push 触发 linux/amd64、linux/arm64 构建，生产部署只固定 Actions 输出的 manifest digest。
 
 ## 安全状态（2026-04-24 审查）
 
