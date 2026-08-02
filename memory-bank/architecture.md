@@ -117,7 +117,7 @@ sub2api/
 ### 部署信息
 - **服务器**：Oracle Cloud ARM
 - **域名**：`ai.zh-zh.top`
-- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前源码基线为官方 `v0.1.169`，自定义镜像内版本应显示为 `0.1.169-zz`；生产部署固定 GitHub Actions 输出的 manifest digest）
+- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前源码基线为官方 `v0.1.170`，自定义镜像内版本应显示为 `0.1.170-zz`；生产部署固定 GitHub Actions 输出的 manifest digest）
 - **部署路径**：`/opt/sub2api/`
 - **配置文件**：`/opt/sub2api/.env`
 
@@ -234,6 +234,12 @@ sub2api/
 - 官方 v0.1.169 收紧 Responses 子路径与 Gemini 模型名的上游 URL 闭集校验，容器 Compose 默认加入 `no-new-privileges:true`，补齐定价兜底资源复制，并修复代理断流熔断误隔离全部账号、GLM-5.2 子串定价、Anthropic `count_tokens` 参数、Claude Code 分类、订阅到期标签、Token 刷新和 SMTP 邮件格式等问题。
 - 网关路由保留本地 composite model routing、OpenAI 图片意图门控和 AI Chat/AI Images/Canvas 定制，同时接入官方 `guardResponsesSubpath` 与 Gemini action/model path guard；代理断流熔断保留本地调度流程，并合入官方 3 秒事件合并、可配置关闭和无账号时的 fail-open 重试。
 - 根 Dockerfile 已包含 `/app/backend/resources` 到 `/app/resources` 的定价兜底资源复制；`deploy/docker-compose.yml` 新增 `security_opt: no-new-privileges:true`。GHCR 仍由 `feature/chat-image-tools` push 触发 linux/amd64、linux/arm64 构建，生产部署只固定 Actions 输出的 manifest digest。
+
+## v0.1.170 合并架构边界（2026-08-02）
+- 当前候选从已发布自定义 v0.1.169 merge commit `be9ba60b519e01a710173f56282c33f2e61fc0d1` 创建回滚分支 `backup/pre-v170-be9ba60b5` 和候选分支 `merge/v0.1.170-chat-image-tools`，合入官方 annotated tag object `60286d35e4b6dc6851ab69f890c2d1b7b7a3bcb8`（peeled commit `c043c24774228ba891ddf90d783aa6dc7d0855b5`）；源码版本与嵌入版本断言统一为 `0.1.170`。
+- 官方 v0.1.170 新增分组级利润控制、全 API Key 平台上游计费倍率探测与可选自动同步、内容审核代理、Prompt Audit 仅审计最新输入、筛选结果全选和批量删除并发限制；利润控制与倍率自动同步默认关闭。migrations `192_group_profit_control.sql` 与 `193_group_profit_control_auth_cache_invalidation.sql` 在启动时自动执行。
+- Prompt Audit 冲突采用语义并集：异步审计继续保留完整正文，blocking 可选最新用户输入及前一条 assistant/model 输出；同时保留本地 1 MiB 扫描载荷、2 MiB 原始请求上限和有界类型化错误。图片存储测试中的重复 `roundTripFunc` 已去重，data URL 官方修复与本地 SSRF 回归均保留。
+- AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、订阅汇率、Strict Step-up、原子设置更新和自定义 Docker 发布链路继续保留。GHCR 仍由 `feature/chat-image-tools` push 触发 linux/amd64、linux/arm64 构建，生产部署固定 workflow 输出的 manifest digest。
 
 ## 安全状态（2026-04-24 审查）
 

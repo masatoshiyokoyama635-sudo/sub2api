@@ -221,6 +221,7 @@ func TestPromptServiceBlockingOversizedPayloadFailsClosedWithTypedBoundedError(t
 		ID: "guard", Enabled: true, TimeoutMS: 1000, InputLimit: MaxInputLimit,
 	})
 	blockingConfig.AllGroups = true
+	blockingConfig.BlockingLatestTurnOnly = true
 	config := &fakeConfigStore{active: true, cfg: blockingConfig}
 	scannerCalls := 0
 	service := &PromptService{
@@ -246,6 +247,25 @@ func TestPromptServiceBlockingOversizedPayloadFailsClosedWithTypedBoundedError(t
 	require.LessOrEqual(t, len(err.Error()), 64)
 	require.NotContains(t, err.Error(), canary)
 	require.Zero(t, scannerCalls)
+}
+
+func TestPromptServiceBlockingLatestTurnOnlyUsesNarrowSnapshot(t *testing.T) {
+	seen := make([]string, 0, 2)
+	evaluator := newGuardEvaluator(PromptScannerFunc(func(_ context.Context, _ ActiveEndpoint, chunk string, _ []string) (*NormalizedResult, error) {
+		seen = append(seen, chunk)
+		return &NormalizedResult{Decision: EventPass, RiskLevel: RiskLow, Action: ActionAllow, ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{}}, nil
+	}), nil, NewAtomicMetrics(), 2, 2)
+	service := &PromptService{
+		config: &fakeConfigStore{active: true, cfg: ActiveConfig{
+			RiskControlEnabled: true, Enabled: true, BlockingEnabled: true, BlockingLatestTurnOnly: true, AllGroups: true,
+			Scanners: AllScannerIDs, Endpoints: []ActiveEndpoint{{ID: "guard-1", Enabled: true, TimeoutMS: 1000, InputLimit: 4096}},
+		}},
+		evaluator: evaluator,
+	}
+	decision, err := service.Evaluate(context.Background(), Request{Protocol: "openai_chat_completions", Body: []byte(`{"messages":[{"role":"system","content":"system instruction"},{"role":"user","content":"older user input"},{"role":"assistant","content":"previous output"},{"role":"user","content":"latest user input"}]}`)})
+	require.NoError(t, err)
+	require.Equal(t, DecisionAllow, decision.Kind)
+	require.Equal(t, []string{"latest user input", "previous output"}, seen)
 }
 
 func TestPromptServiceRejectsInvalidDeleteConfirmationClaims(t *testing.T) {
