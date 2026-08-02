@@ -240,6 +240,7 @@ sub2api/
 - 官方 v0.1.170 新增分组级利润控制、全 API Key 平台上游计费倍率探测与可选自动同步、内容审核代理、Prompt Audit 仅审计最新输入、筛选结果全选和批量删除并发限制；利润控制与倍率自动同步默认关闭。migrations `192_group_profit_control.sql` 与 `193_group_profit_control_auth_cache_invalidation.sql` 在启动时自动执行。
 - Prompt Audit 冲突采用语义并集：异步审计继续保留完整正文，blocking 可选最新用户输入及前一条 assistant/model 输出；同时保留本地 1 MiB 扫描载荷、2 MiB 原始请求上限和有界类型化错误。图片存储测试中的重复 `roundTripFunc` 已去重，data URL 官方修复与本地 SSRF 回归均保留。
 - AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、订阅汇率、Strict Step-up、原子设置更新和自定义 Docker 发布链路继续保留。GHCR 仍由 `feature/chat-image-tools` push 触发 linux/amd64、linux/arm64 构建，生产部署固定 workflow 输出的 manifest digest。
+- v0.1.170 merge commit `0d9619ffe79e1415127fbc0f5f28ffc0ca91b499` 已由 Custom Docker Image run `30747270102` 成功发布；稳定标签、短 SHA 标签与完整 SHA 标签均指向 manifest digest `sha256:259a9ab6a4336bca34e4dc2da7cebb90d6b7b31bba3bed9cbba5160162e5d6e7`，manifest 包含 linux/amd64 与 linux/arm64。
 
 ## 安全状态（2026-04-24 审查）
 

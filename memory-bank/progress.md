@@ -258,7 +258,7 @@
 - [x] Windows Go 1.26.5 使用 E 盘 GOPATH/module/build/tmp cache 完成 Prompt Audit 定向测试、`go test -run '^$' ./...` 全包编译、Custom Docker workflow 同款回归、完整 `go test ./...` 和 `go vet ./...`，全部通过。
 - [x] 前端使用 E 盘 pnpm store 与 Corepack `pnpm 9.15.9`；typecheck、ESLint、全量 Vitest `206/206` files、`1455/1455` tests 和 production build 全部通过；仅保留已有 Browserslist、动态/静态 import 和 chunk size 提示。
 - [x] 使用 Dockerfile 同款 `CGO_ENABLED=0`、`-tags embed`、`0.1.170-zz`、`BuildType=custom` 参数完成 Linux amd64/arm64 交叉编译并校验目标平台。amd64 SHA256 为 `511977393899dd3a62727b6018a9d44265d27f3f55c986c28d06eb064b7c16a1`，arm64 SHA256 为 `9a3429f8624373bde3b20cd08d2d9f6618435ad8fc5f95ba4f7d3d8dcbb1d04f`。
-- [ ] 待提交并推送 `feature/chat-image-tools`，由 Custom Docker Image workflow 发布 GHCR 多架构镜像；完成后回填 run、不可变标签与 manifest digest。生产部署另行执行。
+- [x] merge commit `0d9619ffe79e1415127fbc0f5f28ffc0ca91b499` 已推送到 `feature/chat-image-tools`；Custom Docker Image run `30747270102` 的 test/build job 全部成功。GHCR 已发布 `chat-image-tools`、`chat-image-tools-0d9619f` 和完整 SHA 标签，三者均指向 manifest digest `sha256:259a9ab6a4336bca34e4dc2da7cebb90d6b7b31bba3bed9cbba5160162e5d6e7`；manifest 已核验包含 linux/amd64 与 linux/arm64。生产部署另行执行。
 
 ## 部署/回滚记录
 
