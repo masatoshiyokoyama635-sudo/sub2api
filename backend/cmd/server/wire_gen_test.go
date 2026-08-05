@@ -191,6 +191,7 @@ func newCleanupWithInfrastructure(
 		service.NewSchedulerSnapshotService(nil, nil, nil, nil, cfg),
 		tokenRefreshSvc,
 		service.NewAccountExpiryService(nil, time.Second),
+		service.NewOpenAICodexVersionSyncService(nil, nil, nil, time.Second),
 		service.NewProxyExpiryService(nil, time.Second),
 		service.NewSubscriptionExpiryService(nil, time.Second),
 		&service.UsageCleanupService{},
