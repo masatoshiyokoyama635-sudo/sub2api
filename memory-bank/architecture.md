@@ -117,7 +117,7 @@ sub2api/
 ### 部署信息
 - **服务器**：Oracle Cloud ARM
 - **域名**：`ai.zh-zh.top`
-- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前源码基线为官方 `v0.1.170`，自定义镜像内版本应显示为 `0.1.170-zz`；生产部署固定 GitHub Actions 输出的 manifest digest）
+- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前源码基线为官方 `v0.1.171`，自定义镜像内版本应显示为 `0.1.171-zz`；生产部署固定 GitHub Actions 输出的 manifest digest）
 - **部署路径**：`/opt/sub2api/`
 - **配置文件**：`/opt/sub2api/.env`
 
@@ -241,6 +241,12 @@ sub2api/
 - Prompt Audit 冲突采用语义并集：异步审计继续保留完整正文，blocking 可选最新用户输入及前一条 assistant/model 输出；同时保留本地 1 MiB 扫描载荷、2 MiB 原始请求上限和有界类型化错误。图片存储测试中的重复 `roundTripFunc` 已去重，data URL 官方修复与本地 SSRF 回归均保留。
 - AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、订阅汇率、Strict Step-up、原子设置更新和自定义 Docker 发布链路继续保留。GHCR 仍由 `feature/chat-image-tools` push 触发 linux/amd64、linux/arm64 构建，生产部署固定 workflow 输出的 manifest digest。
 - v0.1.170 merge commit `0d9619ffe79e1415127fbc0f5f28ffc0ca91b499` 已由 Custom Docker Image run `30747270102` 成功发布；稳定标签、短 SHA 标签与完整 SHA 标签均指向 manifest digest `sha256:259a9ab6a4336bca34e4dc2da7cebb90d6b7b31bba3bed9cbba5160162e5d6e7`，manifest 包含 linux/amd64 与 linux/arm64。
+
+## v0.1.171 合并架构边界（2026-08-04）
+- 当前候选从 v0.1.170 发布记录提交 `12a2a139327cdccf40b9bfc38b5f3671939eab40` 创建回滚分支 `backup/pre-v171-12a2a1393` 和候选分支 `merge/v0.1.171-chat-image-tools`，合入官方 annotated tag object `afd154b92aac36c6dafb1fa8e181ca827c78c465`（peeled commit `f0e7a9c7a23a7d02fb159b62fa809621eb0475a6`）；三方合并无文本冲突，源码版本与嵌入版本断言统一为 `0.1.171`。
+- 官方 v0.1.171 接入腾讯天御与阿里云验证码 2.0、Codex 出站身份与版本同步、组合分组推理强度策略、OpenAI 重置额度缓存、过载错误有界重试和退款 `require_force` 流程；同时保留本地 AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、Strict Step-up、原子设置更新和自定义 Docker 发布链路。
+- 合并后的 Custom Docker 测试契约已补齐 `OpenAICodexVersionSyncService` cleanup 依赖，并将嵌入版本回归断言同步为 `0.1.171`；这些修复不改变生产业务路径。
+- merge commit `fdc747c1c69132a8742f8a141d944dafb55036d6` 及后续测试修复提交已推送到 fork 的 `feature/chat-image-tools`。Custom Docker Image run `30976386453` 的 test/build job 全部成功，GHCR 稳定标签、短 SHA 标签和完整 SHA 标签均指向 manifest digest `sha256:d6eeec3ef08cf0052dc342854a92dfcbe7db62989ba0b08e8b97efdc2f0b578c`，manifest 包含 linux/amd64 与 linux/arm64。生产部署仍需单独执行。
 
 ## 安全状态（2026-04-24 审查）
 

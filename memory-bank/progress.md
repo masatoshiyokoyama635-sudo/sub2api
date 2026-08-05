@@ -260,6 +260,14 @@
 - [x] 使用 Dockerfile 同款 `CGO_ENABLED=0`、`-tags embed`、`0.1.170-zz`、`BuildType=custom` 参数完成 Linux amd64/arm64 交叉编译并校验目标平台。amd64 SHA256 为 `511977393899dd3a62727b6018a9d44265d27f3f55c986c28d06eb064b7c16a1`，arm64 SHA256 为 `9a3429f8624373bde3b20cd08d2d9f6618435ad8fc5f95ba4f7d3d8dcbb1d04f`。
 - [x] merge commit `0d9619ffe79e1415127fbc0f5f28ffc0ca91b499` 已推送到 `feature/chat-image-tools`；Custom Docker Image run `30747270102` 的 test/build job 全部成功。GHCR 已发布 `chat-image-tools`、`chat-image-tools-0d9619f` 和完整 SHA 标签，三者均指向 manifest digest `sha256:259a9ab6a4336bca34e4dc2da7cebb90d6b7b31bba3bed9cbba5160162e5d6e7`；manifest 已核验包含 linux/amd64 与 linux/arm64。生产部署另行执行。
 
+## v0.1.171 自定义候选（2026-08-04，Actions 已发布）
+- [x] 从 v0.1.170 发布记录提交 `12a2a1393` 创建回滚分支 `backup/pre-v171-12a2a1393` 与候选分支 `merge/v0.1.171-chat-image-tools`，抓取官方 annotated tag `v0.1.171`（tag object `afd154b`，peeled commit `f0e7a9c7a`）并执行 `--no-commit --no-ff` 合并；无文本冲突。
+- [x] 将 `backend/cmd/server/VERSION` 和嵌入版本回归断言同步为 `0.1.171`，保留 AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、Strict Step-up、原子设置更新、支付补丁和 Custom Docker workflow。
+- [x] 修复合并后的测试契约：`wire_gen_test.go` 补入 `OpenAICodexVersionSyncService` cleanup 依赖；版本断言从 `0.1.170` 更新为 `0.1.171`。最终提交序列为 merge `fdc747c1c`、测试夹具修复 `e0137e4c5`、版本断言修复 `e36bb52ac`。
+- [x] 本地前端门禁通过：`vue-tsc --noEmit`、ESLint、Vue/TypeScript build、Vitest `212/212` files、`1512/1512` tests、Vite production build；构建仅保留既有 Browserslist、动态/静态 import 和 chunk size 提示。
+- [x] 推送 fork `feature/chat-image-tools` 并触发 Custom Docker Image run `30976386453`；后端编译/回归、前端 frozen install/验证和 Buildx 发布全部成功。远程构建参数为 `VERSION=0.1.171-zz`、`BUILD_TYPE=custom`、`COMMIT=e36bb52ac8efed6641a206b4332cdac858a48249`，平台为 linux/amd64、linux/arm64。
+- [x] GHCR 已发布以下不可变标签：`chat-image-tools`、`chat-image-tools-e36bb52`、`chat-image-tools-e36bb52ac8efed6641a206b4332cdac858a48249`；三者均指向 OCI manifest digest `sha256:d6eeec3ef08cf0052dc342854a92dfcbe7db62989ba0b08e8b97efdc2f0b578c`。生产部署另行执行，回滚仍以备份分支和固定 digest 为准。
+
 ## 部署/回滚记录
 
 ### 使用自定义镜像部署
