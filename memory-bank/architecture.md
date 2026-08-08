@@ -117,7 +117,7 @@ sub2api/
 ### 部署信息
 - **服务器**：Oracle Cloud ARM
 - **域名**：`ai.zh-zh.top`
-- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前源码基线为官方 `v0.1.171`，自定义镜像内版本应显示为 `0.1.171-zz`；生产部署固定 GitHub Actions 输出的 manifest digest）
+- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前源码基线为官方 `v0.1.172`，自定义镜像内版本应显示为 `0.1.172-zz`；生产部署固定 GitHub Actions 输出的 manifest digest）
 - **部署路径**：`/opt/sub2api/`
 - **配置文件**：`/opt/sub2api/.env`
 
@@ -247,6 +247,13 @@ sub2api/
 - 官方 v0.1.171 接入腾讯天御与阿里云验证码 2.0、Codex 出站身份与版本同步、组合分组推理强度策略、OpenAI 重置额度缓存、过载错误有界重试和退款 `require_force` 流程；同时保留本地 AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、Strict Step-up、原子设置更新和自定义 Docker 发布链路。
 - 合并后的 Custom Docker 测试契约已补齐 `OpenAICodexVersionSyncService` cleanup 依赖，并将嵌入版本回归断言同步为 `0.1.171`；这些修复不改变生产业务路径。
 - merge commit `fdc747c1c69132a8742f8a141d944dafb55036d6` 及后续测试修复提交已推送到 fork 的 `feature/chat-image-tools`。Custom Docker Image run `30976386453` 的 test/build job 全部成功，GHCR 稳定标签、短 SHA 标签和完整 SHA 标签均指向 manifest digest `sha256:d6eeec3ef08cf0052dc342854a92dfcbe7db62989ba0b08e8b97efdc2f0b578c`，manifest 包含 linux/amd64 与 linux/arm64。生产部署仍需单独执行。
+
+## v0.1.172 合并架构边界（2026-08-07）
+- 当前候选从 v0.1.171 发布记录提交 `7dec0c4dba54106a8d0c3a300a5deec1bec1570d` 创建回滚分支 `backup/pre-v172-7dec0c4db` 和候选分支 `merge/v0.1.172-chat-image-tools`，合入官方 annotated tag object `61ba94d2e85a00ba639fc870b91946b1bd2f990d`（peeled commit `155c494964c3ea6ecc31f52679525c1034bf0f16`）；54 个提交、208 个文件自动合并，无文本冲突。
+- 官方 v0.1.172 修复 OAuth 登录补全流程的高危账号接管漏洞，并新增上游响应模型审计、Antigravity Gemini 3.6 Flash 映射；同时修复 Codex `codex-tui` 出站身份、故障转移、Responses/Anthropic 内容块、订阅日额度午夜刷新、计费精度、建连/TLS 超时和多项账号/媒体边界问题。
+- 新增 migrations `194_add_usage_log_upstream_response_model.sql` 与 `195_add_usage_log_upstream_model_mismatch_index_notx.sql`：用量日志上游响应模型字段与 mismatch 并发索引均为增量变更，migration runner 保留非事务索引失败清理/重试逻辑。官方本轮未修改 Dockerfile、Go/Node 依赖锁定或 Compose 入口。
+- 合并保留本地 AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、Strict Step-up、原子设置更新、支付补丁及 Custom Docker workflow；`backend/cmd/server/VERSION` 与嵌入版本断言统一为 `0.1.172`。
+- merge commit `584c265b17dbfd7971f049bc0c7e1d392e473090` 已推送到 fork 的 `feature/chat-image-tools`。Custom Docker Image run `31235663120` 的 test/build job 全部成功，GHCR 稳定标签、短 SHA 标签和完整 SHA 标签均指向 manifest digest `sha256:44453b038fe3faf016682f5fccab07c4ee176eae29b7c16a13abd9d769c46eaf`，manifest 包含 linux/amd64 与 linux/arm64。生产部署仍需单独执行。
 
 ## 安全状态（2026-04-24 审查）
 

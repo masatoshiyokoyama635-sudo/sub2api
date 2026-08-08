@@ -268,6 +268,15 @@
 - [x] 推送 fork `feature/chat-image-tools` 并触发 Custom Docker Image run `30976386453`；后端编译/回归、前端 frozen install/验证和 Buildx 发布全部成功。远程构建参数为 `VERSION=0.1.171-zz`、`BUILD_TYPE=custom`、`COMMIT=e36bb52ac8efed6641a206b4332cdac858a48249`，平台为 linux/amd64、linux/arm64。
 - [x] GHCR 已发布以下不可变标签：`chat-image-tools`、`chat-image-tools-e36bb52`、`chat-image-tools-e36bb52ac8efed6641a206b4332cdac858a48249`；三者均指向 OCI manifest digest `sha256:d6eeec3ef08cf0052dc342854a92dfcbe7db62989ba0b08e8b97efdc2f0b578c`。生产部署另行执行，回滚仍以备份分支和固定 digest 为准。
 
+## v0.1.172 自定义候选（2026-08-07，Actions 已发布）
+- [x] 从 v0.1.171 发布记录提交 `7dec0c4db` 创建回滚分支 `backup/pre-v172-7dec0c4db` 与候选分支 `merge/v0.1.172-chat-image-tools`，抓取官方 annotated tag `v0.1.172`（tag object `61ba94d`，peeled commit `155c49496`）并执行 `--no-commit --no-ff` 合并；54 个提交、208 个文件无文本冲突。
+- [x] 将 `backend/cmd/server/VERSION` 和 `wire_gen_test.go` 嵌入版本断言同步为 `0.1.172`；保留 AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、Strict Step-up、原子设置更新、支付补丁和 Custom Docker workflow。
+- [x] 接入官方 OAuth 账号接管修复、上游响应模型审计、Antigravity Gemini 3.6 Flash、Codex `codex-tui` 身份、订阅日额度午夜刷新、计费精度和建连/TLS 超时修复；migrations 194/195 与非事务索引 runner 逻辑已核对。
+- [x] 后端使用 E 盘 Go 1.26.5 工具链/模块缓存通过 `go test ./cmd/server -run 'TestEmbeddedVersionMatchesRelease|TestProvideCleanup|TestShutdownHTTPThenCleanup' -count=1`，并通过 `go test ./... -run '^$' -count=1` 全包编译；GitHub Actions 进一步完成 workflow 同款后端回归。
+- [x] 本地前端门禁通过：typecheck、ESLint、Vitest `214/214` files、`1530/1530` tests、Vue/TypeScript build 和 Vite production build；仅保留既有 Browserslist、动态/静态 import、chunk size 警告。
+- [x] 推送 fork `feature/chat-image-tools` 并触发 Custom Docker Image run `31235663120`；test job（后端编译/回归、前端 frozen install/验证）和 build job 全部成功。远程构建参数为 `VERSION=0.1.172-zz`、`BUILD_TYPE=custom`、`COMMIT=584c265b17dbfd7971f049bc0c7e1d392e473090`，平台为 linux/amd64、linux/arm64。
+- [x] GHCR 已发布以下不可变标签：`chat-image-tools`、`chat-image-tools-584c265`、`chat-image-tools-584c265b17dbfd7971f049bc0c7e1d392e473090`；三者均指向 OCI manifest digest `sha256:44453b038fe3faf016682f5fccab07c4ee176eae29b7c16a13abd9d769c46eaf`。生产部署另行执行，回滚仍以备份分支和固定 digest 为准。
+
 ## 部署/回滚记录
 
 ### 使用自定义镜像部署
