@@ -117,7 +117,7 @@ sub2api/
 ### 部署信息
 - **服务器**：Oracle Cloud ARM
 - **域名**：`ai.zh-zh.top`
-- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前源码基线为官方 `v0.1.172`，自定义镜像内版本应显示为 `0.1.172-zz`；生产部署固定 GitHub Actions 输出的 manifest digest）
+- **Docker 镜像**：`ghcr.io/masatoshiyokoyama635-sudo/sub2api:chat-image-tools`（自定义 AI 工具版；当前源码基线为官方 `v0.1.173`，自定义镜像内版本应显示为 `0.1.173-zz`；生产部署固定 GitHub Actions 输出的 manifest digest）
 - **部署路径**：`/opt/sub2api/`
 - **配置文件**：`/opt/sub2api/.env`
 
@@ -254,6 +254,15 @@ sub2api/
 - 新增 migrations `194_add_usage_log_upstream_response_model.sql` 与 `195_add_usage_log_upstream_model_mismatch_index_notx.sql`：用量日志上游响应模型字段与 mismatch 并发索引均为增量变更，migration runner 保留非事务索引失败清理/重试逻辑。官方本轮未修改 Dockerfile、Go/Node 依赖锁定或 Compose 入口。
 - 合并保留本地 AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、Strict Step-up、原子设置更新、支付补丁及 Custom Docker workflow；`backend/cmd/server/VERSION` 与嵌入版本断言统一为 `0.1.172`。
 - merge commit `584c265b17dbfd7971f049bc0c7e1d392e473090` 已推送到 fork 的 `feature/chat-image-tools`。Custom Docker Image run `31235663120` 的 test/build job 全部成功，GHCR 稳定标签、短 SHA 标签和完整 SHA 标签均指向 manifest digest `sha256:44453b038fe3faf016682f5fccab07c4ee176eae29b7c16a13abd9d769c46eaf`，manifest 包含 linux/amd64 与 linux/arm64。生产部署仍需单独执行。
+
+## v0.1.173 合并架构边界（2026-08-09）
+- 当前候选从自定义 v0.1.172 提交 `5cb376e48f8c463c1ea194adc4051400b41bf4a8` 创建回滚分支 `backup/pre-v173-5cb376e48` 与候选分支 `merge/v0.1.173-chat-image-tools`，合入官方 annotated tag object `9e2a27ad39201a14074982bae331c4610161586a`（peeled commit `29009f0b2ea14edf3b11ae2564fb617ff91a03b4`）。
+- 官方比较范围为 120 个提交、352 个文件（+33,307/-2,271）。本地融合保留 AI Chat、AI Images、Canvas 外链、Prompt Audit/Strict Step-up、原子设置、支付补丁及 fork 专用 Custom Docker workflow；Dockerfile 继续支持 `BUILD_TYPE=custom`。
+- v0.1.173 新增 Grok/xAI SSO/refresh_token、媒体/Voice/Web Search、模型映射与调度门禁，以及被动渠道监控 V2；新增 migrations `194_channel_monitor_v2.sql` 至 `206_channel_monitor_v2_privacy_defaults.sql`、`217_group_video_model_prices.sql` 至 `220_clear_non_grok_video_generation_config.sql`。同号的 `194/195` 文件与 v0.1.172 用量日志迁移按完整文件名共存。
+- 迁移 220 会先将非 Grok/非 composite 分组的视频价格保存到 `groups_video_price_backup_220`，再清理历史视频价格；生产升级前导出相关 `groups` 配置并暂停管理端写入，启动后核对快照表。
+- 合并后的测试契约修复仅涉及前端重复 `getLiveCapability` mock 与 `provideCleanup` 的 V2 聚合器参数，未改变业务路径；`backend/cmd/server/VERSION` 和嵌入版本断言统一为 `0.1.173`。
+- merge commit `b3b28ff2f5f8e865f66f09cfa7609a99df24bfa9` 已推送到 fork `feature/chat-image-tools`。Custom Docker Image run `31310903130`（test `93238472413`、build `93239327957`）全部成功，构建参数为 `VERSION=0.1.173-zz`、`BUILD_TYPE=custom`，平台为 linux/amd64、linux/arm64。
+- GHCR 三个标签 `chat-image-tools`、`chat-image-tools-b3b28ff`、`chat-image-tools-b3b28ff2f5f8e865f66f09cfa7609a99df24bfa9` 均指向 OCI manifest digest `sha256:431d89555d653e96eb0cab7c3375ccc79485955ea23ad14bb642225dd3731103`；生产部署继续固定该 digest。
 
 ## 安全状态（2026-04-24 审查）
 

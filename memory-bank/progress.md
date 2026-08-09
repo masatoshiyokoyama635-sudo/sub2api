@@ -277,6 +277,14 @@
 - [x] 推送 fork `feature/chat-image-tools` 并触发 Custom Docker Image run `31235663120`；test job（后端编译/回归、前端 frozen install/验证）和 build job 全部成功。远程构建参数为 `VERSION=0.1.172-zz`、`BUILD_TYPE=custom`、`COMMIT=584c265b17dbfd7971f049bc0c7e1d392e473090`，平台为 linux/amd64、linux/arm64。
 - [x] GHCR 已发布以下不可变标签：`chat-image-tools`、`chat-image-tools-584c265`、`chat-image-tools-584c265b17dbfd7971f049bc0c7e1d392e473090`；三者均指向 OCI manifest digest `sha256:44453b038fe3faf016682f5fccab07c4ee176eae29b7c16a13abd9d769c46eaf`。生产部署另行执行，回滚仍以备份分支和固定 digest 为准。
 
+## v0.1.173 自定义候选（2026-08-09，Actions 已发布）
+- [x] 从 v0.1.172 发布记录提交 `5cb376e48` 创建回滚分支 `backup/pre-v173-5cb376e48` 与候选分支 `merge/v0.1.173-chat-image-tools`，抓取官方 annotated tag `v0.1.173`（tag object `9e2a27ad`，peeled commit `29009f0b2`）并完成三方合并；官方比较范围为 120 个提交、352 个文件。
+- [x] 保留 fork 的 AI Chat、AI Images、Canvas 外链、Prompt Audit/Strict Step-up、原子设置和 Custom Docker workflow；版本文件与嵌入版本断言同步为 `0.1.173`。修复合并后的两个前端重复 mock 声明及 `provideCleanup` 测试夹具漏传 `channelMonitorV2Aggregator` 参数。
+- [x] 本地验证通过：后端 `go test -mod=readonly ./cmd/server -run 'TestEmbeddedVersionMatchesRelease|TestProvideCleanup|TestShutdownHTTPThenCleanup' -count=1`、`go test -mod=readonly ./cmd/server -count=1`、`go test -mod=readonly ./... -run '^$' -count=1`；前端 typecheck、ESLint、Vitest `225/225` files（`1580/1580` tests）和 production build 全部通过。
+- [x] merge commit `b3b28ff2f5f8e865f66f09cfa7609a99df24bfa9` 已推送到 fork `feature/chat-image-tools`；Custom Docker Image run `31310903130` 的 test/build job 全部成功，构建参数为 `VERSION=0.1.173-zz`、`BUILD_TYPE=custom`、`COMMIT=b3b28ff2f5f8e865f66f09cfa7609a99df24bfa9`，平台为 linux/amd64、linux/arm64。
+- [x] GHCR 已发布不可变标签 `chat-image-tools`、`chat-image-tools-b3b28ff` 和 `chat-image-tools-b3b28ff2f5f8e865f66f09cfa7609a99df24bfa9`；三者均指向 manifest digest `sha256:431d89555d653e96eb0cab7c3375ccc79485955ea23ad14bb642225dd3731103`。生产部署仍需单独执行。
+- [ ] 部署前按迁移 220 说明导出相关 `groups` 视频定价并暂停管理端写入；启动后核对 `groups_video_price_backup_220`，并确认 Redis 健康后再观察 Grok 异步视频计费日志。
+
 ## 部署/回滚记录
 
 ### 使用自定义镜像部署
