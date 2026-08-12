@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -24,8 +25,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/web"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 //go:embed VERSION
@@ -93,7 +92,9 @@ func main() {
 	}
 
 	// Normal server mode
-	runMainServer()
+	if err := runMainServer(); err != nil {
+		log.Printf("Server exited with error: %v", err)
+	}
 }
 
 func runSetupServer() {
@@ -116,11 +117,16 @@ func runSetupServer() {
 	log.Printf("Setup wizard available at http://%s", addr)
 	log.Println("Complete the setup wizard to configure Sub2API")
 
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           h2c.NewHandler(r, &http2.Server{}),
+		Handler:           r,
 		ReadHeaderTimeout: 30 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		Protocols:         protocols,
 	}
 
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -128,13 +134,61 @@ func runSetupServer() {
 	}
 }
 
-func runMainServer() {
+const (
+	httpGracefulShutdownTimeout = 5 * time.Second
+	httpForcedShutdownTimeout   = 5 * time.Second
+)
+
+type shutdownHTTPServer interface {
+	BeginShutdown()
+	Shutdown(context.Context) error
+	Close() error
+	WaitForServe(context.Context) error
+	WaitForHandlers(context.Context) error
+}
+
+func shutdownHTTPThenCleanup(
+	server shutdownHTTPServer,
+	cleanup func() error,
+	gracefulTimeout time.Duration,
+	forcedTimeout time.Duration,
+) error {
+	if server == nil {
+		return errors.New("HTTP server unavailable during shutdown")
+	}
+
+	server.BeginShutdown()
+	gracefulCtx, cancelGraceful := context.WithTimeout(context.Background(), gracefulTimeout)
+	shutdownErr := server.Shutdown(gracefulCtx)
+	cancelGraceful()
+
+	var closeErr error
+	if shutdownErr != nil {
+		closeErr = server.Close()
+	}
+
+	forcedCtx, cancelForced := context.WithTimeout(context.Background(), forcedTimeout)
+	serveErr := server.WaitForServe(forcedCtx)
+	handlerErr := server.WaitForHandlers(forcedCtx)
+	cancelForced()
+
+	httpErr := errors.Join(shutdownErr, closeErr, serveErr, handlerErr)
+	if serveErr != nil || handlerErr != nil {
+		return httpErr
+	}
+	if cleanup == nil {
+		return httpErr
+	}
+	return errors.Join(httpErr, cleanup())
+}
+
+func runMainServer() error {
 	cfg, err := config.LoadForBootstrap()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 	if err := logger.Init(logger.OptionsFromConfig(cfg.Log)); err != nil {
-		log.Fatalf("Failed to initialize logger: %v", err)
+		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
 	if cfg.RunMode == config.RunModeSimple {
 		log.Println("⚠️  WARNING: Running in SIMPLE mode - billing and quota checks are DISABLED")
@@ -147,32 +201,54 @@ func runMainServer() {
 
 	app, err := initializeApplication(buildInfo)
 	if err != nil {
-		log.Fatalf("Failed to initialize application: %v", err)
+		return fmt.Errorf("failed to initialize application: %w", err)
 	}
-	defer app.Cleanup()
-
-	// 启动服务器
-	go func() {
-		if err := app.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("Failed to start server: %v", err)
+	if app.PromptAudit != nil {
+		if err := app.PromptAudit.Start(context.Background()); err != nil {
+			// Startup continues so unrelated APIs stay up. Fail-closed (unavailable)
+			// applies only when a persisted blocking policy was observed; without
+			// blocking intent, Prompt Audit stays ModeOff so the gateway remains
+			// usable and administrators can still disable the feature (#4560).
+			log.Printf("Prompt Audit started in degraded state: %v", err)
 		}
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		err := app.Server.ListenAndServe()
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		serverErr <- err
 	}()
 
 	log.Printf("Server started on %s", app.Server.Addr)
 
-	// 等待中断信号
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	defer signal.Stop(quit)
 
-	log.Println("Shutting down server...")
+	var serveErr error
+	select {
+	case <-quit:
+		log.Println("Shutting down server...")
+	case serveErr = <-serverErr:
+		if serveErr != nil {
+			serveErr = fmt.Errorf("failed to start server: %w", serveErr)
+		}
+		log.Println("HTTP server stopped; shutting down application...")
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := app.Server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+	shutdownErr := shutdownHTTPThenCleanup(
+		app.Server,
+		app.Cleanup,
+		httpGracefulShutdownTimeout,
+		httpForcedShutdownTimeout,
+	)
+	if shutdownErr != nil {
+		return errors.Join(serveErr, fmt.Errorf("server shutdown failed: %w", shutdownErr))
 	}
 
 	log.Println("Server exited")
+	return serveErr
 }

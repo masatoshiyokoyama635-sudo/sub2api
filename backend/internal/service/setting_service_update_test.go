@@ -5,15 +5,23 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"math"
+	"strconv"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
 type settingUpdateRepoStub struct {
-	updates map[string]string
+	updates        map[string]string
+	atomicCalls    int
+	atomicCommit   bool
+	atomicErr      error
+	setMultipleErr error
 }
 
 func (s *settingUpdateRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
@@ -33,11 +41,30 @@ func (s *settingUpdateRepoStub) GetMultiple(ctx context.Context, keys []string) 
 }
 
 func (s *settingUpdateRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
+	s.capture(settings)
+	return s.setMultipleErr
+}
+
+func (s *settingUpdateRepoStub) UpdateSettingsAtomic(_ context.Context, request SettingAtomicUpdate) error {
+	s.atomicCalls++
+	if s.atomicErr != nil {
+		return s.atomicErr
+	}
+	if request.Authorize != nil {
+		if err := request.Authorize(request.Baseline); err != nil {
+			return err
+		}
+	}
+	s.capture(request.Updates)
+	s.atomicCommit = true
+	return nil
+}
+
+func (s *settingUpdateRepoStub) capture(settings map[string]string) {
 	s.updates = make(map[string]string, len(settings))
 	for k, v := range settings {
 		s.updates[k] = v
 	}
-	return nil
 }
 
 func (s *settingUpdateRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
@@ -48,10 +75,220 @@ func (s *settingUpdateRepoStub) Delete(ctx context.Context, key string) error {
 	panic("unexpected Delete call")
 }
 
+type settingAtomicFallbackRepoStub struct {
+	values  map[string]string
+	updates map[string]string
+	getErr  error
+	setErr  error
+}
+
+func (s *settingAtomicFallbackRepoStub) Get(context.Context, string) (*Setting, error) {
+	panic("unexpected Get call")
+}
+
+func (s *settingAtomicFallbackRepoStub) GetValue(_ context.Context, key string) (string, error) {
+	return s.values[key], nil
+}
+
+func (s *settingAtomicFallbackRepoStub) Set(context.Context, string, string) error {
+	panic("unexpected Set call")
+}
+
+func (s *settingAtomicFallbackRepoStub) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	values := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := s.values[key]; ok {
+			values[key] = value
+		}
+	}
+	return values, nil
+}
+
+func (s *settingAtomicFallbackRepoStub) SetMultiple(_ context.Context, settings map[string]string) error {
+	if s.setErr != nil {
+		return s.setErr
+	}
+	s.updates = make(map[string]string, len(settings))
+	for key, value := range settings {
+		s.updates[key] = value
+		s.values[key] = value
+	}
+	return nil
+}
+
+func (s *settingAtomicFallbackRepoStub) GetAll(context.Context) (map[string]string, error) {
+	return s.values, nil
+}
+
+func (s *settingAtomicFallbackRepoStub) Delete(context.Context, string) error {
+	panic("unexpected Delete call")
+}
+
+type settingGetAllRepoStub struct {
+	values map[string]string
+}
+
+func (s *settingGetAllRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
+	panic("unexpected Get call")
+}
+
+func (s *settingGetAllRepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	panic("unexpected GetValue call")
+}
+
+func (s *settingGetAllRepoStub) Set(ctx context.Context, key, value string) error {
+	panic("unexpected Set call")
+}
+
+func (s *settingGetAllRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	panic("unexpected GetMultiple call")
+}
+
+func (s *settingGetAllRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
+	panic("unexpected SetMultiple call")
+}
+
+func (s *settingGetAllRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
+	out := make(map[string]string, len(s.values))
+	for key, value := range s.values {
+		out[key] = value
+	}
+	return out, nil
+}
+
+func (s *settingGetAllRepoStub) Delete(ctx context.Context, key string) error {
+	panic("unexpected Delete call")
+}
+
+type forwardedIPMigrationRepoStub struct {
+	values         map[string]string
+	updates        map[string]string
+	getMultipleErr error
+	setMultipleErr error
+}
+
+func (s *forwardedIPMigrationRepoStub) Get(context.Context, string) (*Setting, error) {
+	panic("unexpected Get call")
+}
+
+func (s *forwardedIPMigrationRepoStub) GetValue(_ context.Context, key string) (string, error) {
+	value, ok := s.values[key]
+	if !ok {
+		return "", ErrSettingNotFound
+	}
+	return value, nil
+}
+
+func (s *forwardedIPMigrationRepoStub) Set(context.Context, string, string) error {
+	panic("unexpected Set call")
+}
+
+func (s *forwardedIPMigrationRepoStub) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	if s.getMultipleErr != nil {
+		return nil, s.getMultipleErr
+	}
+	result := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := s.values[key]; ok {
+			result[key] = value
+		}
+	}
+	return result, nil
+}
+
+func (s *forwardedIPMigrationRepoStub) SetMultiple(_ context.Context, values map[string]string) error {
+	if s.setMultipleErr != nil {
+		return s.setMultipleErr
+	}
+	s.updates = make(map[string]string, len(values))
+	for key, value := range values {
+		s.values[key] = value
+		s.updates[key] = value
+	}
+	return nil
+}
+
+func (s *forwardedIPMigrationRepoStub) GetAll(context.Context) (map[string]string, error) {
+	panic("unexpected GetAll call")
+}
+
+func (s *forwardedIPMigrationRepoStub) Delete(context.Context, string) error {
+	panic("unexpected Delete call")
+}
+
+type settingAntigravityUARepoStub struct {
+	values map[string]string
+}
+
+func (s *settingAntigravityUARepoStub) Get(ctx context.Context, key string) (*Setting, error) {
+	panic("unexpected Get call")
+}
+
+func (s *settingAntigravityUARepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	if value, ok := s.values[key]; ok {
+		return value, nil
+	}
+	return "", ErrSettingNotFound
+}
+
+func (s *settingAntigravityUARepoStub) Set(ctx context.Context, key, value string) error {
+	panic("unexpected Set call")
+}
+
+func (s *settingAntigravityUARepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	panic("unexpected GetMultiple call")
+}
+
+func (s *settingAntigravityUARepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
+	panic("unexpected SetMultiple call")
+}
+
+func (s *settingAntigravityUARepoStub) GetAll(ctx context.Context) (map[string]string, error) {
+	panic("unexpected GetAll call")
+}
+
+func (s *settingAntigravityUARepoStub) Delete(ctx context.Context, key string) error {
+	panic("unexpected Delete call")
+}
+
 type defaultSubGroupReaderStub struct {
 	byID  map[int64]*Group
 	errBy map[int64]error
 	calls []int64
+}
+
+func TestSettingService_AffiliateAdminRechargeSetting(t *testing.T) {
+	t.Run("missing value defaults to disabled", func(t *testing.T) {
+		svc := NewSettingService(&settingGetAllRepoStub{values: map[string]string{}}, &config.Config{})
+
+		settings, err := svc.GetAllSettings(context.Background())
+		require.NoError(t, err)
+		require.False(t, settings.AdminRechargeRebateEnabled)
+	})
+
+	t.Run("explicit value is parsed", func(t *testing.T) {
+		svc := NewSettingService(&settingGetAllRepoStub{values: map[string]string{
+			SettingKeyAffiliateAdminRechargeEnabled: "true",
+		}}, &config.Config{})
+
+		settings, err := svc.GetAllSettings(context.Background())
+		require.NoError(t, err)
+		require.True(t, settings.AdminRechargeRebateEnabled)
+	})
+
+	t.Run("value is persisted", func(t *testing.T) {
+		repo := &settingUpdateRepoStub{}
+		svc := NewSettingService(repo, &config.Config{})
+
+		err := svc.UpdateSettings(context.Background(), &SystemSettings{
+			AdminRechargeRebateEnabled: true,
+		})
+		require.NoError(t, err)
+		require.Equal(t, "true", repo.updates[SettingKeyAffiliateAdminRechargeEnabled])
+	})
 }
 
 func (s *defaultSubGroupReaderStub) GetByID(ctx context.Context, id int64) (*Group, error) {
@@ -63,6 +300,16 @@ func (s *defaultSubGroupReaderStub) GetByID(ctx context.Context, id int64) (*Gro
 		return g, nil
 	}
 	return nil, ErrGroupNotFound
+}
+
+func TestSettingService_UpdateSettings_PersistsCompactHomeEnabled(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{CompactHomeEnabled: true})
+
+	require.NoError(t, err)
+	require.Equal(t, "true", repo.updates[SettingKeyCompactHomeEnabled])
 }
 
 func TestSettingService_UpdateSettings_DefaultSubscriptions_ValidGroup(t *testing.T) {
@@ -177,10 +424,10 @@ func TestSettingService_UpdateSettings_RegistrationEmailSuffixWhitelist_Normaliz
 	svc := NewSettingService(repo, &config.Config{})
 
 	err := svc.UpdateSettings(context.Background(), &SystemSettings{
-		RegistrationEmailSuffixWhitelist: []string{"example.com", "@EXAMPLE.com", " @foo.bar "},
+		RegistrationEmailSuffixWhitelist: []string{"example.com", "@EXAMPLE.com", " @foo.bar ", "*.EDU.CN"},
 	})
 	require.NoError(t, err)
-	require.Equal(t, `["@example.com","@foo.bar"]`, repo.updates[SettingKeyRegistrationEmailSuffixWhitelist])
+	require.Equal(t, `["@example.com","@foo.bar","*.edu.cn"]`, repo.updates[SettingKeyRegistrationEmailSuffixWhitelist])
 }
 
 func TestSettingService_UpdateSettings_RegistrationEmailSuffixWhitelist_Invalid(t *testing.T) {
@@ -225,22 +472,455 @@ func TestSettingService_UpdateSettings_TablePreferences(t *testing.T) {
 }
 
 func TestSettingService_UpdateSettings_PaymentVisibleMethodsAndAdvancedScheduler(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
 	repo := &settingUpdateRepoStub{}
 	svc := NewSettingService(repo, &config.Config{})
 
 	err := svc.UpdateSettings(context.Background(), &SystemSettings{
-		PaymentVisibleMethodAlipaySource:  "alipay",
-		PaymentVisibleMethodWxpaySource:   "easypay",
-		PaymentVisibleMethodAlipayEnabled: true,
-		PaymentVisibleMethodWxpayEnabled:  false,
-		OpenAIAdvancedSchedulerEnabled:    true,
+		PaymentVisibleMethodAlipaySource:                   "alipay",
+		PaymentVisibleMethodWxpaySource:                    "easypay",
+		PaymentVisibleMethodAlipayEnabled:                  true,
+		PaymentVisibleMethodWxpayEnabled:                   false,
+		OpenAILowUpstreamRatePriorityEnabled:               true,
+		OpenAIOAuthSchedulingRateMultiplier:                0.05,
+		OpenAIAdvancedSchedulerEnabled:                     true,
+		OpenAIAdvancedSchedulerStickyWeightedEnabled:       true,
+		OpenAIAdvancedSchedulerSubscriptionPriorityEnabled: true,
+		OpenAIAdvancedSchedulerLBTopK:                      " 3 ",
+		OpenAIAdvancedSchedulerWeightPriority:              "2.50",
+		OpenAIAdvancedSchedulerWeightLoad:                  "0",
+		OpenAIAdvancedSchedulerWeightQueue:                 "0.75",
+		OpenAIAdvancedSchedulerWeightErrorRate:             "1.25",
+		OpenAIAdvancedSchedulerWeightTTFT:                  "0.5",
+		OpenAIAdvancedSchedulerWeightReset:                 "",
+		OpenAIAdvancedSchedulerWeightQuotaHeadroom:         "0.2",
+		OpenAIAdvancedSchedulerWeightUpstreamCost:          "1.5",
+		OpenAIAdvancedSchedulerWeightPreviousResponse:      "8",
+		OpenAIAdvancedSchedulerWeightSessionSticky:         "4",
 	})
 	require.NoError(t, err)
 	require.Equal(t, VisibleMethodSourceOfficialAlipay, repo.updates[SettingPaymentVisibleMethodAlipaySource])
 	require.Equal(t, VisibleMethodSourceEasyPayWechat, repo.updates[SettingPaymentVisibleMethodWxpaySource])
 	require.Equal(t, "true", repo.updates[SettingPaymentVisibleMethodAlipayEnabled])
 	require.Equal(t, "false", repo.updates[SettingPaymentVisibleMethodWxpayEnabled])
+	require.Equal(t, "true", repo.updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled])
+	require.Equal(t, "0.05", repo.updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
 	require.Equal(t, "true", repo.updates[openAIAdvancedSchedulerSettingKey])
+	require.Equal(t, "true", repo.updates[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled])
+	require.Equal(t, "true", repo.updates[SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled])
+	require.Equal(t, "3", repo.updates[SettingKeyOpenAIAdvancedSchedulerLBTopK])
+	require.Equal(t, "2.5", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightPriority])
+	require.Equal(t, "0", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightLoad])
+	require.Equal(t, "0.75", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightQueue])
+	require.Equal(t, "1.25", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightErrorRate])
+	require.Equal(t, "0.5", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightTTFT])
+	require.Equal(t, "", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightReset])
+	require.Equal(t, "0.2", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightQuotaHeadroom])
+	require.Equal(t, "1.5", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost])
+	require.Equal(t, "8", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightPreviousResponse])
+	require.Equal(t, "4", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky])
+}
+
+func TestSettingService_UpdateSettingsRejectsInvalidOpenAIOAuthSchedulingRateMultiplier(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+
+	for _, rate := range []float64{-0.01, math.NaN(), math.Inf(1)} {
+		err := svc.UpdateSettings(context.Background(), &SystemSettings{OpenAIOAuthSchedulingRateMultiplier: rate})
+		require.Error(t, err)
+	}
+}
+
+func TestSettingService_UpdateSettings_OpenAIAdvancedSchedulerWeightSums(t *testing.T) {
+	maxFloat := strconv.FormatFloat(math.MaxFloat64, 'g', -1, 64)
+	tests := []struct {
+		name    string
+		weights SystemSettings
+		wantErr bool
+	}{
+		{
+			name: "reset only base is valid",
+			weights: SystemSettings{
+				OpenAIAdvancedSchedulerWeightPriority:         "0",
+				OpenAIAdvancedSchedulerWeightLoad:             "0",
+				OpenAIAdvancedSchedulerWeightQueue:            "0",
+				OpenAIAdvancedSchedulerWeightErrorRate:        "0",
+				OpenAIAdvancedSchedulerWeightTTFT:             "0",
+				OpenAIAdvancedSchedulerWeightReset:            "1",
+				OpenAIAdvancedSchedulerWeightQuotaHeadroom:    "0",
+				OpenAIAdvancedSchedulerWeightUpstreamCost:     "0",
+				OpenAIAdvancedSchedulerWeightPreviousResponse: "0",
+				OpenAIAdvancedSchedulerWeightSessionSticky:    "0",
+			},
+		},
+		{
+			name: "base sum overflow is rejected",
+			weights: SystemSettings{
+				OpenAIAdvancedSchedulerWeightPriority: maxFloat,
+				OpenAIAdvancedSchedulerWeightLoad:     maxFloat,
+			},
+			wantErr: true,
+		},
+		{
+			name: "sticky total sum overflow is rejected",
+			weights: SystemSettings{
+				OpenAIAdvancedSchedulerWeightPriority:         maxFloat,
+				OpenAIAdvancedSchedulerWeightPreviousResponse: maxFloat,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewSettingService(&settingUpdateRepoStub{}, &config.Config{})
+			err := svc.UpdateSettings(context.Background(), &tt.weights)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestSettingService_ParseSettingsDefaultsOpenAIOAuthSchedulingRateMultiplier(t *testing.T) {
+	svc := NewSettingService(&settingUpdateRepoStub{}, &config.Config{})
+
+	require.Equal(t, 1.0, svc.parseSettings(map[string]string{}).OpenAIOAuthSchedulingRateMultiplier)
+	require.Equal(t, 0.05, svc.parseSettings(map[string]string{SettingKeyOpenAIOAuthSchedulingRateMultiplier: "0.05"}).OpenAIOAuthSchedulingRateMultiplier)
+}
+
+func TestSettingService_GetAllSettings_OpenAIAdvancedSchedulerEffectiveValuesUseConfig(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.LBTopK = 13
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights = config.GatewayOpenAIWSSchedulerScoreWeights{
+		Priority:         2,
+		Load:             3,
+		Queue:            4,
+		ErrorRate:        5,
+		TTFT:             6,
+		Reset:            7,
+		QuotaHeadroom:    8,
+		UpstreamCost:     9,
+		PreviousResponse: 10,
+		SessionSticky:    11,
+	}
+	svc := NewSettingService(&settingGetAllRepoStub{values: map[string]string{
+		SettingKeyOpenAIAdvancedSchedulerLBTopK:              "3",
+		SettingKeyOpenAIAdvancedSchedulerWeightPriority:      "99",
+		SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky: "88",
+	}}, cfg)
+
+	settings, err := svc.GetAllSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "3", settings.OpenAIAdvancedSchedulerLBTopK)
+	require.Equal(t, "99", settings.OpenAIAdvancedSchedulerWeightPriority)
+	require.Equal(t, "88", settings.OpenAIAdvancedSchedulerWeightSessionSticky)
+	require.Equal(t, "13", settings.OpenAIAdvancedSchedulerEffectiveLBTopK)
+	require.Equal(t, "2", settings.OpenAIAdvancedSchedulerEffectiveWeightPriority)
+	require.Equal(t, "3", settings.OpenAIAdvancedSchedulerEffectiveWeightLoad)
+	require.Equal(t, "9", settings.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost)
+	require.Equal(t, "11", settings.OpenAIAdvancedSchedulerEffectiveWeightSessionSticky)
+}
+
+func TestSettingService_UpdateSettings_AntigravityUserAgentVersion(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		AntigravityUserAgentVersion: "1.23.2",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "1.23.2", repo.updates[SettingKeyAntigravityUserAgentVersion])
+}
+
+func TestSettingService_InitializeDefaultSettingsPersistsConfiguredForwardedClientIPHeaders(t *testing.T) {
+	repo := &forwardedIPMigrationRepoStub{values: map[string]string{}}
+	cfg := &config.Config{}
+	cfg.SetForwardedClientIPSettings(true, []string{"X-Cdn-Ip", "True-Client-Ip"})
+	svc := NewSettingService(repo, cfg)
+
+	require.NoError(t, svc.InitializeDefaultSettings(context.Background()))
+	require.JSONEq(t, `["X-Cdn-Ip","True-Client-Ip"]`, repo.values[SettingKeyForwardedClientIPHeaders])
+}
+
+func TestSettingService_UpdateSettings_APIKeyACLTrustForwardedIPRefreshesConfig(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	cfg := &config.Config{}
+	svc := NewSettingService(repo, cfg)
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		APIKeyACLTrustForwardedIP: true,
+		ForwardedClientIPHeaders:  []string{" x-cdn-ip ", "X-CDN-IP", "true-client-ip"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "true", repo.updates[SettingKeyAPIKeyACLTrustForwardedIP])
+	require.JSONEq(t, `["X-Cdn-Ip","True-Client-Ip"]`, repo.updates[SettingKeyForwardedClientIPHeaders])
+	runtimeSettings := cfg.ForwardedClientIPSettings()
+	require.True(t, runtimeSettings.TrustForwardedIP)
+	require.Equal(t, []string{"X-Cdn-Ip", "True-Client-Ip"}, runtimeSettings.Headers)
+
+	runtimeSettings.Headers[0] = "X-Mutated"
+	require.Equal(t, []string{"X-Cdn-Ip", "True-Client-Ip"}, cfg.ForwardedClientIPSettings().Headers)
+}
+
+func TestSettingService_UpdateSettings_RejectsInvalidForwardedClientIPHeadersWithoutRefreshing(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	cfg := &config.Config{}
+	cfg.SetForwardedClientIPSettings(true, []string{"X-Existing-IP"})
+	svc := NewSettingService(repo, cfg)
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		ForwardedClientIPHeaders: []string{"X Invalid"},
+	})
+
+	require.Error(t, err)
+	require.Nil(t, repo.updates)
+	runtimeSettings := cfg.ForwardedClientIPSettings()
+	require.True(t, runtimeSettings.TrustForwardedIP)
+	require.Equal(t, []string{"X-Existing-IP"}, runtimeSettings.Headers)
+}
+
+func TestSettingService_UpdateSettings_WriteFailureDoesNotRefreshForwardedIPRuntime(t *testing.T) {
+	repo := &settingUpdateRepoStub{setMultipleErr: errors.New("database unavailable")}
+	cfg := &config.Config{}
+	cfg.SetForwardedClientIPSettings(false, []string{"X-Existing-IP"})
+	svc := NewSettingService(repo, cfg)
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		APIKeyACLTrustForwardedIP: true,
+		ForwardedClientIPHeaders:  []string{"X-New-IP"},
+	})
+
+	require.ErrorContains(t, err, "database unavailable")
+	runtimeSettings := cfg.ForwardedClientIPSettings()
+	require.False(t, runtimeSettings.TrustForwardedIP)
+	require.Equal(t, []string{"X-Existing-IP"}, runtimeSettings.Headers)
+}
+
+func TestSettingService_ParseSettings_APIKeyACLTrustForwardedIPFallsBackToConfigWhenMissing(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Security.TrustForwardedIPForAPIKeyACL = true
+	svc := NewSettingService(&settingUpdateRepoStub{}, cfg)
+
+	got := svc.parseSettings(map[string]string{})
+
+	require.True(t, got.APIKeyACLTrustForwardedIP)
+}
+
+func TestSettingService_ParseSettings_APIKeyACLTrustForwardedIPUsesStoredValue(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.SetTrustForwardedIPForAPIKeyACL(true)
+	svc := NewSettingService(&settingUpdateRepoStub{}, cfg)
+
+	got := svc.parseSettings(map[string]string{SettingKeyAPIKeyACLTrustForwardedIP: "false"})
+
+	require.False(t, got.APIKeyACLTrustForwardedIP)
+}
+
+func TestSettingService_ParseSettings_ForwardedClientIPHeaders(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.SetForwardedClientIPSettings(true, []string{"X-Config-IP"})
+	svc := NewSettingService(&settingUpdateRepoStub{}, cfg)
+
+	t.Run("stored value is normalized", func(t *testing.T) {
+		got := svc.parseSettings(map[string]string{
+			SettingKeyForwardedClientIPHeaders: `[" x-cdn-ip ","X-CDN-IP","true-client-ip"]`,
+		})
+		require.Equal(t, []string{"X-Cdn-Ip", "True-Client-Ip"}, got.ForwardedClientIPHeaders)
+	})
+
+	t.Run("missing value falls back to config", func(t *testing.T) {
+		got := svc.parseSettings(map[string]string{})
+		require.Equal(t, []string{"X-Config-IP"}, got.ForwardedClientIPHeaders)
+	})
+
+	t.Run("malformed value disables forwarded trust", func(t *testing.T) {
+		got := svc.parseSettings(map[string]string{
+			SettingKeyAPIKeyACLTrustForwardedIP: "true",
+			SettingKeyForwardedClientIPHeaders:  `{"not":"an array"}`,
+		})
+		require.False(t, got.APIKeyACLTrustForwardedIP)
+		require.Empty(t, got.ForwardedClientIPHeaders)
+	})
+}
+
+func TestSettingService_LoadForwardedClientIPSettingsMigration(t *testing.T) {
+	tests := []struct {
+		name                   string
+		values                 map[string]string
+		trustedProxiesSet      bool
+		configDefault          bool
+		wantEnabled            bool
+		wantForwardedIPUpdate  string
+		wantMigrationMarkerSet bool
+	}{
+		{
+			name:                   "missing setting follows configured default",
+			values:                 map[string]string{},
+			configDefault:          true,
+			wantEnabled:            true,
+			wantMigrationMarkerSet: true,
+		},
+		{
+			name:                   "legacy false without proxy config migrates to compatibility",
+			values:                 map[string]string{SettingKeyAPIKeyACLTrustForwardedIP: "false"},
+			wantEnabled:            true,
+			wantForwardedIPUpdate:  "true",
+			wantMigrationMarkerSet: true,
+		},
+		{
+			name:                   "legacy false with explicit proxy config stays secure",
+			values:                 map[string]string{SettingKeyAPIKeyACLTrustForwardedIP: "false"},
+			trustedProxiesSet:      true,
+			wantEnabled:            false,
+			wantMigrationMarkerSet: true,
+		},
+		{
+			name: "completed migration preserves later false choice",
+			values: map[string]string{
+				SettingKeyAPIKeyACLTrustForwardedIP: "false",
+				settingKeyForwardedClientIPModeV2:   "true",
+			},
+			wantEnabled: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := &forwardedIPMigrationRepoStub{values: test.values}
+			cfg := &config.Config{Server: config.ServerConfig{TrustedProxiesConfigured: test.trustedProxiesSet}}
+			cfg.Security.TrustForwardedIPForAPIKeyACL = test.configDefault
+			svc := NewSettingService(repo, cfg)
+
+			require.NoError(t, svc.LoadForwardedClientIPSettings(context.Background()))
+			require.Equal(t, test.wantEnabled, cfg.TrustForwardedIPForAPIKeyACL())
+			require.Equal(t, test.wantForwardedIPUpdate, repo.updates[SettingKeyAPIKeyACLTrustForwardedIP])
+			require.JSONEq(t, `[]`, repo.updates[SettingKeyForwardedClientIPHeaders])
+			if test.wantMigrationMarkerSet {
+				require.Equal(t, "true", repo.updates[settingKeyForwardedClientIPModeV2])
+			} else {
+				require.NotContains(t, repo.updates, settingKeyForwardedClientIPModeV2)
+			}
+		})
+	}
+}
+
+func TestSettingService_LoadForwardedClientIPSettingsLoadsHeaders(t *testing.T) {
+	repo := &forwardedIPMigrationRepoStub{values: map[string]string{
+		SettingKeyAPIKeyACLTrustForwardedIP: "true",
+		SettingKeyForwardedClientIPHeaders:  `[" x-cdn-ip ","true-client-ip"]`,
+		settingKeyForwardedClientIPModeV2:   "true",
+	}}
+	cfg := &config.Config{}
+	svc := NewSettingService(repo, cfg)
+
+	require.NoError(t, svc.LoadForwardedClientIPSettings(context.Background()))
+	runtimeSettings := cfg.ForwardedClientIPSettings()
+	require.True(t, runtimeSettings.TrustForwardedIP)
+	require.Equal(t, []string{"X-Cdn-Ip", "True-Client-Ip"}, runtimeSettings.Headers)
+	require.Nil(t, repo.updates)
+}
+
+func TestSettingService_LoadForwardedClientIPSettingsMalformedHeadersDisablesCustomTrust(t *testing.T) {
+	repo := &forwardedIPMigrationRepoStub{values: map[string]string{
+		SettingKeyAPIKeyACLTrustForwardedIP: "true",
+		SettingKeyForwardedClientIPHeaders:  `["X Invalid"]`,
+	}}
+	cfg := &config.Config{}
+	svc := NewSettingService(repo, cfg)
+
+	err := svc.LoadForwardedClientIPSettings(context.Background())
+
+	require.ErrorContains(t, err, "load forwarded client ip headers")
+	runtimeSettings := cfg.ForwardedClientIPSettings()
+	require.False(t, runtimeSettings.TrustForwardedIP)
+	require.Empty(t, runtimeSettings.Headers)
+	require.Equal(t, "true", repo.updates[settingKeyForwardedClientIPModeV2])
+	require.NotContains(t, repo.updates, SettingKeyAPIKeyACLTrustForwardedIP)
+}
+
+func TestSettingService_LoadForwardedClientIPSettingsBackfillsConfigHeaders(t *testing.T) {
+	repo := &forwardedIPMigrationRepoStub{values: map[string]string{
+		settingKeyForwardedClientIPModeV2: "true",
+	}}
+	cfg := &config.Config{}
+	cfg.SetForwardedClientIPSettings(false, []string{"X-Config-IP"})
+	svc := NewSettingService(repo, cfg)
+
+	require.NoError(t, svc.LoadForwardedClientIPSettings(context.Background()))
+	require.JSONEq(t, `["X-Config-IP"]`, repo.updates[SettingKeyForwardedClientIPHeaders])
+	require.Equal(t, []string{"X-Config-IP"}, cfg.ForwardedClientIPSettings().Headers)
+}
+
+func TestSettingService_LoadForwardedClientIPSettingsReadFailureFailsClosed(t *testing.T) {
+	repo := &forwardedIPMigrationRepoStub{
+		getMultipleErr: errors.New("database unavailable"),
+	}
+	cfg := &config.Config{}
+	cfg.SetTrustForwardedIPForAPIKeyACL(true)
+	svc := NewSettingService(repo, cfg)
+
+	err := svc.LoadForwardedClientIPSettings(context.Background())
+
+	require.ErrorContains(t, err, "get forwarded client ip settings")
+	runtimeSettings := cfg.ForwardedClientIPSettings()
+	require.False(t, runtimeSettings.TrustForwardedIP)
+	require.Empty(t, runtimeSettings.Headers)
+}
+
+func TestSettingService_LoadForwardedClientIPSettingsWriteFailureUsesComputedMode(t *testing.T) {
+	tests := []struct {
+		name              string
+		trustedProxiesSet bool
+		wantEnabled       bool
+	}{
+		{name: "compatibility migration remains effective", wantEnabled: true},
+		{name: "explicit proxy policy remains secure", trustedProxiesSet: true, wantEnabled: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := &forwardedIPMigrationRepoStub{
+				values:         map[string]string{SettingKeyAPIKeyACLTrustForwardedIP: "false"},
+				setMultipleErr: errors.New("database unavailable"),
+			}
+			cfg := &config.Config{Server: config.ServerConfig{TrustedProxiesConfigured: test.trustedProxiesSet}}
+			svc := NewSettingService(repo, cfg)
+
+			err := svc.LoadForwardedClientIPSettings(context.Background())
+
+			require.ErrorContains(t, err, "migrate forwarded client ip setting")
+			require.Equal(t, test.wantEnabled, cfg.TrustForwardedIPForAPIKeyACL())
+		})
+	}
+}
+
+func TestSettingService_GetAntigravityUserAgentVersion_Precedence(t *testing.T) {
+	t.Run("后台设置优先", func(t *testing.T) {
+		svc := NewSettingService(&settingAntigravityUARepoStub{values: map[string]string{
+			SettingKeyAntigravityUserAgentVersion: "1.24.0",
+		}}, &config.Config{})
+
+		require.Equal(t, "1.24.0", svc.GetAntigravityUserAgentVersion(context.Background()))
+	})
+
+	t.Run("空值回退配置默认值", func(t *testing.T) {
+		svc := NewSettingService(&settingAntigravityUARepoStub{values: map[string]string{
+			SettingKeyAntigravityUserAgentVersion: "",
+		}}, &config.Config{})
+
+		require.Equal(t, antigravity.GetDefaultUserAgentVersion(), svc.GetAntigravityUserAgentVersion(context.Background()))
+	})
+
+	t.Run("缺失回退配置默认值", func(t *testing.T) {
+		svc := NewSettingService(&settingAntigravityUARepoStub{values: map[string]string{}}, &config.Config{})
+
+		require.Equal(t, antigravity.GetDefaultUserAgentVersion(), svc.GetAntigravityUserAgentVersion(context.Background()))
+	})
 }
 
 func TestSettingService_UpdateSettings_RejectsInvalidPaymentVisibleMethodSource(t *testing.T) {
@@ -253,4 +933,351 @@ func TestSettingService_UpdateSettings_RejectsInvalidPaymentVisibleMethodSource(
 	require.Error(t, err)
 	require.Equal(t, "INVALID_PAYMENT_VISIBLE_METHOD_SOURCE", infraerrors.Reason(err))
 	require.Nil(t, repo.updates)
+}
+
+func TestSettingService_UpdateSettingsAtomicallyBuildsAllGroupsBeforeSingleWrite(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+	committedWhenRefreshed := false
+	svc.SetOnUpdateCallback(func() { committedWhenRefreshed = repo.atomicCommit })
+	enabled := true
+	multiplier := 2.5
+
+	err := svc.UpdateSettingsAtomically(context.Background(), SettingsAtomicUpdateInput{
+		Settings: &SystemSettings{RegistrationEnabled: true},
+		AuthSourceDefaults: &AuthSourceDefaultSettings{
+			Email: ProviderDefaultGrantSettings{Balance: 9.5},
+		},
+		OpenAIFastPolicySettings: &OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{{
+			ServiceTier: OpenAIFastTierPriority,
+			Action:      BetaPolicyActionPass,
+			Scope:       BetaPolicyScopeAll,
+		}}},
+		PaymentConfig: &UpdatePaymentConfigRequest{
+			Enabled:                   &enabled,
+			BalanceRechargeMultiplier: &multiplier,
+		},
+		SecurityBaseline: SettingSecurityBaseline{},
+		Authorize: func(current SettingSecurityBaseline) error {
+			require.Equal(t, SettingSecurityBaseline{}, current)
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.atomicCalls)
+	require.True(t, committedWhenRefreshed, "runtime refresh must happen only after the atomic commit returns")
+	require.Equal(t, "true", repo.updates[SettingKeyRegistrationEnabled])
+	require.Equal(t, "9.50000000", repo.updates[SettingKeyAuthSourceDefaultEmailBalance])
+	require.JSONEq(t, `{"rules":[{"service_tier":"priority","action":"pass","scope":"all"}]}`, repo.updates[SettingKeyOpenAIFastPolicySettings])
+	require.Equal(t, "true", repo.updates[SettingPaymentEnabled])
+	require.Equal(t, "2.50", repo.updates[SettingBalanceRechargeMult])
+}
+
+func TestSettingService_UpdateSettingsAtomicallyDoesNotRefreshAfterRepositoryFailure(t *testing.T) {
+	repo := &settingUpdateRepoStub{atomicErr: errors.New("commit failed")}
+	svc := NewSettingService(repo, &config.Config{})
+	refreshCalls := 0
+	svc.SetOnUpdateCallback(func() { refreshCalls++ })
+
+	err := svc.UpdateSettingsAtomically(context.Background(), SettingsAtomicUpdateInput{
+		Settings:         &SystemSettings{RegistrationEnabled: true},
+		SecurityBaseline: SettingSecurityBaseline{},
+	})
+
+	require.EqualError(t, err, "commit failed")
+	require.Zero(t, refreshCalls)
+	require.Nil(t, repo.updates)
+}
+
+func TestSettingService_UpdateSettingsAtomicallySupportsBasicFakeRepository(t *testing.T) {
+	repo := &settingAtomicFallbackRepoStub{values: map[string]string{
+		SettingKeyStepUpEnabled:      "true",
+		SettingKeyRiskControlEnabled: "false",
+	}}
+	svc := NewSettingService(repo, &config.Config{})
+	authorized := false
+
+	err := svc.UpdateSettingsAtomically(context.Background(), SettingsAtomicUpdateInput{
+		Settings: &SystemSettings{
+			RegistrationEnabled: true,
+			StepUpEnabled:       true,
+		},
+		SecurityBaseline: SettingSecurityBaseline{StepUpEnabled: true},
+		Authorize: func(current SettingSecurityBaseline) error {
+			authorized = true
+			require.Equal(t, SettingSecurityBaseline{StepUpEnabled: true}, current)
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, authorized)
+	require.Equal(t, "true", repo.updates[SettingKeyRegistrationEnabled])
+}
+
+func TestSettingService_UpdateSettingsAtomicallyRejectsSecurityDowngradeWithoutAuthorization(t *testing.T) {
+	repo := &settingAtomicFallbackRepoStub{values: map[string]string{
+		SettingKeyStepUpEnabled:      "true",
+		SettingKeyRiskControlEnabled: "true",
+	}}
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.UpdateSettingsAtomically(context.Background(), SettingsAtomicUpdateInput{
+		Settings: &SystemSettings{
+			StepUpEnabled:       false,
+			RiskControlEnabled:  false,
+			RegistrationEnabled: true,
+		},
+		SecurityBaseline: SettingSecurityBaseline{StepUpEnabled: true, RiskControlEnabled: true},
+	})
+
+	require.ErrorIs(t, err, ErrSettingsStrictAuthorizationRequired)
+	require.Nil(t, repo.updates)
+}
+
+func TestSettingService_UpdateSettingsAtomicallyFallbackErrorPaths(t *testing.T) {
+	readErr := errors.New("read failed")
+	writeErr := errors.New("write failed")
+	authErr := errors.New("authorize failed")
+	tests := []struct {
+		name      string
+		repo      *settingAtomicFallbackRepoStub
+		baseline  SettingSecurityBaseline
+		authorize func(SettingSecurityBaseline) error
+		wantErr   error
+	}{
+		{
+			name:    "read error",
+			repo:    &settingAtomicFallbackRepoStub{values: map[string]string{}, getErr: readErr},
+			wantErr: readErr,
+		},
+		{
+			name:     "baseline conflict",
+			repo:     &settingAtomicFallbackRepoStub{values: map[string]string{SettingKeyStepUpEnabled: "true"}},
+			baseline: SettingSecurityBaseline{},
+			wantErr:  ErrSettingsUpdateConflict,
+		},
+		{
+			name:      "authorization error",
+			repo:      &settingAtomicFallbackRepoStub{values: map[string]string{}},
+			authorize: func(SettingSecurityBaseline) error { return authErr },
+			wantErr:   authErr,
+		},
+		{
+			name:    "write error",
+			repo:    &settingAtomicFallbackRepoStub{values: map[string]string{}, setErr: writeErr},
+			wantErr: writeErr,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewSettingService(tt.repo, &config.Config{})
+			err := svc.UpdateSettingsAtomically(context.Background(), SettingsAtomicUpdateInput{
+				Settings:         &SystemSettings{RegistrationEnabled: true},
+				SecurityBaseline: tt.baseline,
+				Authorize:        tt.authorize,
+			})
+			require.ErrorIs(t, err, tt.wantErr)
+			require.Nil(t, tt.repo.updates)
+		})
+	}
+}
+
+func TestBuildPaymentConfigUpdatesValidatesNumericBoundaries(t *testing.T) {
+	zero := 0.0
+	negative := -1.0
+	nan := math.NaN()
+	positiveInf := math.Inf(1)
+	overPercent := 100.01
+	tooPrecise := 1.001
+	tests := []struct {
+		name string
+		req  UpdatePaymentConfigRequest
+	}{
+		{name: "zero multiplier", req: UpdatePaymentConfigRequest{BalanceRechargeMultiplier: &zero}},
+		{name: "nan multiplier", req: UpdatePaymentConfigRequest{BalanceRechargeMultiplier: &nan}},
+		{name: "infinite multiplier", req: UpdatePaymentConfigRequest{BalanceRechargeMultiplier: &positiveInf}},
+		{name: "negative subscription rate", req: UpdatePaymentConfigRequest{SubscriptionUSDToCNYRate: &negative}},
+		{name: "nan subscription rate", req: UpdatePaymentConfigRequest{SubscriptionUSDToCNYRate: &nan}},
+		{name: "infinite subscription rate", req: UpdatePaymentConfigRequest{SubscriptionUSDToCNYRate: &positiveInf}},
+		{name: "negative fee", req: UpdatePaymentConfigRequest{RechargeFeeRate: &negative}},
+		{name: "nan fee", req: UpdatePaymentConfigRequest{RechargeFeeRate: &nan}},
+		{name: "infinite fee", req: UpdatePaymentConfigRequest{RechargeFeeRate: &positiveInf}},
+		{name: "fee over one hundred", req: UpdatePaymentConfigRequest{RechargeFeeRate: &overPercent}},
+		{name: "fee precision", req: UpdatePaymentConfigRequest{RechargeFeeRate: &tooPrecise}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			updates, err := buildPaymentConfigUpdates(tt.req)
+			require.Error(t, err)
+			require.Nil(t, updates)
+		})
+	}
+}
+
+func TestBuildPaymentConfigUpdatesSerializesFullConfiguration(t *testing.T) {
+	enabled := true
+	minAmount := 1.25
+	maxAmount := 500.0
+	dailyLimit := 1000.0
+	timeout := 30
+	maxPending := 5
+	multiplier := 2.5
+	subscriptionRate := 7.123456
+	feeRate := 1.25
+	strategy := "round_robin"
+	prefix := "前缀"
+	suffix := "emoji-🧪"
+
+	updates, err := buildPaymentConfigUpdates(UpdatePaymentConfigRequest{
+		Enabled:                   &enabled,
+		MinAmount:                 &minAmount,
+		MaxAmount:                 &maxAmount,
+		DailyLimit:                &dailyLimit,
+		OrderTimeoutMin:           &timeout,
+		MaxPendingOrders:          &maxPending,
+		EnabledTypes:              []string{"alipay", "wxpay"},
+		BalanceRechargeMultiplier: &multiplier,
+		SubscriptionUSDToCNYRate:  &subscriptionRate,
+		RechargeFeeRate:           &feeRate,
+		LoadBalanceStrategy:       &strategy,
+		ProductNamePrefix:         &prefix,
+		ProductNameSuffix:         &suffix,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "true", updates[SettingPaymentEnabled])
+	require.Equal(t, "1.25", updates[SettingMinRechargeAmount])
+	require.Equal(t, "500.00", updates[SettingMaxRechargeAmount])
+	require.Equal(t, "1000.00", updates[SettingDailyRechargeLimit])
+	require.Equal(t, "30", updates[SettingOrderTimeoutMinutes])
+	require.Equal(t, "5", updates[SettingMaxPendingOrders])
+	require.Equal(t, "alipay,wxpay", updates[SettingEnabledPaymentTypes])
+	require.Equal(t, "2.50", updates[SettingBalanceRechargeMult])
+	require.Equal(t, "7.123456", updates[SettingSubscriptionUSDToCNYRate])
+	require.Equal(t, "1.25", updates[SettingRechargeFeeRate])
+	require.Equal(t, strategy, updates[SettingLoadBalanceStrategy])
+	require.Equal(t, prefix, updates[SettingProductNamePrefix])
+	require.Equal(t, suffix, updates[SettingProductNameSuffix])
+}
+
+func TestBuildOpenAIFastPolicySettingValidatesAndDoesNotMutateInput(t *testing.T) {
+	_, err := buildOpenAIFastPolicySetting(nil)
+	require.Error(t, err)
+
+	invalidRules := []OpenAIFastPolicyRule{
+		{ServiceTier: "turbo", Action: BetaPolicyActionPass, Scope: BetaPolicyScopeAll},
+		{ServiceTier: OpenAIFastTierPriority, Action: "invalid", Scope: BetaPolicyScopeAll},
+		{ServiceTier: OpenAIFastTierPriority, Action: BetaPolicyActionPass, Scope: "invalid"},
+		{ServiceTier: OpenAIFastTierPriority, Action: BetaPolicyActionPass, Scope: BetaPolicyScopeAll, UserIDs: []int64{0}},
+		{ServiceTier: OpenAIFastTierPriority, Action: BetaPolicyActionPass, Scope: BetaPolicyScopeAll, UserIDs: []int64{7, 7}},
+		{ServiceTier: OpenAIFastTierPriority, Action: BetaPolicyActionPass, Scope: BetaPolicyScopeAll, ModelWhitelist: []string{" "}},
+		{ServiceTier: OpenAIFastTierPriority, Action: BetaPolicyActionPass, Scope: BetaPolicyScopeAll, FallbackAction: "invalid"},
+	}
+	for i := range invalidRules {
+		_, err := buildOpenAIFastPolicySetting(&OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{invalidRules[i]}})
+		require.Error(t, err, "rule case %d", i)
+	}
+
+	input := &OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{{
+		ServiceTier:    " ",
+		Action:         BetaPolicyActionPass,
+		Scope:          BetaPolicyScopeAll,
+		UserIDs:        []int64{7},
+		ModelWhitelist: []string{"  gpt-5.*  "},
+		FallbackAction: BetaPolicyActionBlock,
+	}}}
+	value, err := buildOpenAIFastPolicySetting(input)
+	require.NoError(t, err)
+	require.Equal(t, " ", input.Rules[0].ServiceTier)
+	require.Equal(t, "  gpt-5.*  ", input.Rules[0].ModelWhitelist[0])
+	require.JSONEq(t, `{"rules":[{"service_tier":"all","action":"pass","scope":"all","user_ids":[7],"model_whitelist":["gpt-5.*"],"fallback_action":"block"}]}`, value)
+}
+
+func TestSettingService_UpdateSettingsAtomicallyValidatesEveryGroupBeforeWrite(t *testing.T) {
+	tests := []struct {
+		name  string
+		input SettingsAtomicUpdateInput
+	}{
+		{
+			name: "invalid fast policy",
+			input: SettingsAtomicUpdateInput{
+				Settings: &SystemSettings{RegistrationEnabled: true},
+				OpenAIFastPolicySettings: &OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{{
+					ServiceTier: OpenAIFastTierPriority,
+					Action:      "invalid",
+					Scope:       BetaPolicyScopeAll,
+				}}},
+			},
+		},
+		{
+			name: "invalid payment config",
+			input: func() SettingsAtomicUpdateInput {
+				invalid := 0.0
+				return SettingsAtomicUpdateInput{
+					Settings:      &SystemSettings{RegistrationEnabled: true},
+					PaymentConfig: &UpdatePaymentConfigRequest{BalanceRechargeMultiplier: &invalid},
+				}
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &settingUpdateRepoStub{}
+			svc := NewSettingService(repo, &config.Config{})
+
+			err := svc.UpdateSettingsAtomically(context.Background(), tt.input)
+
+			require.Error(t, err)
+			require.Zero(t, repo.atomicCalls)
+			require.Nil(t, repo.updates, "no setting group may be written before every group validates")
+		})
+	}
+}
+
+func TestSettingService_PasskeySwitchPersistsAndDefaultsToConfigured(t *testing.T) {
+	cfg := &config.Config{WebAuthn: config.WebAuthnConfig{
+		Enabled:   true,
+		RPID:      "sub3.nebula-spaces.com",
+		RPOrigins: []string{"https://sub3.nebula-spaces.com"},
+	}}
+	runtimeRepo := &forwardedIPMigrationRepoStub{values: map[string]string{}}
+	runtimeService := NewSettingService(runtimeRepo, cfg)
+
+	enabled, err := runtimeService.PasskeyEnabled(context.Background())
+	require.NoError(t, err)
+	require.True(t, enabled)
+
+	updateRepo := &settingUpdateRepoStub{}
+	updateService := NewSettingService(updateRepo, cfg)
+	require.NoError(t, updateService.UpdateSettings(context.Background(), &SystemSettings{
+		PasskeyEnabled: false,
+	}))
+	require.Equal(t, "false", updateRepo.updates[SettingKeyPasskeyEnabled])
+
+	runtimeRepo.values[SettingKeyPasskeyEnabled] = "false"
+	enabled, err = runtimeService.PasskeyEnabled(context.Background())
+	require.NoError(t, err)
+	require.False(t, enabled)
+	publicSettings, err := runtimeService.GetPublicSettings(context.Background())
+	require.NoError(t, err)
+	require.False(t, publicSettings.PasskeyEnabled)
+}
+
+// 移除 WebAuthn 配置后，残留的 passkey_enabled="true" 不得再让 GetAllSettings
+// 报告开关开启：admin 更新门控以此为准，一旦误报为 true 会拒绝所有设置保存，
+// 而此时前端开关处于禁用态，管理员无法在 UI 里自救。
+func TestSettingService_StalePasskeyTrueWithoutConfigReportsDisabled(t *testing.T) {
+	repo := &settingGetAllRepoStub{values: map[string]string{
+		SettingKeyPasskeyEnabled: "true",
+	}}
+	service := NewSettingService(repo, &config.Config{})
+
+	settings, err := service.GetAllSettings(context.Background())
+	require.NoError(t, err)
+	require.False(t, settings.PasskeyEnabled)
 }
