@@ -196,7 +196,7 @@ func TestGrokBillingProbeUsesDurableIdentityAfterTokenRefresh(t *testing.T) {
 	require.Contains(t, repo.lastExpected.CredentialsJSON, "refreshed-token")
 	require.NotContains(t, repo.lastExpected.CredentialsJSON, "expired-token")
 	require.Equal(t, "stable-subject", repo.lastExpected.OAuthSubject)
-	require.Equal(t, "https://cli-chat-proxy.grok.com", repo.lastExpected.NormalizedBaseURL)
+	require.Equal(t, "https://cli-chat-proxy.grok.com/v1", repo.lastExpected.NormalizedBaseURL)
 	require.NotEmpty(t, repo.lastExpected.TokenHash)
 	require.NotEmpty(t, repo.lastExpected.HeaderOverrideFingerprint)
 	require.Zero(t, repo.updateExtraCalls)
