@@ -65,6 +65,84 @@ func TestGrokMediaGenerationEligibility(t *testing.T) {
 	}
 }
 
+func TestGrokMediaEligibilityAuthoritativeBillingOverridesUnverifiedJWTTier(t *testing.T) {
+	usagePercent := 12.5
+	tests := []struct {
+		name         string
+		jwtTier      int
+		storedTier   string
+		billing      *xai.BillingSummary
+		wantEligible bool
+		wantReason   string
+	}{
+		{
+			name:       "paid billing overrides free JWT hint",
+			jwtTier:    0,
+			storedTier: "free",
+			billing: &xai.BillingSummary{
+				Plan:             "SuperGrok",
+				UsagePercent:     &usagePercent,
+				StatusCode:       http.StatusOK,
+				WeeklyStatusCode: http.StatusOK,
+			},
+			wantEligible: true,
+			wantReason:   "eligible",
+		},
+		{
+			name:       "free billing overrides paid JWT hint",
+			jwtTier:    5,
+			storedTier: "supergrok_heavy",
+			billing: &xai.BillingSummary{
+				Plan:              "free",
+				StatusCode:        http.StatusOK,
+				MonthlyStatusCode: http.StatusOK,
+				MonthlyUpdatedAt:  "2026-08-13T00:00:00Z",
+			},
+			wantEligible: false,
+			wantReason:   "billing_free_tier",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account := &Account{
+				Platform: PlatformGrok,
+				Type:     AccountTypeOAuth,
+				Credentials: map[string]any{
+					"access_token":      makeGrokOAuthJWT(map[string]any{"tier": tt.jwtTier}),
+					"subscription_tier": tt.storedTier,
+				},
+				Extra: map[string]any{grokBillingExtraKey: tt.billing},
+			}
+
+			eligible, reason := account.GrokMediaGenerationEligibility()
+
+			require.Equal(t, tt.wantEligible, eligible)
+			require.Equal(t, tt.wantReason, reason)
+		})
+	}
+}
+
+func TestGrokMediaEligibilityPartialPaidBillingFailsClosed(t *testing.T) {
+	usagePercent := 12.5
+	account := &Account{
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{grokBillingExtraKey: &xai.BillingSummary{
+			Plan:          "SuperGrok",
+			UsagePercent:  &usagePercent,
+			StatusCode:    http.StatusBadGateway,
+			Partial:       true,
+			FailedWindows: []string{"weekly", "monthly"},
+		}},
+	}
+
+	eligible, reason := account.GrokMediaGenerationEligibility()
+
+	require.False(t, eligible)
+	require.Equal(t, "billing_inconclusive", reason)
+}
+
 func TestGrokMediaCapabilityKeepsOnlyUnobservedOAuthAsProbeCandidate(t *testing.T) {
 	unobserved := &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}
 	eligible, reason := unobserved.GrokMediaGenerationEligibility()

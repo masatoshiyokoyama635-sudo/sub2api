@@ -249,6 +249,84 @@ func TestAdminService_ListGroups_PassesSortParams(t *testing.T) {
 	}, repo.listWithFiltersParams)
 }
 
+func TestAdminService_CreateGroup_LongContextPricingDefault(t *testing.T) {
+	explicitFalse := false
+	explicitTrue := true
+	tests := []struct {
+		name  string
+		value *bool
+		want  bool
+	}{
+		{name: "omitted defaults on", want: true},
+		{name: "explicit false stays off", value: &explicitFalse, want: false},
+		{name: "explicit true stays on", value: &explicitTrue, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &groupRepoStubForAdmin{}
+			svc := &adminServiceImpl{groupRepo: repo}
+
+			group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+				Name:                      "long-context-default",
+				Platform:                  PlatformAnthropic,
+				RateMultiplier:            1,
+				LongContextPricingEnabled: tt.value,
+			})
+
+			require.NoError(t, err)
+			require.NotNil(t, group)
+			require.NotNil(t, repo.created)
+			require.Equal(t, tt.want, group.LongContextPricingEnabled)
+			require.Equal(t, tt.want, repo.created.LongContextPricingEnabled)
+		})
+	}
+}
+
+func TestAdminService_CreateGroup_RejectsInvalidModelPricing(t *testing.T) {
+	price := 1e-6
+	tests := []struct {
+		name    string
+		pricing []ChannelModelPricing
+	}{
+		{
+			name: "invalid billing mode",
+			pricing: []ChannelModelPricing{{
+				Models: []string{"claude-sonnet"}, BillingMode: BillingMode("tokne"), InputPrice: &price,
+			}},
+		},
+		{
+			name: "foreign platform",
+			pricing: []ChannelModelPricing{{
+				Platform: PlatformOpenAI, Models: []string{"claude-sonnet"}, BillingMode: BillingModeToken, InputPrice: &price,
+			}},
+		},
+		{
+			name: "blank model",
+			pricing: []ChannelModelPricing{{
+				Models: []string{"   "}, BillingMode: BillingModeToken, InputPrice: &price,
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &groupRepoStubForAdmin{}
+			svc := &adminServiceImpl{groupRepo: repo}
+
+			_, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+				Name:           "invalid-pricing",
+				Platform:       PlatformAnthropic,
+				RateMultiplier: 1,
+				ModelPricing:   tt.pricing,
+			})
+
+			require.Error(t, err)
+			require.Nil(t, repo.created)
+		})
+	}
+}
+
 // TestAdminService_CreateGroup_WithImagePricing 测试创建分组时 ImagePrice 字段正确传递
 func TestAdminService_CreateGroup_WithImagePricing(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}

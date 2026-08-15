@@ -1557,7 +1557,7 @@ func (a *Account) GrokMediaGenerationEligibility() (bool, string) {
 	if isKnownGrokFreeAccount(a) {
 		return false, "billing_free_tier"
 	}
-	if !grokBillingHasAuthoritativeQuota(billing) {
+	if billing.Partial || len(billing.FailedWindows) > 0 || !grokBillingHasAuthoritativeQuota(billing) {
 		return false, "billing_inconclusive"
 	}
 	return true, "eligible"
