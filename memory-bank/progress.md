@@ -285,6 +285,16 @@
 - [x] GHCR 已发布不可变标签 `chat-image-tools`、`chat-image-tools-b3b28ff` 和 `chat-image-tools-b3b28ff2f5f8e865f66f09cfa7609a99df24bfa9`；三者均指向 manifest digest `sha256:431d89555d653e96eb0cab7c3375ccc79485955ea23ad14bb642225dd3731103`。生产部署仍需单独执行。
 - [ ] 部署前按迁移 220 说明导出相关 `groups` 视频定价并暂停管理端写入；启动后核对 `groups_video_price_backup_220`，并确认 Redis 健康后再观察 Grok 异步视频计费日志。
 
+## v0.1.178 自定义候选（2026-08-19，本地验证）
+- [x] 在唯一工作目录 `/Users/hhzz/Developer/sub2api` 从自定义 v0.1.177 提交 `218796a7d32023419ced9cfa1c47cb98d3fe4d97` 创建候选分支 `merge/v0.1.178-chat-image-tools`，合入官方 annotated tag `v0.1.178`（tag object `15290e66c66801a7ce435a6d24b178ee9486f284`，peeled commit `e0c48a19ed794a565e3858662520afe0a1f9f0ba`）；只合正式 tag，未带入上游 `main` 的后续未发布提交。
+- [x] 解决 `admin_group.go`、`api_key_auth_cache_impl.go`、`api_key_auth_cache_pricing_test.go` 三处冲突：平台闭集校验与 BillingMode 采用上游 v0.1.178 规则，认证快照继续保留自定义 Long Context/模型定价字段并对含 TimePricing periods 的定价做深拷贝。版本文件与 Wire 嵌入断言同步为 `0.1.178`。
+- [x] 保留 AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、Strict Step-up、原子设置、Prompt Audit、安全 shutdown、自定义 Docker/GHCR workflow；同时接入 Kimi/智谱/DeepSeek、渠道监控配额模式、渠道模型谷峰定价、Codex 指纹迁移、OpenAI Team 联动熔断和上游 v0.1.178 修复。
+- [x] 修复合并后 OpenAI partial usage 链路：Responses native/passthrough/Grok 及 Chat/Messages buffered/streaming 只在已观测 token/图片/搜索计量且错误非 failover 时返回 `result+err`；所有 `UpstreamFailoverError` 始终保持 `result=nil`，避免换号成功后双扣。cyber 有 partial 时统一走 `RecordUsage(CyberBlocked=true)`，无 partial 才写 fallback 用量；Chat 补齐 request payload hash，Responses/Chat/Messages 及 raw-Chat fallback 补齐客户端断开归因，避免污染账号调度健康度。
+- [x] 最终后端门禁：Go 1.26.6 `go test -tags unit ./... -run '^$' -count=1` 全包编译通过，`go vet -tags unit ./...` 通过；partial/cyber/disconnect focused service `1.075s`、handler `0.933s` 全绿。合并后完整 unit 在上述边界补丁前已全包通过（service `178.967s`），边界补丁后完整重跑在沙箱内仅因 `httptest/miniredis` 禁止监听回环端口而中止，等待沙箱外重跑或 CI 复验。
+- [x] 前端最终验证通过：typecheck、ESLint、Vitest `233/233` files、`1673/1673` tests、production build；最终边界补丁只改 Go。Integration 除外部 `tls.peet.ws` 本机证书链不受信任导致 `TestJA3Fingerprint` 与 `TestAllProfiles/linux_x64_node_v22171` 失败外，其余包通过。
+- [x] 回滚制品位于 `.cache/update-v0.1.178/`：原始 handler SHA-256 为 `5c765b2aeda85093bf3241e8eb081c0377a397c715ec8b4dc68e2c627a1f464f`，修改版为 `ac192e5bce74a727b0c9593e50bce4d29a2e121e5943ab6cc8913fb95e5ff3a8`；`ROLLBACK.sh` 已在独立副本上执行并恢复到原始哈希，候选文件保持修改状态。
+- [ ] 候选仍处于未完成 merge 状态；完成最终 unit/CI 后需创建 merge commit、推送 fork `feature/chat-image-tools`，等待 Custom Docker Image、CI、Security Scan，并记录完整 SHA 镜像标签与 manifest digest。生产 VPS 由用户随后手动 SSH 更新，本环境不直接部署。
+
 ## 部署/回滚记录
 
 ### 使用自定义镜像部署

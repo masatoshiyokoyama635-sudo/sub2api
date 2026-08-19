@@ -992,7 +992,13 @@ func normalizeGroupModelPricing(platform string, pricing []ChannelModelPricing) 
 		out[i] = pricing[i].Clone()
 		out[i].ID = 0
 		out[i].ChannelID = 0
-		entryPlatform := NormalizeGroupPlatform(out[i].Platform)
+		if out[i].TimePricing != nil && len(out[i].TimePricing.Periods) > 0 {
+			return nil, infraerrors.BadRequest(
+				"GROUP_MODEL_TIME_PRICING_UNSUPPORTED",
+				"group model pricing does not support time pricing",
+			)
+		}
+		entryPlatform := strings.TrimSpace(out[i].Platform)
 		if entryPlatform == "" {
 			entryPlatform = platform
 		}

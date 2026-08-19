@@ -25,7 +25,7 @@ import (
 )
 
 func TestEmbeddedVersionMatchesRelease(t *testing.T) {
-	require.Equal(t, "0.1.177", strings.TrimSpace(embeddedVersion))
+	require.Equal(t, "0.1.178", strings.TrimSpace(embeddedVersion))
 }
 
 func TestProvideServiceBuildInfo(t *testing.T) {
@@ -91,6 +91,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		schedulerSnapshotSvc,
 		tokenRefreshSvc,
 		accountExpirySvc,
+		nil, // cnProviderBalanceCheck
 		codexVersionSyncSvc,
 		proxyExpirySvc,
 		subscriptionExpirySvc,
@@ -192,6 +193,7 @@ func newCleanupWithInfrastructure(
 		service.NewSchedulerSnapshotService(nil, nil, nil, nil, cfg),
 		tokenRefreshSvc,
 		service.NewAccountExpiryService(nil, time.Second),
+		nil, // cnProviderBalanceCheck
 		service.NewOpenAICodexVersionSyncService(nil, nil, nil, time.Second),
 		service.NewProxyExpiryService(nil, time.Second),
 		service.NewSubscriptionExpiryService(nil, time.Second),

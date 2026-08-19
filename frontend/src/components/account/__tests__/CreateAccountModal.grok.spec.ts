@@ -12,9 +12,13 @@ describe('CreateAccountModal Grok account types', () => {
     expect(source).toContain('data-testid="grok-account-type-api-key"')
     expect(source).toContain("@click=\"accountCategory = 'apikey'\"")
     expect(source).toContain("newPlatform === 'grok'")
-    expect(source).toContain("? 'https://api.x.ai/v1'")
     expect(source).toContain("form.platform === 'grok'")
-    expect(source).toContain("? 'xai-...'")
+    expect(source).toMatch(
+      /const apiKeyBaseUrlPlaceholder = computed[\s\S]*case 'grok':\s*return 'https:\/\/api\.x\.ai\/v1'/
+    )
+    expect(source).toMatch(
+      /const apiKeyValuePlaceholder = computed[\s\S]*case 'grok':\s*return 'xai-\.\.\.'/
+    )
   })
 
   it('exposes custom upstream URL and header override for the OAuth create flow', () => {

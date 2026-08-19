@@ -465,6 +465,7 @@ func TestOpenAIResponseFlush_ClientDisconnectStillDrainsUsage(t *testing.T) {
 	require.Equal(t, 7, result.usage.InputTokens)
 	require.Equal(t, 5, result.usage.OutputTokens)
 	require.Equal(t, 2, result.usage.CacheReadInputTokens)
+	require.True(t, result.clientDisconnect)
 	gotBody, flushes := recorder.snapshot()
 	require.Equal(t, first, gotBody)
 	require.Len(t, flushes, 1)

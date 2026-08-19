@@ -41,6 +41,29 @@ func TestOpenAIRecordUsageInputsCarryQuotaPlatform(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatRecordUsageInputCarriesRequestPayloadHash(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, filepath.Join(".", "openai_chat_completions.go"), nil, 0)
+	require.NoError(t, err)
+
+	count := 0
+	var missing []token.Position
+	ast.Inspect(file, func(node ast.Node) bool {
+		literal, ok := node.(*ast.CompositeLit)
+		if !ok || !isOpenAIRecordUsageInputLiteral(literal.Type) {
+			return true
+		}
+		count++
+		if !compositeLiteralHasKey(literal, "RequestPayloadHash") {
+			missing = append(missing, fset.Position(literal.Lbrace))
+		}
+		return true
+	})
+
+	require.Positive(t, count, "expected an OpenAIRecordUsageInput in Chat Completions handler")
+	require.Empty(t, missing, "Chat usage must bind billing deduplication to the request payload")
+}
+
 func isOpenAIRecordUsageInputLiteral(expr ast.Expr) bool {
 	selector, ok := expr.(*ast.SelectorExpr)
 	if !ok {

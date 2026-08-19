@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -9,6 +10,22 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestShouldRecordCyberPolicyFallback(t *testing.T) {
+	forwardErr := errors.New("forward failed")
+	require.True(t, shouldRecordCyberPolicyFallback(nil, forwardErr))
+	require.False(t, shouldRecordCyberPolicyFallback(&service.OpenAIForwardResult{}, forwardErr), "partial result must use normal RecordUsage")
+	require.False(t, shouldRecordCyberPolicyFallback(nil, nil))
+}
+
+func TestIsOpenAIPartialClientDisconnect(t *testing.T) {
+	forwardErr := errors.New("stream drain failed")
+	disconnected := &service.OpenAIForwardResult{ClientDisconnect: true}
+	require.False(t, isOpenAIPartialClientDisconnect(nil, forwardErr))
+	require.False(t, isOpenAIPartialClientDisconnect(&service.OpenAIForwardResult{}, forwardErr))
+	require.True(t, isOpenAIPartialClientDisconnect(disconnected, forwardErr))
+	require.False(t, isOpenAIPartialClientDisconnect(disconnected, &service.UpstreamFailoverError{}))
+}
 
 // newTestGinContext builds a bare gin.Context backed by an httptest recorder.
 func newTestGinContext() *gin.Context {

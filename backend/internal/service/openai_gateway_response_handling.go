@@ -26,9 +26,33 @@ type openaiStreamingResult struct {
 	usage            *OpenAIUsage
 	firstTokenMs     *int
 	responseID       string
+	clientDisconnect bool
 	imageCount       int
 	imageOutputSizes []string
 	searchCount      int
+}
+
+func hasObservedOpenAIBilling(usage *OpenAIUsage, imageCount, searchCount int) bool {
+	if imageCount > 0 || searchCount > 0 {
+		return true
+	}
+	if usage == nil {
+		return false
+	}
+	return usage.InputTokens > 0 || usage.ImageInputTokens > 0 ||
+		usage.OutputTokens > 0 || usage.CacheCreationInputTokens > 0 ||
+		usage.CacheReadInputTokens > 0 || usage.ImageOutputTokens > 0
+}
+
+// shouldReturnOpenAIPartialResult keeps billable observations on non-failover
+// errors. A failover attempt must remain result=nil or a later successful
+// account would cause the same client request to be charged twice.
+func shouldReturnOpenAIPartialResult(usage *OpenAIUsage, imageCount, searchCount int, err error) bool {
+	if err == nil || !hasObservedOpenAIBilling(usage, imageCount, searchCount) {
+		return false
+	}
+	var failoverErr *UpstreamFailoverError
+	return !errors.As(err, &failoverErr)
 }
 
 type openaiNonStreamingResult struct {
@@ -332,6 +356,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			usage:            usage,
 			firstTokenMs:     firstTokenMs,
 			responseID:       responseID,
+			clientDisconnect: clientDisconnected,
 			imageCount:       imageCounter.Count(),
 			imageOutputSizes: imageCounter.Sizes(),
 			searchCount:      searchCounter,
