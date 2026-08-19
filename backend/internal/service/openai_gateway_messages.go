@@ -475,12 +475,13 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// cyber_policy：标记已设、error 已按 Anthropic 格式发给客户端。可信的
 	// partial result 交给 handler 走正常 RecordUsage；没有计量观测时才由 handler
 	// 写 CyberPolicyUsageLog fallback。
-	if GetOpsCyberPolicy(c) != nil {
+	cyberPolicyMarked := GetOpsCyberPolicy(c) != nil
+	if cyberPolicyMarked {
 		if handleErr == nil {
 			handleErr = errOpenAICyberPolicyForwarded
 		}
 	}
-	if handleErr != nil && (result == nil || !shouldReturnOpenAIPartialResult(&result.Usage, result.ImageCount, result.SearchCount, handleErr)) {
+	if handleErr != nil && !shouldReturnOpenAIMessagesResult(result, handleErr, cyberPolicyMarked) {
 		return nil, handleErr
 	}
 
@@ -513,6 +514,23 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	return result, handleErr
+}
+
+// shouldReturnOpenAIMessagesResult preserves zero-usage state needed to
+// distinguish partial output and client disconnects. Billable failover results
+// remain suppressed so a later successful account cannot charge the same turn
+// twice; unmetered cyber failures stay nil so the handler writes one fallback
+// usage row.
+func shouldReturnOpenAIMessagesResult(result *OpenAIForwardResult, err error, cyberPolicyMarked bool) bool {
+	if result == nil {
+		return false
+	}
+	observedBilling := hasObservedOpenAIBilling(&result.Usage, result.ImageCount, result.SearchCount)
+	if cyberPolicyMarked && !observedBilling {
+		return false
+	}
+	var failoverErr *UpstreamFailoverError
+	return !observedBilling || !errors.As(err, &failoverErr)
 }
 
 func ensureCodexOAuthInstructionsField(reqBody map[string]any) {
@@ -1044,7 +1062,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	// finalizeStream sends any remaining Anthropic events and returns the result.
 	finalizeStream := func() (*OpenAIForwardResult, error) {
 		if streamFailoverErr != nil {
-			return nil, streamFailoverErr
+			return resultWithUsage(), streamFailoverErr
 		}
 		if streamNonFailoverErr != nil {
 			return resultWithUsage(), streamNonFailoverErr
