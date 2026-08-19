@@ -285,15 +285,15 @@
 - [x] GHCR 已发布不可变标签 `chat-image-tools`、`chat-image-tools-b3b28ff` 和 `chat-image-tools-b3b28ff2f5f8e865f66f09cfa7609a99df24bfa9`；三者均指向 manifest digest `sha256:431d89555d653e96eb0cab7c3375ccc79485955ea23ad14bb642225dd3731103`。生产部署仍需单独执行。
 - [ ] 部署前按迁移 220 说明导出相关 `groups` 视频定价并暂停管理端写入；启动后核对 `groups_video_price_backup_220`，并确认 Redis 健康后再观察 Grok 异步视频计费日志。
 
-## v0.1.178 自定义候选（2026-08-19，本地验证）
+## v0.1.178 自定义发布（2026-08-19，Actions 已发布，待 VPS 手动部署）
 - [x] 在唯一工作目录 `/Users/hhzz/Developer/sub2api` 从自定义 v0.1.177 提交 `218796a7d32023419ced9cfa1c47cb98d3fe4d97` 创建候选分支 `merge/v0.1.178-chat-image-tools`，合入官方 annotated tag `v0.1.178`（tag object `15290e66c66801a7ce435a6d24b178ee9486f284`，peeled commit `e0c48a19ed794a565e3858662520afe0a1f9f0ba`）；只合正式 tag，未带入上游 `main` 的后续未发布提交。
 - [x] 解决 `admin_group.go`、`api_key_auth_cache_impl.go`、`api_key_auth_cache_pricing_test.go` 三处冲突：平台闭集校验与 BillingMode 采用上游 v0.1.178 规则，认证快照继续保留自定义 Long Context/模型定价字段并对含 TimePricing periods 的定价做深拷贝。版本文件与 Wire 嵌入断言同步为 `0.1.178`。
 - [x] 保留 AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、Strict Step-up、原子设置、Prompt Audit、安全 shutdown、自定义 Docker/GHCR workflow；同时接入 Kimi/智谱/DeepSeek、渠道监控配额模式、渠道模型谷峰定价、Codex 指纹迁移、OpenAI Team 联动熔断和上游 v0.1.178 修复。
-- [x] 修复合并后 OpenAI partial usage 链路：Responses native/passthrough/Grok 及 Chat/Messages buffered/streaming 只在已观测 token/图片/搜索计量且错误非 failover 时返回 `result+err`；所有 `UpstreamFailoverError` 始终保持 `result=nil`，避免换号成功后双扣。cyber 有 partial 时统一走 `RecordUsage(CyberBlocked=true)`，无 partial 才写 fallback 用量；Chat 补齐 request payload hash，Responses/Chat/Messages 及 raw-Chat fallback 补齐客户端断开归因，避免污染账号调度健康度。
-- [x] 最终后端门禁：Go 1.26.6 `go test -tags unit ./... -run '^$' -count=1` 全包编译通过，`go vet -tags unit ./...` 通过；partial/cyber/disconnect focused service `1.075s`、handler `0.933s` 全绿。合并后完整 unit 在上述边界补丁前已全包通过（service `178.967s`），边界补丁后完整重跑在沙箱内仅因 `httptest/miniredis` 禁止监听回环端口而中止，等待沙箱外重跑或 CI 复验。
+- [x] 修复合并后 OpenAI partial usage 链路：Responses native/passthrough/Grok 及 Chat/Messages buffered/streaming 保留已观测计量的非 failover `result+err`；有计量的 `UpstreamFailoverError` 抑制 result，避免换号成功后双扣；零计量但携带 partial output、client disconnect 或 missing-terminal 状态的 compat result 保留给 handler 判定。cyber 有计量时统一走 `RecordUsage(CyberBlocked=true)`，无计量时保持 `result=nil` 并只写一条 fallback 用量；Chat 补齐 request payload hash，Responses/Chat/Messages 及 raw-Chat fallback 补齐客户端断开归因，避免污染账号调度健康度。
+- [x] 最终后端门禁：Go 1.26.6 `go test -tags unit ./... -run '^$' -count=1` 全包编译、`go vet -tags unit ./...` 及 compat focused regression 通过；父提交上的两个 Chat streaming result 失败已由相同测试命令复现，并在最终代码提交上通过。GitHub CI run `32218065769` 的 unit、integration、frontend、shell、golangci-lint 全绿，Security Scan run `32218065741` 的 backend/frontend security 全绿。
 - [x] 前端最终验证通过：typecheck、ESLint、Vitest `233/233` files、`1673/1673` tests、production build；最终边界补丁只改 Go。Integration 除外部 `tls.peet.ws` 本机证书链不受信任导致 `TestJA3Fingerprint` 与 `TestAllProfiles/linux_x64_node_v22171` 失败外，其余包通过。
-- [x] 回滚制品位于 `.cache/update-v0.1.178/`：原始 handler SHA-256 为 `5c765b2aeda85093bf3241e8eb081c0377a397c715ec8b4dc68e2c627a1f464f`，修改版为 `ac192e5bce74a727b0c9593e50bce4d29a2e121e5943ab6cc8913fb95e5ff3a8`；`ROLLBACK.sh` 已在独立副本上执行并恢复到原始哈希，候选文件保持修改状态。
-- [ ] 候选仍处于未完成 merge 状态；完成最终 unit/CI 后需创建 merge commit、推送 fork `feature/chat-image-tools`，等待 Custom Docker Image、CI、Security Scan，并记录完整 SHA 镜像标签与 manifest digest。生产 VPS 由用户随后手动 SSH 更新，本环境不直接部署。
+- [x] 回滚制品位于 `.cache/update-v0.1.178/`：共享 result 判定原始文件 SHA-256 为 `0d12a3bfe837efe38bc96743080cc4dd4f1df0eb942f21b23a3c558b447b20b7`，修改版为 `01d0fb49f3deeab603ba795beb0241176ccfcb364816d89d2adb069d27cb7ba2`；`ROLLBACK.sh` 已在独立副本上执行并恢复到原始哈希，当前源码与 `MODIFIED_FILE` 保持修改状态。
+- [x] 最终代码提交 `65c74ca395e6e337e9baa413f4727e8ed3cb16ed` 已推送到 fork `feature/chat-image-tools`。Custom Docker Image run `32218065758` 的 test/build 全绿；稳定、短 SHA、完整 SHA 三个标签均指向 OCI index digest `sha256:94f8cd3a5f34783d22d66e5aa338cfbd9be0ca00e7c77c642f014e4d55ce1b63`，包含 linux/amd64 child `sha256:d30d786445c9b30a4ee034398962a21800b7534db7cc5a70e414f2b0ae3a1e5c` 与 linux/arm64 child `sha256:5aacae1f31995e5e9e53b9f78727b204138992f70cef09fb95fe27272564ad8b`，两边 revision label 均为完整代码 SHA。生产 VPS 未访问，等待用户手动 SSH 固定完整 SHA 标签和 digest。
 
 ## 部署/回滚记录
 

@@ -264,6 +264,13 @@ sub2api/
 - merge commit `b3b28ff2f5f8e865f66f09cfa7609a99df24bfa9` 已推送到 fork `feature/chat-image-tools`。Custom Docker Image run `31310903130`（test `93238472413`、build `93239327957`）全部成功，构建参数为 `VERSION=0.1.173-zz`、`BUILD_TYPE=custom`，平台为 linux/amd64、linux/arm64。
 - GHCR 三个标签 `chat-image-tools`、`chat-image-tools-b3b28ff`、`chat-image-tools-b3b28ff2f5f8e865f66f09cfa7609a99df24bfa9` 均指向 OCI manifest digest `sha256:431d89555d653e96eb0cab7c3375ccc79485955ea23ad14bb642225dd3731103`；生产部署继续固定该 digest。
 
+## v0.1.178 合并架构边界（2026-08-19）
+- 当前发布从自定义 v0.1.177 提交 `218796a7d32023419ced9cfa1c47cb98d3fe4d97` 创建回滚分支 `backup/pre-v178-218796a7d` 和候选分支 `merge/v0.1.178-chat-image-tools`，合入官方 annotated tag object `15290e66c66801a7ce435a6d24b178ee9486f284`（peeled commit `e0c48a19ed794a565e3858662520afe0a1f9f0ba`）；版本与嵌入断言统一为 `0.1.178`。
+- 官方 v0.1.178 引入 Kimi/智谱/DeepSeek 平台支持、渠道监控配额模式、渠道模型谷峰定价、Codex 指纹迁移与 OpenAI Team 联动熔断；新增 migrations `224_user_platform_quotas_add_cn_providers.sql`、两个 `225_*.sql` 和 `226_channel_monitor_quota_mode.sql`，生产更新前必须先生成可验证的 PostgreSQL dump。
+- 合并继续保留 AI Chat、AI Images、Canvas 外链、默认 CNY/动态币种、Strict Step-up、原子设置、Prompt Audit、安全 shutdown、自定义 updater 和 GHCR workflow。认证缓存的嵌套 TimePricing periods 必须深拷贝，避免并发读写共享 slice。
+- OpenAI compat 结果裁决同时区分计量、failover、cyber 与流状态：有计量 failover 不返回 result，零计量 cyber 交给 exactly-once fallback；零计量 partial output、client disconnect 和 missing-terminal 状态 result 则保留给 handler，Chat 与 Messages 共用同一 helper。
+- 最终代码提交 `65c74ca395e6e337e9baa413f4727e8ed3cb16ed` 的 CI、Security 和 Custom Docker 共 8 个 job 全绿。GHCR 完整 SHA 标签固定 OCI index `sha256:94f8cd3a5f34783d22d66e5aa338cfbd9be0ca00e7c77c642f014e4d55ce1b63`，包含已核验 revision 的 linux/amd64 与 linux/arm64；生产只替换 `services.sub2api.image`，VPS 仍由用户手动 SSH 更新。
+
 ## 安全状态（2026-04-24 审查）
 
 ### 已加固
