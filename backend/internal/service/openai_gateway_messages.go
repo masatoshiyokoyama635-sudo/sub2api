@@ -481,7 +481,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			handleErr = errOpenAICyberPolicyForwarded
 		}
 	}
-	if handleErr != nil && !shouldReturnOpenAIMessagesResult(result, handleErr, cyberPolicyMarked) {
+	if handleErr != nil && !shouldReturnOpenAICompatResult(result, handleErr, cyberPolicyMarked) {
 		return nil, handleErr
 	}
 
@@ -514,23 +514,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	return result, handleErr
-}
-
-// shouldReturnOpenAIMessagesResult preserves zero-usage state needed to
-// distinguish partial output and client disconnects. Billable failover results
-// remain suppressed so a later successful account cannot charge the same turn
-// twice; unmetered cyber failures stay nil so the handler writes one fallback
-// usage row.
-func shouldReturnOpenAIMessagesResult(result *OpenAIForwardResult, err error, cyberPolicyMarked bool) bool {
-	if result == nil {
-		return false
-	}
-	observedBilling := hasObservedOpenAIBilling(&result.Usage, result.ImageCount, result.SearchCount)
-	if cyberPolicyMarked && !observedBilling {
-		return false
-	}
-	var failoverErr *UpstreamFailoverError
-	return !observedBilling || !errors.As(err, &failoverErr)
 }
 
 func ensureCodexOAuthInstructionsField(reqBody map[string]any) {

@@ -55,6 +55,23 @@ func shouldReturnOpenAIPartialResult(usage *OpenAIUsage, imageCount, searchCount
 	return !errors.As(err, &failoverErr)
 }
 
+// shouldReturnOpenAICompatResult preserves zero-usage state needed to
+// distinguish partial output and client disconnects. Billable failover results
+// remain suppressed so a later successful account cannot charge the same turn
+// twice; unmetered cyber failures stay nil so the handler writes one fallback
+// usage row.
+func shouldReturnOpenAICompatResult(result *OpenAIForwardResult, err error, cyberPolicyMarked bool) bool {
+	if result == nil {
+		return false
+	}
+	observedBilling := hasObservedOpenAIBilling(&result.Usage, result.ImageCount, result.SearchCount)
+	if cyberPolicyMarked && !observedBilling {
+		return false
+	}
+	var failoverErr *UpstreamFailoverError
+	return !observedBilling || !errors.As(err, &failoverErr)
+}
+
 type openaiNonStreamingResult struct {
 	*OpenAIUsage
 	usage            *OpenAIUsage

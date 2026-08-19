@@ -323,12 +323,13 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 
 	// cyber_policy：标记已设、error 已按 Chat Completions 格式发给客户端。可信的
 	// partial result 交给 handler 走正常 RecordUsage；没有计量观测时才走 fallback。
-	if GetOpsCyberPolicy(c) != nil {
+	cyberPolicyMarked := GetOpsCyberPolicy(c) != nil
+	if cyberPolicyMarked {
 		if handleErr == nil {
 			handleErr = errOpenAICyberPolicyForwarded
 		}
 	}
-	if handleErr != nil && (result == nil || !shouldReturnOpenAIPartialResult(&result.Usage, result.ImageCount, result.SearchCount, handleErr)) {
+	if handleErr != nil && !shouldReturnOpenAICompatResult(result, handleErr, cyberPolicyMarked) {
 		return nil, handleErr
 	}
 

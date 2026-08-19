@@ -141,20 +141,34 @@ func TestForwardAsAnthropic_StreamCyberPolicyNoFailover(t *testing.T) {
 }
 
 func TestCompatCyberPolicyWithoutObservedBillingKeepsNilResult(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	body := []byte(`{"model":"gpt-5.5","max_tokens":1024,"messages":[{"role":"user","content":"hi"}],"stream":true}`)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
-	c.Request.Header.Set("Content-Type", "application/json")
+	for _, endpoint := range []string{"chat", "messages"} {
+		t.Run(endpoint, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			upstream := compatCyberUpstreamRecorder()
+			upstream.resp.Body = io.NopCloser(strings.NewReader(strings.ReplaceAll(compatCyberUpstreamSSE(), `,"usage":{"input_tokens":17,"output_tokens":3,"total_tokens":20,"input_tokens_details":{"cached_tokens":2}}`, "")))
+			svc := &OpenAIGatewayService{httpUpstream: upstream}
 
-	upstream := compatCyberUpstreamRecorder()
-	upstream.resp.Body = io.NopCloser(strings.NewReader(strings.ReplaceAll(compatCyberUpstreamSSE(), `,"usage":{"input_tokens":17,"output_tokens":3,"total_tokens":20,"input_tokens_details":{"cached_tokens":2}}`, "")))
-	svc := &OpenAIGatewayService{httpUpstream: upstream}
+			var result *OpenAIForwardResult
+			var err error
+			if endpoint == "chat" {
+				body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+				result, err = svc.ForwardAsChatCompletions(context.Background(), c, compatCyberOAuthAccount(), body, "", "gpt-5.5")
+			} else {
+				body := []byte(`{"model":"gpt-5.5","max_tokens":1024,"messages":[{"role":"user","content":"hi"}],"stream":true}`)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+				result, err = svc.ForwardAsAnthropic(context.Background(), c, compatCyberOAuthAccount(), body, "", "gpt-5.5")
+			}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, compatCyberOAuthAccount(), body, "", "gpt-5.5")
-	require.Error(t, err)
-	require.Nil(t, result)
+			require.Error(t, err)
+			var failoverErr *UpstreamFailoverError
+			require.False(t, errors.As(err, &failoverErr))
+			require.NotNil(t, GetOpsCyberPolicy(c))
+			require.Nil(t, result)
+		})
+	}
 }
 
 func compatBufferedFailedUpstreamRecorder(code string) *httpUpstreamRecorder {
