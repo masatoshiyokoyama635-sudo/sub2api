@@ -271,6 +271,13 @@ sub2api/
 - OpenAI compat 结果裁决同时区分计量、failover、cyber 与流状态：有计量 failover 不返回 result，零计量 cyber 交给 exactly-once fallback；零计量 partial output、client disconnect 和 missing-terminal 状态 result 则保留给 handler，Chat 与 Messages 共用同一 helper。
 - 最终代码提交 `65c74ca395e6e337e9baa413f4727e8ed3cb16ed` 的 CI、Security 和 Custom Docker 共 8 个 job 全绿。GHCR 完整 SHA 标签固定 OCI index `sha256:94f8cd3a5f34783d22d66e5aa338cfbd9be0ca00e7c77c642f014e4d55ce1b63`，包含已核验 revision 的 linux/amd64 与 linux/arm64；生产只替换 `services.sub2api.image`，VPS 仍由用户手动 SSH 更新。
 
+## v0.1.179 合并架构边界（2026-08-23）
+- 当前候选从 v0.1.178 发布记录提交 `71b9de1605e534cc1375107244b06da6e5507a0c` 创建回滚分支 `backup/pre-v179-71b9de160` 和候选分支 `merge/v0.1.179-chat-image-tools`，合入官方 annotated tag object `3c28fad50472b409e18666df617f4237d8ba7007`（peeled commit `75f88be5f75c27771836b586f7de1503afa0e3bc`）；源码版本与嵌入断言统一为 `0.1.179`。
+- handler 冲突采用语义并集：保留 partial output/client disconnect 状态供 handler 做 exactly-once 计费与健康度归因，同时接入 composite 解析到 Grok/Kimi/智谱/DeepSeek 时跳过 OpenAI 专属 Messages 分组映射的官方规则。Responses HTTP/WS 的显式图片意图门控继续在渠道映射后的 model/body 上判定。
+- 官方 v0.1.179 新增 CN adaptive Chat/Messages/Responses 路由、Composite Codex/CN、渠道服务层级和上下文区间倍率、Anthropic Fast 计费、Responses input_tokens、本地用量聚合索引与多项 OpenAI/WS/Grok 恢复修复；本地 AI Chat、AI Images、Canvas、动态币种、Prompt Audit、Strict Step-up、原子设置、安全 shutdown、Grok identity-bound billing 和自定义 Docker workflow 保持。
+- 新迁移 `226_add_usage_log_effective_model_indexes_notx.sql` 与既有 `226_channel_monitor_quota_mode.sql` 按完整文件名共存；runner 对两条并发表达式索引保留 invalid-index 清理重试。227 放开 Composite CN CHECK，228 增加渠道倍率列。长上下文计费门控从 group AND account 改为 group OR account，生产升级前必须确认超过 272k 的 2x/1.5x 账单口径。
+- 本地 Go 1.26.6 默认编译、全量 unit、vet，前端 `242/242` files / `1719/1719` tests 和 production build，以及部署 shell 门禁全部通过；数据库快照迁移、固定 Node 20/pnpm 9、golangci-lint、Security Scan 和多架构镜像仍以推送后的 GitHub Actions 结果为最终发布门禁。
+
 ## 安全状态（2026-04-24 审查）
 
 ### 已加固
