@@ -276,7 +276,8 @@ sub2api/
 - handler 冲突采用语义并集：保留 partial output/client disconnect 状态供 handler 做 exactly-once 计费与健康度归因，同时接入 composite 解析到 Grok/Kimi/智谱/DeepSeek 时跳过 OpenAI 专属 Messages 分组映射的官方规则。Responses HTTP/WS 的显式图片意图门控继续在渠道映射后的 model/body 上判定。
 - 官方 v0.1.179 新增 CN adaptive Chat/Messages/Responses 路由、Composite Codex/CN、渠道服务层级和上下文区间倍率、Anthropic Fast 计费、Responses input_tokens、本地用量聚合索引与多项 OpenAI/WS/Grok 恢复修复；本地 AI Chat、AI Images、Canvas、动态币种、Prompt Audit、Strict Step-up、原子设置、安全 shutdown、Grok identity-bound billing 和自定义 Docker workflow 保持。
 - 新迁移 `226_add_usage_log_effective_model_indexes_notx.sql` 与既有 `226_channel_monitor_quota_mode.sql` 按完整文件名共存；runner 对两条并发表达式索引保留 invalid-index 清理重试。227 放开 Composite CN CHECK，228 增加渠道倍率列。长上下文计费门控从 group AND account 改为 group OR account，生产升级前必须确认超过 272k 的 2x/1.5x 账单口径。
-- 本地 Go 1.26.6 默认编译、全量 unit、vet，前端 `242/242` files / `1719/1719` tests 和 production build，以及部署 shell 门禁全部通过；数据库快照迁移、固定 Node 20/pnpm 9、golangci-lint、Security Scan 和多架构镜像仍以推送后的 GitHub Actions 结果为最终发布门禁。
+- 本地 Go 1.26.6 默认编译、全量 unit、vet，前端 `242/242` files / `1719/1719` tests 和 production build，以及部署 shell 门禁全部通过；CI run `32629576753`、Security Scan run `32629576760` 和 Custom Docker Image run `32629576757` 共 8 个 job 全绿。
+- merge commit `80f7809f2860db8f94ef08ea36268b55815d4eeb` 的稳定、短 SHA、完整 SHA 标签均固定 OCI index `sha256:9037f2297b5e345666e726823096cb5e9fbeb1ed0fdbeecff493ce5c46632794`，包含 revision 已核验为完整代码 SHA 的 linux/amd64 child `sha256:5194785f3d4b631073076993396fe235f283d6af846447471e7dc6f26f9343d1` 与 linux/arm64 child `sha256:1b5b623fbdf7cf31f6444538b7a044798c2128c5ee416cd7eaacffced9725fde`；生产继续只替换 `services.sub2api.image`，由用户手动 SSH 更新。
 
 ## 安全状态（2026-04-24 审查）
 

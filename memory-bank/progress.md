@@ -296,13 +296,14 @@
 - [x] 最终代码提交 `65c74ca395e6e337e9baa413f4727e8ed3cb16ed` 已推送到 fork `feature/chat-image-tools`。Custom Docker Image run `32218065758` 的 test/build 全绿；稳定、短 SHA、完整 SHA 三个标签均指向 OCI index digest `sha256:94f8cd3a5f34783d22d66e5aa338cfbd9be0ca00e7c77c642f014e4d55ce1b63`，包含 linux/amd64 child `sha256:d30d786445c9b30a4ee034398962a21800b7534db7cc5a70e414f2b0ae3a1e5c` 与 linux/arm64 child `sha256:5aacae1f31995e5e9e53b9f78727b204138992f70cef09fb95fe27272564ad8b`，两边 revision label 均为完整代码 SHA。生产 VPS 未访问，等待用户手动 SSH 固定完整 SHA 标签和 digest。
 - [x] 2026-08-20 用户在 OVH `/data/sub2api` 手动固定上述完整 SHA 标签与 digest；`sub2api`、PostgreSQL、Redis 均为 healthy，应用显示 `0.1.178-zz` / revision `65c74ca395e6e337e9baa413f4727e8ed3cb16ed`，健康接口返回 `{"status":"ok"}`，数据库升级前 dump 为 423 MB。
 
-## v0.1.179 自定义候选（2026-08-23，本地验证完成）
+## v0.1.179 自定义发布（2026-08-23，Actions 已发布，待 OVH 手动部署）
 - [x] 从 v0.1.178 发布记录提交 `71b9de1605e534cc1375107244b06da6e5507a0c` 创建 `backup/pre-v179-71b9de160` 与 `merge/v0.1.179-chat-image-tools`，合入官方 annotated tag object `3c28fad50472b409e18666df617f4237d8ba7007`（peeled commit `75f88be5f75c27771836b586f7de1503afa0e3bc`）；官方相对 v0.1.178 为 78 个提交、212 个文件，16 项 checks 全绿。
 - [x] 解决两处文本冲突：handler 同时保留定制 `isOpenAIPartialClientDisconnect` 与官方带 `*gin.Context` 的 composite Grok/CN Messages 映射豁免；Grok 创建账号测试同时保留 computed 默认值正则和实际 placeholder 绑定断言。官方标签遗漏版本升级，已把 `backend/cmd/server/VERSION` 与嵌入版本断言统一为 `0.1.179`。
 - [x] 接入 CN adaptive 三协议、Composite Codex/CN、渠道 fast/flex/上下文区间倍率、Anthropic Fast 计费、`/v1/responses/input_tokens`、可配置代理探测、用量聚合/索引及 OpenAI/WS/Grok 修复；保留 AI Chat、AI Images、Canvas、默认 CNY/动态币种、Prompt Audit、Strict Step-up、原子设置、安全 shutdown、partial-result 计费和自定义 GHCR 发布链路。
 - [x] 本地验证通过：Go 1.26.6 默认全包编译、`go test -tags unit ./... -count=1`、`go vet -tags unit ./...`；前端 typecheck、ESLint、Vitest `242/242` files / `1719/1719` tests、production build；Apple Container/Compose/runtime/Caddy 五项 shell 门禁。官方 Go 代理 IPv6 超时后改用已验证的 `goproxy.cn` 补齐本地缓存，未降低测试范围。
 - [x] 回滚制品位于 `.cache/update-v0.1.179/`：handler 原始 SHA-256 为 `ac192e5bce74a727b0c9593e50bce4d29a2e121e5943ab6cc8913fb95e5ff3a8`，修改版为 `521ce4b8c4fbac4ccfe2d75efc66c0b05b4fde44141ba4122d8791c2c293a59d`；`ROLLBACK.sh` 已在独立副本上执行并恢复原始哈希，源码与 `MODIFIED_FILE` 保持修改状态。
-- [ ] 候选尚未提交、推送或触发 CI/GHCR。v0.1.179 新增同号但不冲突的 `226_add_usage_log_effective_model_indexes_notx.sql` 以及 227/228；生产部署前必须生成 PostgreSQL dump，并确认长上下文计费从 group AND account 改为 OR 后的账单口径。
+- [x] merge commit `80f7809f2860db8f94ef08ea36268b55815d4eeb` 已推送到 fork `feature/chat-image-tools`。CI run `32629576753` 的 golangci-lint、frontend、shell、unit/integration 全绿；Security Scan run `32629576760` 的 govulncheck 与 pnpm audit 全绿；Custom Docker Image run `32629576757` 的 test/build 全绿。
+- [x] GHCR 稳定、短 SHA、完整 SHA 三个标签均指向 OCI index `sha256:9037f2297b5e345666e726823096cb5e9fbeb1ed0fdbeecff493ce5c46632794`；index 包含 linux/amd64 child `sha256:5194785f3d4b631073076993396fe235f283d6af846447471e7dc6f26f9343d1` 与 linux/arm64 child `sha256:1b5b623fbdf7cf31f6444538b7a044798c2128c5ee416cd7eaacffced9725fde`，两边 revision label 均为完整 merge SHA。OVH 尚未更新；部署前必须生成 PostgreSQL dump，并确认长上下文计费从 group AND account 改为 OR 后的账单口径。
 
 ## 部署/回滚记录
 
