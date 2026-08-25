@@ -279,6 +279,13 @@ sub2api/
 - 本地 Go 1.26.6 默认编译、全量 unit、vet，前端 `242/242` files / `1719/1719` tests 和 production build，以及部署 shell 门禁全部通过；CI run `32629576753`、Security Scan run `32629576760` 和 Custom Docker Image run `32629576757` 共 8 个 job 全绿。
 - merge commit `80f7809f2860db8f94ef08ea36268b55815d4eeb` 的稳定、短 SHA、完整 SHA 标签均固定 OCI index `sha256:9037f2297b5e345666e726823096cb5e9fbeb1ed0fdbeecff493ce5c46632794`，包含 revision 已核验为完整代码 SHA 的 linux/amd64 child `sha256:5194785f3d4b631073076993396fe235f283d6af846447471e7dc6f26f9343d1` 与 linux/arm64 child `sha256:1b5b623fbdf7cf31f6444538b7a044798c2128c5ee416cd7eaacffced9725fde`；生产继续只替换 `services.sub2api.image`，由用户手动 SSH 更新。
 
+## v0.1.181 合并架构边界（2026-08-25）
+- 当前发布从 v0.1.179 发布记录提交 `f665825d45ac78d3f55f9f2d251e98aa5e82d3b6` 创建回滚分支 `backup/pre-v181-f665825d4` 和候选分支 `merge/v0.1.181-chat-image-tools`，合入官方 annotated tag object `2b5768269e08f2b52e00fb7a7f97788145a05ce2`（peeled commit `3af5443b224823ae507a50c7b113aa50604409c8`）；源码版本与嵌入断言统一为 `0.1.181`，Go/Docker builder 统一为 1.27.0。
+- 本轮引入实验性 OAuth 出站插件系统及 migrations `229_plugins.sql`、`230_plugin_artifacts.sql`，并接入 OpenAI 重置卡按用量阈值自动使用、Fast `service_tier` 全链路实际档位计费、模型列表读取上限、compact fallback、Codex OAuth 身份与保留工具别名。v0.1.181 进一步修复 Gemini tool schema、Grok CLI User-Agent、Responses Lite `parallel_tool_calls` 和同类型 input status 批量清理。
+- OpenAI HTTP/WS 冲突采用语义并集：partial usage、client disconnect、cyber partial result 继续 exactly-once 入账并保持健康度归因；同时保存实际 upstream `service_tier`、自动重置状态、compact 重试和 account identity。WS 入站固定按图片权限门、compatibility normalization、reserved-tool alias、account identity 的顺序处理。
+- Prompt Audit 继续使用线性化 Reload/Save 安装栅栏和 unknown/untrusted fail-closed 状态；普通设置保留 session-bound Strict Step-up 与 PostgreSQL 原子事务。shutdown 仍先两阶段停止 HTTP/WS，再依次清理 OpenAI auto-reset、Prompt Audit 和 PluginManager，并传播 cleanup 错误，避免依赖提前关闭。
+- merge commit `7791c2a3259520b2267653ecd9dec34b7409d356` 的 CI、Security Scan 和 Custom Docker 全绿；稳定、短 SHA、完整 SHA 标签均固定 OCI index `sha256:3619090a9f087ea96e5875951dfff76fc072d3f3cd75be44659a2a2a41fda79e`，包含 revision 已核验为完整代码 SHA 的 linux/amd64 child `sha256:cb53df8cba8f2a9c7dd38a9fe2f9bfb9ab068d7e2c80e12a72f2aa329a8e591d` 与 linux/arm64 child `sha256:f6976194ff42f101bceef8c0a57c6bc778b61f198e0fcdd0ed87c7d08158c01f`。生产只替换 `services.sub2api.image`，由用户手动 SSH 更新。
+
 ## 安全状态（2026-04-24 审查）
 
 ### 已加固
