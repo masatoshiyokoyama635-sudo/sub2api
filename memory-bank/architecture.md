@@ -286,6 +286,13 @@ sub2api/
 - Prompt Audit 继续使用线性化 Reload/Save 安装栅栏和 unknown/untrusted fail-closed 状态；普通设置保留 session-bound Strict Step-up 与 PostgreSQL 原子事务。shutdown 仍先两阶段停止 HTTP/WS，再依次清理 OpenAI auto-reset、Prompt Audit 和 PluginManager，并传播 cleanup 错误，避免依赖提前关闭。
 - merge commit `7791c2a3259520b2267653ecd9dec34b7409d356` 的 CI、Security Scan 和 Custom Docker 全绿；稳定、短 SHA、完整 SHA 标签均固定 OCI index `sha256:3619090a9f087ea96e5875951dfff76fc072d3f3cd75be44659a2a2a41fda79e`，包含 revision 已核验为完整代码 SHA 的 linux/amd64 child `sha256:cb53df8cba8f2a9c7dd38a9fe2f9bfb9ab068d7e2c80e12a72f2aa329a8e591d` 与 linux/arm64 child `sha256:f6976194ff42f101bceef8c0a57c6bc778b61f198e0fcdd0ed87c7d08158c01f`。生产只替换 `services.sub2api.image`，由用户手动 SSH 更新。
 
+## v0.1.183 合并架构边界（2026-08-26）
+- 当前发布从 v0.1.181 发布记录提交 `2943e164bceef98f1b1c6d70ae7ced1c8cc8d302` 创建回滚分支 `backup/pre-v183-2943e164b` 和候选分支 `merge/v0.1.183-chat-image-tools`，合入官方 annotated tag object `c21fd3382a1c39fe491a96ac6780bac927327ae4`（peeled commit `e8cb019fabf8b55199436229044cbf9aa7a82564`）；`v0.1.183` 完整包含 `v0.1.182`，源码版本与嵌入断言统一为 `0.1.183`。
+- 上游新增 Responses 自定义工具 item ID 恢复、邮箱 alias 并发绑定保护、Composite Kimi K3 路由、Antigravity 64000 token 上限与模型映射、Channel Monitor composite 聚合、Anthropic cache TTL 计费、OpenAI OAuth 429 配额快停和 Responses Lite 兼容修复；本轮没有依赖锁、数据库迁移、Docker、deploy 或 workflow 变更。
+- WS v2 冲突采用语义并集：首帧与后续帧都保留 Responses Lite account-aware normalization、compatibility、reserved-tool alias、account identity 和 fast policy，同时在转发前执行显式图片意图/分组权限门控；第二轮图片意图仍不能绕过权限。AI Chat、AI Images、Canvas、默认 CNY/动态币种、Prompt Audit、Strict Step-up、原子设置、安全 shutdown、partial/disconnect exactly-once 计费和自定义 GHCR 工作流均保留。
+- merge commit `dc2c7faf32e58944d73f8cd60d412f0e5647e019` 的 CI run `32925340186`、Security Scan run `32925340185` 和 Custom Docker Image run `32925340195` 全绿。稳定、短 SHA、完整 SHA 标签均固定 OCI index `sha256:aec0f3df60b301ffb412863684f0e5a3536aeba919d6721606d65f776441e77a`，包含 revision 已核验为完整 merge SHA 的 linux/amd64 child `sha256:42a0f8af33c25732e51738730ffd21fb97388659a9e96a2b8e0b2aa0107a6a44` 与 linux/arm64 child `sha256:ec5d82bee7490ad2f74550951c882f120d4cc06d18ff3f34258e55f7b6830eef`。
+- OVH `/data/sub2api/docker-compose.target.json` 仍固定 v0.1.179 完整 SHA 标签与 digest，`pull_policy: never`；应用、PostgreSQL、Redis 均 healthy。生产升级由用户手动执行：先生成 PostgreSQL dump，再显式 pull v0.1.183 完整 SHA+digest，并只重建 `sub2api` 服务。
+
 ## 安全状态（2026-04-24 审查）
 
 ### 已加固
