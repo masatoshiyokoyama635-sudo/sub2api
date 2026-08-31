@@ -324,6 +324,16 @@
 - [x] GHCR 标签 `chat-image-tools`、`chat-image-tools-dc2c7fa`、`chat-image-tools-dc2c7faf32e58944d73f8cd60d412f0e5647e019` 均指向 OCI index `sha256:aec0f3df60b301ffb412863684f0e5a3536aeba919d6721606d65f776441e77a`；linux/amd64 child 为 `sha256:42a0f8af33c25732e51738730ffd21fb97388659a9e96a2b8e0b2aa0107a6a44`，linux/arm64 child 为 `sha256:ec5d82bee7490ad2f74550951c882f120d4cc06d18ff3f34258e55f7b6830eef`，两边 revision 均已核验为完整 merge SHA。
 - [x] OVH 只读检查确认当前仍运行 v0.1.179 镜像/revision `80f7809f2860db8f94ef08ea36268b55815d4eeb`，应用、PostgreSQL、Redis 均 healthy，应用 restart count 为 0，`pull_policy: never`，数据盘剩余 363 GB。v0.1.181/v0.1.182 均未部署；更新前先生成 PostgreSQL dump，随后显式 pull v0.1.183 完整 SHA+digest，并只重建 `sub2api` 服务。
 
+## v0.1.184 自定义发布（2026-08-31，Actions 已发布，待 OVH 手动部署）
+- [x] 从 v0.1.183 自定义基线 `c1a3a123380762f34d8e5e198d3bf6b4a882a5ca` 创建 `backup/pre-v184-c1a3a1233` 与候选分支 `merge/v0.1.184-chat-image-tools`，合入官方 `v0.1.184` peeled commit `e98ef32eb29aecd30d1def615912ec4dc93173f3`；最终 merge commit 为 `83b345b9c8e68dedda7eceac9811c1dbc7d358ec`，`backend/cmd/server/VERSION` 与嵌入版本断言统一为 `0.1.184`。
+- [x] 三处文本冲突均按语义并集解决：Responses-to-Chat fallback 同时保留 `ClientDisconnect` 与 `UpstreamResponseServiceTier`；WS v2 lifecycle fixture 同时保留禁图 API key/group 与上游 hooks；更新服务保留 custom lifecycle guard、标准 semver 比较并只规范化自定义 `-zz` 后缀，RC/beta 排序保持正确。
+- [x] 保留 AI Chat、AI Images、Canvas、默认 CNY/动态币种、Prompt Audit、Strict Step-up、原子设置、安全 shutdown、partial/disconnect exactly-once 计费、图片权限门、Grok identity-bound billing CAS 和 Custom Docker workflow；接入上游 DeepSeek 峰谷计费、OpenAI/Anthropic/Bedrock failover、Codex catalog、图片冷却、TTFT semantic 模式及相关修复。
+- [x] 本地门禁全部通过：Go 全包无 tag 编译、全量 unit/integration、`go vet -tags unit ./...`、golangci-lint 2.13.0（`0 issues`）；前端 ESLint、Vue typecheck、Vitest `254/254` files / `1857/1857` tests、production build；六项 workflow 部署 shell 门禁与 `git diff --check`。
+- [x] 回滚制品位于 `.cache/update-v0.1.184/`：VERSION 原始 SHA-256 为 `bfea5cf6f3ead8cdf50848e4eed72ded56d58c9fb12d7e8b13afe7056defadb7`，修改版为 `98d7eacc163dcc68f2d215662a882445d3873ded2d187c9146f00c8bb4b09633`；`ROLLBACK.sh` 已在独立副本执行并恢复 `0.1.183` 与原始哈希，源码与 `MODIFIED_FILE` 保持 `0.1.184`。
+- [x] merge commit 已推送到 fork `feature/chat-image-tools`。CI run `33393872939`、Security Scan run `33393872961`、Custom Docker Image run `33393872877` 均为 `completed/success`。
+- [x] GHCR 标签 `chat-image-tools`、`chat-image-tools-83b345b`、`chat-image-tools-83b345b9c8e68dedda7eceac9811c1dbc7d358ec` 均指向 OCI index `sha256:84d3ae8247ca0746db4fd82bfce385335105524a14e52a4ff6b531dccf7b5e99`；linux/amd64 child 为 `sha256:570164e5a0cee310c140e44c3ab1ca6f699d9e8cec443a859ed7a9e3ba932e0f`，linux/arm64 child 为 `sha256:4944c5f39333efafdacb42b9da2b6f3c730a9222b6c43ddfe01256e0ce1c8a7d`，两边 revision 均已核验为完整 merge SHA。
+- [x] 新增 `231_add_usage_log_native_compaction_v2.sql`、`231_add_usage_log_requested_reasoning_effort.sql`、`231_user_restrict_public_groups.sql`；生产数据库需具备 `ALTER` 权限，`usage_logs` 变更可能等待 `AccessExclusive` 锁。OVH 本轮未访问或部署；用户手动 SSH 更新前必须生成可验证 PostgreSQL dump，再固定完整 SHA 标签与上述 OCI digest，并只重建 `sub2api` 服务。
+
 ## 部署/回滚记录
 
 ### 使用自定义镜像部署

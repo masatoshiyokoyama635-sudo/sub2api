@@ -293,6 +293,13 @@ sub2api/
 - merge commit `dc2c7faf32e58944d73f8cd60d412f0e5647e019` 的 CI run `32925340186`、Security Scan run `32925340185` 和 Custom Docker Image run `32925340195` 全绿。稳定、短 SHA、完整 SHA 标签均固定 OCI index `sha256:aec0f3df60b301ffb412863684f0e5a3536aeba919d6721606d65f776441e77a`，包含 revision 已核验为完整 merge SHA 的 linux/amd64 child `sha256:42a0f8af33c25732e51738730ffd21fb97388659a9e96a2b8e0b2aa0107a6a44` 与 linux/arm64 child `sha256:ec5d82bee7490ad2f74550951c882f120d4cc06d18ff3f34258e55f7b6830eef`。
 - OVH `/data/sub2api/docker-compose.target.json` 仍固定 v0.1.179 完整 SHA 标签与 digest，`pull_policy: never`；应用、PostgreSQL、Redis 均 healthy。生产升级由用户手动执行：先生成 PostgreSQL dump，再显式 pull v0.1.183 完整 SHA+digest，并只重建 `sub2api` 服务。
 
+## v0.1.184 合并架构边界（2026-08-31）
+- 当前发布从 v0.1.183 发布记录提交 `c1a3a123380762f34d8e5e198d3bf6b4a882a5ca` 创建回滚分支 `backup/pre-v184-c1a3a1233` 和候选分支 `merge/v0.1.184-chat-image-tools`，合入官方 annotated tag `v0.1.184`（peeled commit `e98ef32eb29aecd30d1def615912ec4dc93173f3`）；最终 merge commit 为 `83b345b9c8e68dedda7eceac9811c1dbc7d358ec`，源码版本与嵌入断言统一为 `0.1.184`。
+- 三处冲突均采用语义并集：Responses-to-Chat fallback 的三个结果同时保留本地 `ClientDisconnect` 和官方 `UpstreamResponseServiceTier`；WS v2 lifecycle 测试夹具同时保留禁用图片生成的 API key/group 与官方 hooks，并覆盖第二轮图片意图拒绝、cyber side-effect 和 UTF-8 close reason；在线更新服务继续保留 custom build lifecycle guard、标准 semver 比较与 `-zz` normalization，官方旧 `parseVersion` 不再恢复。
+- 合并继续保留 AI Chat、AI Images、Canvas、默认 CNY/动态币种、Prompt Audit reload/save 线性化与 fail-closed 元数据、Strict Step-up、原子设置、安全 shutdown、partial/disconnect exactly-once 计费、图片权限门和 Grok identity-bound billing CAS。新增迁移 `231_add_usage_log_native_compaction_v2.sql`、`231_add_usage_log_requested_reasoning_effort.sql`、`231_user_restrict_public_groups.sql`；同为 `231` 前缀但迁移器按完整文件名与 checksum 跟踪，生产数据库必须具备 `ALTER` 权限，`usage_logs` 大表变更仍可能等待 `AccessExclusive` 锁并触及十分钟启动迁移超时。
+- 生产观察重点包括 DeepSeek 新峰谷计费与未知模型 fallback、OpenAI/Anthropic/Bedrock terminal/transport failover 可能产生的额外重试账单、WebSocket 大首包桥接和 Codex catalog 重写、图片账号默认 30 分钟冷却，以及 OpenAI TTFT 默认从 visible 改为 semantic 后的面板与调度指标跳变。升级前必须生成可验证 PostgreSQL dump，并核对数据库锁等待、计费抽样和 failover 用量是否只记录一次。
+- merge commit 的 CI run `33393872939`、Security Scan run `33393872961`、Custom Docker Image run `33393872877` 均成功。稳定、短 SHA、完整 SHA 标签均固定 OCI index `sha256:84d3ae8247ca0746db4fd82bfce385335105524a14e52a4ff6b531dccf7b5e99`，包含 linux/amd64 child `sha256:570164e5a0cee310c140e44c3ab1ca6f699d9e8cec443a859ed7a9e3ba932e0f` 与 linux/arm64 child `sha256:4944c5f39333efafdacb42b9da2b6f3c730a9222b6c43ddfe01256e0ce1c8a7d`；两边 `org.opencontainers.image.revision` 均核验为 `83b345b9c8e68dedda7eceac9811c1dbc7d358ec`。
+
 ## 安全状态（2026-04-24 审查）
 
 ### 已加固
