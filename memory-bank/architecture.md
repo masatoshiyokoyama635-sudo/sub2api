@@ -300,6 +300,14 @@ sub2api/
 - 生产观察重点包括 DeepSeek 新峰谷计费与未知模型 fallback、OpenAI/Anthropic/Bedrock terminal/transport failover 可能产生的额外重试账单、WebSocket 大首包桥接和 Codex catalog 重写、图片账号默认 30 分钟冷却，以及 OpenAI TTFT 默认从 visible 改为 semantic 后的面板与调度指标跳变。升级前必须生成可验证 PostgreSQL dump，并核对数据库锁等待、计费抽样和 failover 用量是否只记录一次。
 - merge commit 的 CI run `33393872939`、Security Scan run `33393872961`、Custom Docker Image run `33393872877` 均成功。稳定、短 SHA、完整 SHA 标签均固定 OCI index `sha256:84d3ae8247ca0746db4fd82bfce385335105524a14e52a4ff6b531dccf7b5e99`，包含 linux/amd64 child `sha256:570164e5a0cee310c140e44c3ab1ca6f699d9e8cec443a859ed7a9e3ba932e0f` 与 linux/arm64 child `sha256:4944c5f39333efafdacb42b9da2b6f3c730a9222b6c43ddfe01256e0ce1c8a7d`；两边 `org.opencontainers.image.revision` 均核验为 `83b345b9c8e68dedda7eceac9811c1dbc7d358ec`。
 
+## v0.1.185 合并架构边界（2026-09-01）
+- 当前发布从 v0.1.184 发布记录提交 `87adb8d18afa1a72c2bd08abd6ee35a80b6658f9` 创建回滚分支 `backup/pre-v185-87adb8d18` 和候选分支 `merge/v0.1.185-chat-image-tools`，合入官方 annotated tag object `c8134f0f55b75719ac228b75a0861f2050b4e164`（peeled commit `2ac784c51a5d0925b324efef2ba6b3446c364781`）；最终 merge commit 为 `dd3e7845a444b2aec11b894634522b16f8b5f068`，版本与嵌入断言统一为 `0.1.185`。
+- 三个 changed-in-both Go 文件自动合并为正确语义并集：handler 在 reasoning policy 后规范化严格限定的 Codex delegation bootstrap，本地映射后图片意图门仍先于转发；forward 只为 `UsesOpenAICodexProtocol()` 合成 instructions，本地两阶段图片门和 partial result 保持；WS 只改发给客户端的 capacity-shed 副本，replay、健康与 terminal 判定继续消费原始 payload，每 turn 图片权限门保持。
+- 计费架构从 Gemini 平台特例改为目录驱动整单阶梯：22 个 Claude/Gemini/GPT 模型从 `*_above_*` 绝对价导出 200K/272K 阶梯，input/output/cache read/write 各自应用目录倍率；`pricing.override_file` 可按字段浅合并官方目录但默认空。生产需要关注远程 main 价格源漂移、200000/200001 与 272000/272001 边界、orphan/lopsided/dropped ladder 和 override warning。
+- DeepSeek 账号成本统计通过 `PricingAt` 与 `NewModelPricingResolver(nil, billingService)` 进入唯一的 `CalculateCostUnified` 峰谷政策，不复制倍率逻辑；自定义账号成本规则和 `ApplyPricingToAccountStats` 仍提前返回。数据库启动重试严格限定在 `PingContext` 就绪探测，迁移只执行一次，避免连接中断后重放 `*_notx.sql` 并发索引；永久配置/认证/迁移错误继续 fail fast。
+- 合并继续保留 AI Chat、AI Images、Canvas、默认 CNY/动态币种、Prompt Audit、Strict Step-up、原子设置、安全 shutdown、partial/disconnect exactly-once 计费、图片权限门、Grok identity-bound billing CAS 和 Custom Docker workflow。本轮无数据库 migration/schema 或依赖锁变更；官方 compose 的 PostgreSQL SQL healthcheck 与延长宽限不会自动进入 OVH 的固定 target JSON。
+- CI run `33472496074`、Security Scan run `33472496081`、Custom Docker Image run `33472496070` 均成功。稳定、短 SHA、完整 SHA 标签固定 OCI index `sha256:24b1916d42a6f0e06ddbc01b0f895d0e537f4553f5ffe1e6ad907456115a0892`，包含 linux/amd64 child `sha256:afc91bca38b62ab6e33de8f8fdf8134c19a7e5013151ec8aeababf9f8129e304` 与 linux/arm64 child `sha256:8e04b0d3377f655a4c09927fcc24b57df21fc6445550545f563d198d348249f0`；两边 revision 均为完整 merge SHA。生产继续由用户手动 SSH 固定完整 SHA 标签和 OCI digest，仅重建 `sub2api` 服务。
+
 ## 安全状态（2026-04-24 审查）
 
 ### 已加固

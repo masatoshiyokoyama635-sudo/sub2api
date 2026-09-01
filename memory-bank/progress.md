@@ -334,6 +334,17 @@
 - [x] GHCR 标签 `chat-image-tools`、`chat-image-tools-83b345b`、`chat-image-tools-83b345b9c8e68dedda7eceac9811c1dbc7d358ec` 均指向 OCI index `sha256:84d3ae8247ca0746db4fd82bfce385335105524a14e52a4ff6b531dccf7b5e99`；linux/amd64 child 为 `sha256:570164e5a0cee310c140e44c3ab1ca6f699d9e8cec443a859ed7a9e3ba932e0f`，linux/arm64 child 为 `sha256:4944c5f39333efafdacb42b9da2b6f3c730a9222b6c43ddfe01256e0ce1c8a7d`，两边 revision 均已核验为完整 merge SHA。
 - [x] 新增 `231_add_usage_log_native_compaction_v2.sql`、`231_add_usage_log_requested_reasoning_effort.sql`、`231_user_restrict_public_groups.sql`；生产数据库需具备 `ALTER` 权限，`usage_logs` 变更可能等待 `AccessExclusive` 锁。OVH 本轮未访问或部署；用户手动 SSH 更新前必须生成可验证 PostgreSQL dump，再固定完整 SHA 标签与上述 OCI digest，并只重建 `sub2api` 服务。
 
+## v0.1.185 自定义发布（2026-09-01，Actions 已发布，待 OVH 手动部署）
+- [x] 从 v0.1.184 发布记录提交 `87adb8d18afa1a72c2bd08abd6ee35a80b6658f9` 创建 `backup/pre-v185-87adb8d18` 与候选分支 `merge/v0.1.185-chat-image-tools`，合入官方 annotated tag object `c8134f0f55b75719ac228b75a0861f2050b4e164`（peeled commit `2ac784c51a5d0925b324efef2ba6b3446c364781`）；官方相对 v0.1.184 为 26 个提交、46 个文件，三方合并无文本冲突。
+- [x] 官方 tag 内 VERSION 仍误为 `0.1.184`，已把 `backend/cmd/server/VERSION` 和嵌入断言同步为 `0.1.185`。4 个定制重叠文件均保留语义并集：delegation bootstrap normalization、仅 Codex 协议合成 instructions、WS capacity-shed 客户端副本改写，与本地图片权限门、partial/disconnect exactly-once 计费及账号健康判定同时保留。
+- [x] 修复官方发布说明未真正落地的 DeepSeek 账号成本峰谷计价：两条 usage 路径把请求级 `PricingAt` 传到 account stats，复用统一定价解析器；工作日高峰同 token 成本精确为低谷 2 倍，同时保持自定义规则和 `ApplyPricingToAccountStats` 的优先级。
+- [x] 修复 PostgreSQL 尚未监听时 `connection refused` 不会重试的问题；瞬态网络错误采用严格白名单，取消、永久 DNS、认证和迁移错误继续立即失败。重试只包 `PingContext`，迁移本身执行一次，避免非事务并发索引中断后重放并误标成功。
+- [x] 接入数据驱动长上下文整单阶梯、可选 `pricing.override_file`、账号成本统一定价管线、Codex priority/image metadata、API Key instructions 修复、WS 空闲连接回收和数据库健康检查。本轮无 migration、Ent schema、Go/Node 依赖锁或根 Docker/workflow 变更；OVH 只换镜像不会自动获得官方 compose 的 healthcheck/start-period 调整。
+- [x] 本地验证通过：Go 无 tag 全包编译、全量 unit、全量 integration、`go vet -tags unit ./...`、golangci-lint 2.13.0（`0 issues`）、补丁定向 race、repository linux/amd64、linux/arm64、windows/amd64 交叉编译；前端 typecheck、ESLint、Vitest `254/254` files / `1857/1857` tests、production build；六项部署 shell gate、Linux amd64/arm64 Docker 同参数嵌入式构建与 `git diff --check`。
+- [x] 回滚制品位于 `.cache/update-v0.1.185/`：VERSION 原始 SHA-256 为 `98d7eacc163dcc68f2d215662a882445d3873ded2d187c9146f00c8bb4b09633`，修改版为 `7e555e7a3aea1eb8fec32b2074e0879b0ec6bfbf211bd19d8495c1549b171c87`；`ROLLBACK.sh` 已在独立副本恢复 `0.1.184`，源码与 `MODIFIED_FILE` 保持 `0.1.185`。
+- [x] merge commit `dd3e7845a444b2aec11b894634522b16f8b5f068` 已推送到 fork `feature/chat-image-tools`。CI run `33472496074`、Security Scan run `33472496081`、Custom Docker Image run `33472496070` 均为 `completed/success`。
+- [x] GHCR 标签 `chat-image-tools`、`chat-image-tools-dd3e784`、`chat-image-tools-dd3e7845a444b2aec11b894634522b16f8b5f068` 均指向 OCI index `sha256:24b1916d42a6f0e06ddbc01b0f895d0e537f4553f5ffe1e6ad907456115a0892`；linux/amd64 child 为 `sha256:afc91bca38b62ab6e33de8f8fdf8134c19a7e5013151ec8aeababf9f8129e304`，linux/arm64 child 为 `sha256:8e04b0d3377f655a4c09927fcc24b57df21fc6445550545f563d198d348249f0`，两边 revision 均核验为完整 merge SHA。生产部署前重点抽样 200K/272K 长上下文边界和 Pricing Warning；OVH 本轮未部署。
+
 ## 部署/回滚记录
 
 ### 使用自定义镜像部署
