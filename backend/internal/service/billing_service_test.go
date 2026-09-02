@@ -1746,6 +1746,88 @@ func TestGetModelPricingWithChannel_CacheWritePriceAffects5mAnd1h(t *testing.T) 
 	require.InDelta(t, 7e-6, pricing.CacheCreation1hPrice, 1e-12)
 }
 
+func TestGetModelPricingWithChannel_CacheWriteTTLPricesCanDiffer(t *testing.T) {
+	svc := newTestBillingService()
+
+	pricing, err := svc.GetModelPricingWithChannel("claude-fable-5-1", &ChannelModelPricing{
+		CacheWritePrice:   testPtrFloat64(13e-6),
+		CacheWrite1hPrice: testPtrFloat64(21e-6),
+	})
+	require.NoError(t, err)
+	require.True(t, pricing.SupportsCacheBreakdown)
+	require.InDelta(t, 13e-6, pricing.CacheCreationPricePerToken, 1e-12)
+	require.InDelta(t, 13e-6, pricing.CacheCreation5mPrice, 1e-12)
+	require.InDelta(t, 21e-6, pricing.CacheCreation1hPrice, 1e-12)
+}
+
+func TestGetModelPricingWithChannel_CacheWrite1hOnlyPreserves5mBasePrice(t *testing.T) {
+	svc := newTestBillingService()
+
+	pricing, err := svc.GetModelPricingWithChannel("gpt-5.4", &ChannelModelPricing{
+		CacheWrite1hPrice: testPtrFloat64(9e-6),
+	})
+	require.NoError(t, err)
+	require.True(t, pricing.SupportsCacheBreakdown)
+	require.InDelta(t, pricing.CacheCreationPricePerToken, pricing.CacheCreation5mPrice, 1e-12)
+	require.InDelta(t, 9e-6, pricing.CacheCreation1hPrice, 1e-12)
+
+	tokens := UsageTokens{
+		CacheCreationTokens:   200,
+		CacheCreation5mTokens: 80,
+		CacheCreation1hTokens: 120,
+	}
+	want := float64(tokens.CacheCreation5mTokens)*pricing.CacheCreationPricePerToken +
+		float64(tokens.CacheCreation1hTokens)*9e-6
+	require.InDelta(t, want, svc.computeCacheCreationCost(pricing, tokens, pricing.CacheCreationPricePerToken, 1), 1e-12)
+}
+
+func TestGetModelPricingWithChannel_ExplicitZeroCacheWrite5mRemainsFree(t *testing.T) {
+	svc := newTestBillingService()
+
+	pricing, err := svc.GetModelPricingWithChannel("gpt-5.4", &ChannelModelPricing{
+		CacheWritePrice:   testPtrFloat64(0),
+		CacheWrite1hPrice: testPtrFloat64(9e-6),
+	})
+	require.NoError(t, err)
+	require.True(t, pricing.SupportsCacheBreakdown)
+	require.Zero(t, pricing.CacheCreation5mPrice)
+	require.InDelta(t, 9e-6, pricing.CacheCreation1hPrice, 1e-12)
+}
+
+func TestComputeTokenBreakdown_CacheWriteTTLTiersFollowPriorityRatio(t *testing.T) {
+	svc := newTestBillingService()
+	pricing := &ModelPricing{
+		CacheCreationPricePerToken:         6.25e-6,
+		CacheCreationPricePerTokenPriority: 12.5e-6,
+		CacheCreation5mPrice:               6.25e-6,
+		CacheCreation1hPrice:               20e-6,
+		SupportsCacheBreakdown:             true,
+	}
+	tokens := UsageTokens{
+		CacheCreationTokens:   200,
+		CacheCreation5mTokens: 80,
+		CacheCreation1hTokens: 120,
+	}
+
+	standard := svc.computeTokenBreakdown(pricing, tokens, 1, "", false)
+	priority := svc.computeTokenBreakdown(pricing, tokens, 1, "priority", false)
+
+	require.InDelta(t, float64(80)*6.25e-6+float64(120)*20e-6, standard.CacheCreationCost, 1e-12)
+	require.InDelta(t, float64(80)*12.5e-6+float64(120)*40e-6, priority.CacheCreationCost, 1e-12)
+}
+
+func TestGetModelPricing_Fable51FallbackPricing(t *testing.T) {
+	svc := newTestBillingService()
+
+	pricing, err := svc.GetModelPricing("claude-fable-5-1")
+	require.NoError(t, err)
+	require.InDelta(t, 10e-6, pricing.InputPricePerToken, 1e-12)
+	require.InDelta(t, 50e-6, pricing.OutputPricePerToken, 1e-12)
+	require.InDelta(t, 12.5e-6, pricing.CacheCreation5mPrice, 1e-12)
+	require.InDelta(t, 20e-6, pricing.CacheCreation1hPrice, 1e-12)
+	require.InDelta(t, 0.25e-6, pricing.CacheReadPricePerToken, 1e-12)
+}
+
 func TestGetModelPricingWithChannel_CacheReadPriceAffectsPriority(t *testing.T) {
 	svc := newTestBillingService()
 

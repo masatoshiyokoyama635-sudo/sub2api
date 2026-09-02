@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -24,6 +26,27 @@ func forceChatMessagesFallbackAccount() *Account {
 		openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions),
 	}
 	return account
+}
+
+func successfulChatMessagesFallbackUpstream() *httpUpstreamRecorder {
+	return &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_fast","object":"chat.completion","model":"gpt-5.4","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`,
+		)),
+	}}
+}
+
+func chatMessagesFallbackTestContext(body []byte, beta string) (*gin.Context, *httptest.ResponseRecorder) {
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	if beta != "" {
+		c.Request.Header.Set("anthropic-beta", beta)
+	}
+	return c, rec
 }
 
 // errTailReader yields the given data, then returns err instead of io.EOF,
@@ -114,7 +137,7 @@ func TestForwardAsAnthropic_ForceChatCompletionsPreservesFinalModelReasoningEffo
 			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
 			ctx := context.Background()
 			if tt.maxPolicy != "" {
-				ctx = WithOpenAIReasoningEffortPolicy(ctx, tt.maxPolicy, nil)
+				ctx = WithOpenAIReasoningEffortPolicy(ctx, tt.maxPolicy, nil, "")
 			}
 			result, err := svc.ForwardAsAnthropic(ctx, c, account, []byte(body), "", "")
 			require.NoError(t, err)
@@ -125,6 +148,75 @@ func TestForwardAsAnthropic_ForceChatCompletionsPreservesFinalModelReasoningEffo
 			require.Equal(t, tt.wantEffort, *result.ReasoningEffort)
 		})
 	}
+}
+
+func TestForwardAsAnthropic_ForceChatCompletionsGroupForceFastCarriesFreeBillingTier(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-5.4","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	c, _ := chatMessagesFallbackTestContext(body, "")
+	upstream := successfulChatMessagesFallbackUpstream()
+	svc := newOpenAIGatewayServiceWithSettings(t, DefaultOpenAIFastPolicySettings())
+	svc.cfg = rawChatCompletionsTestConfig()
+	svc.httpUpstream = upstream
+	group := &Group{
+		ID: 7, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true,
+		ForceOpenAIFast: true, FreeOpenAIFast: true,
+	}
+	ctx := context.WithValue(context.Background(), ctxkey.Group, group)
+
+	result, err := svc.ForwardAsAnthropic(ctx, c, forceChatMessagesFallbackAccount(), body, "", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, OpenAIFastTierPriority, gjson.GetBytes(upstream.lastBody, "service_tier").String())
+	require.NotNil(t, result.ServiceTier)
+	require.Equal(t, OpenAIFastTierPriority, *result.ServiceTier)
+	require.True(t, groupBillsOpenAIFastAtStandard(
+		&APIKey{Group: group}, forceChatMessagesFallbackAccount(), *result.ServiceTier,
+	), "the final outbound tier must activate Free Fast customer billing")
+}
+
+func TestForwardAsAnthropic_ForceChatCompletionsGlobalFastFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-5.4","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	c, _ := chatMessagesFallbackTestContext(body, claude.BetaFastMode)
+	upstream := successfulChatMessagesFallbackUpstream()
+	svc := newOpenAIGatewayServiceWithSettings(t, openAIFastFilterPriorityPolicy())
+	svc.cfg = rawChatCompletionsTestConfig()
+	svc.httpUpstream = upstream
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, forceChatMessagesFallbackAccount(), body, "", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, gjson.GetBytes(upstream.lastBody, "service_tier").Exists())
+	require.Nil(t, result.ServiceTier)
+}
+
+func TestForwardAsAnthropic_ForceChatCompletionsGlobalFastBlock(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-5.4","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	c, rec := chatMessagesFallbackTestContext(body, claude.BetaFastMode)
+	upstream := successfulChatMessagesFallbackUpstream()
+	svc := newOpenAIGatewayServiceWithSettings(t, &OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{{
+		ServiceTier:  OpenAIFastTierPriority,
+		Action:       BetaPolicyActionBlock,
+		Scope:        BetaPolicyScopeAll,
+		ErrorMessage: "fast mode is disabled for this route",
+	}}})
+	svc.cfg = rawChatCompletionsTestConfig()
+	svc.httpUpstream = upstream
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, forceChatMessagesFallbackAccount(), body, "", "")
+
+	require.Error(t, err)
+	require.Nil(t, result)
+	var blocked *OpenAIFastBlockedError
+	require.True(t, errors.As(err, &blocked))
+	require.Equal(t, "fast mode is disabled for this route", blocked.Message)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Equal(t, "forbidden_error", gjson.Get(rec.Body.String(), "error.type").String())
+	require.Nil(t, upstream.lastReq)
 }
 
 func TestForwardAsAnthropic_ForceChatCompletionsNonStreaming(t *testing.T) {
@@ -464,7 +556,7 @@ func TestForwardAsAnthropic_ResponsesSupportedAccountStillUsesResponsesEndpoint(
 		openai_compat.ExtraKeyResponsesSupported: true,
 	}
 
-	ctx := WithOpenAIReasoningEffortPolicy(context.Background(), "medium", nil)
+	ctx := WithOpenAIReasoningEffortPolicy(context.Background(), "medium", nil, "")
 	result, err := svc.ForwardAsAnthropic(ctx, c, account, body, "", "")
 	require.NoError(t, err)
 	require.NotNil(t, result)

@@ -97,6 +97,42 @@ func TestGetIntervalPricing_MatchesInterval(t *testing.T) {
 	require.InDelta(t, 3e-6, result2.InputPricePerToken, 1e-12)
 }
 
+func TestIntervalToModelPricing_CacheWrite1hOnlyPreserves5mBasePrice(t *testing.T) {
+	base := &ModelPricing{CacheCreationPricePerToken: 4e-6}
+	pricing := intervalToModelPricing(
+		&PricingInterval{CacheWrite1hPrice: testPtrFloat64(7e-6)},
+		base,
+		nil,
+	)
+
+	require.True(t, pricing.SupportsCacheBreakdown)
+	require.InDelta(t, 4e-6, pricing.CacheCreation5mPrice, 1e-12)
+	require.InDelta(t, 7e-6, pricing.CacheCreation1hPrice, 1e-12)
+
+	tokens := UsageTokens{
+		CacheCreationTokens:   200,
+		CacheCreation5mTokens: 80,
+		CacheCreation1hTokens: 120,
+	}
+	want := float64(tokens.CacheCreation5mTokens)*4e-6 + float64(tokens.CacheCreation1hTokens)*7e-6
+	require.InDelta(t, want, (&BillingService{}).computeCacheCreationCost(pricing, tokens, 4e-6, 1), 1e-12)
+}
+
+func TestIntervalToModelPricing_ExplicitZeroCacheWrite5mRemainsFree(t *testing.T) {
+	pricing := intervalToModelPricing(
+		&PricingInterval{
+			CacheWritePrice:   testPtrFloat64(0),
+			CacheWrite1hPrice: testPtrFloat64(7e-6),
+		},
+		&ModelPricing{CacheCreationPricePerToken: 4e-6},
+		nil,
+	)
+
+	require.True(t, pricing.SupportsCacheBreakdown)
+	require.Zero(t, pricing.CacheCreation5mPrice)
+	require.InDelta(t, 7e-6, pricing.CacheCreation1hPrice, 1e-12)
+}
+
 func TestGetIntervalPricing_NoMatch_FallsBackToBase(t *testing.T) {
 	bs := newTestBillingServiceForResolver()
 	r := NewModelPricingResolver(&ChannelService{}, bs)

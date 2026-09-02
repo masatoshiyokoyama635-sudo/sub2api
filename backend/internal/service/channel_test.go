@@ -193,9 +193,33 @@ func TestChannelClone_Nil(t *testing.T) {
 
 func TestChannelModelPricingClone(t *testing.T) {
 	original := ChannelModelPricing{
-		Models: []string{"a", "b"},
+		Models:            []string{"a", "b"},
+		InputPrice:        testPtrFloat64(1),
+		OutputPrice:       testPtrFloat64(2),
+		CacheWritePrice:   testPtrFloat64(3),
+		CacheWrite1hPrice: testPtrFloat64(4),
+		CacheReadPrice:    testPtrFloat64(5),
+		FastMultiplier:    testPtrFloat64(6),
+		FlexMultiplier:    testPtrFloat64(7),
+		ImageInputPrice:   testPtrFloat64(8),
+		ImageOutputPrice:  testPtrFloat64(9),
+		PerRequestPrice:   testPtrFloat64(10),
 		Intervals: []PricingInterval{
-			{MinTokens: 0, TierLabel: "tier1"},
+			{
+				MinTokens:            0,
+				MaxTokens:            testPtrInt(100),
+				TierLabel:            "tier1",
+				InputPrice:           testPtrFloat64(11),
+				OutputPrice:          testPtrFloat64(12),
+				CacheWritePrice:      testPtrFloat64(13),
+				CacheWrite1hPrice:    testPtrFloat64(14),
+				CacheReadPrice:       testPtrFloat64(15),
+				InputMultiplier:      testPtrFloat64(16),
+				OutputMultiplier:     testPtrFloat64(17),
+				CacheWriteMultiplier: testPtrFloat64(18),
+				CacheReadMultiplier:  testPtrFloat64(19),
+				PerRequestPrice:      testPtrFloat64(20),
+			},
 		},
 		TimePricing: &ChannelTimePricing{
 			Timezone:     "Asia/Shanghai",
@@ -216,6 +240,42 @@ func TestChannelModelPricingClone(t *testing.T) {
 
 	cloned.Intervals[0].TierLabel = "hacked"
 	require.Equal(t, "tier1", original.Intervals[0].TierLabel)
+
+	for _, pair := range []struct {
+		name            string
+		original, clone *float64
+	}{
+		{"input", original.InputPrice, cloned.InputPrice},
+		{"output", original.OutputPrice, cloned.OutputPrice},
+		{"cache write", original.CacheWritePrice, cloned.CacheWritePrice},
+		{"cache write 1h", original.CacheWrite1hPrice, cloned.CacheWrite1hPrice},
+		{"cache read", original.CacheReadPrice, cloned.CacheReadPrice},
+		{"fast multiplier", original.FastMultiplier, cloned.FastMultiplier},
+		{"flex multiplier", original.FlexMultiplier, cloned.FlexMultiplier},
+		{"image input", original.ImageInputPrice, cloned.ImageInputPrice},
+		{"image output", original.ImageOutputPrice, cloned.ImageOutputPrice},
+		{"per request", original.PerRequestPrice, cloned.PerRequestPrice},
+		{"interval input", original.Intervals[0].InputPrice, cloned.Intervals[0].InputPrice},
+		{"interval output", original.Intervals[0].OutputPrice, cloned.Intervals[0].OutputPrice},
+		{"interval cache write", original.Intervals[0].CacheWritePrice, cloned.Intervals[0].CacheWritePrice},
+		{"interval cache write 1h", original.Intervals[0].CacheWrite1hPrice, cloned.Intervals[0].CacheWrite1hPrice},
+		{"interval cache read", original.Intervals[0].CacheReadPrice, cloned.Intervals[0].CacheReadPrice},
+		{"interval input multiplier", original.Intervals[0].InputMultiplier, cloned.Intervals[0].InputMultiplier},
+		{"interval output multiplier", original.Intervals[0].OutputMultiplier, cloned.Intervals[0].OutputMultiplier},
+		{"interval cache write multiplier", original.Intervals[0].CacheWriteMultiplier, cloned.Intervals[0].CacheWriteMultiplier},
+		{"interval cache read multiplier", original.Intervals[0].CacheReadMultiplier, cloned.Intervals[0].CacheReadMultiplier},
+		{"interval per request", original.Intervals[0].PerRequestPrice, cloned.Intervals[0].PerRequestPrice},
+	} {
+		t.Run(pair.name, func(t *testing.T) {
+			require.NotSame(t, pair.original, pair.clone)
+			originalValue := *pair.original
+			*pair.clone = 999
+			require.Equal(t, originalValue, *pair.original)
+		})
+	}
+	require.NotSame(t, original.Intervals[0].MaxTokens, cloned.Intervals[0].MaxTokens)
+	*cloned.Intervals[0].MaxTokens = 999
+	require.Equal(t, 100, *original.Intervals[0].MaxTokens)
 
 	cloned.TimePricing.Timezone = "America/New_York"
 	cloned.TimePricing.WeekdaysOnly = false

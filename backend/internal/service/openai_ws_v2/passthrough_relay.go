@@ -533,17 +533,26 @@ func runUpstreamToClient(
 		msgType, payload, err := upstreamConn.ReadFrame(ctx)
 		if err != nil {
 			emitTurnComplete(onTurnComplete, state, finalizePendingBareError(state, nowFn()))
+			graceful := isDisconnectError(err)
+			// A clean WebSocket close only describes the transport handshake. Once
+			// the upstream has started a Responses turn, success still requires a
+			// terminal protocol event. Treat an early 1000/EOF as a relay failure so
+			// the adapter does not report relay_completed with an active turn.
+			if graceful && openAIWSRelayHasInFlightTurn(state) {
+				graceful = false
+				err = errors.New("upstream websocket closed before terminal event: " + err.Error())
+			}
 			emitRelayTrace(onTrace, RelayTraceEvent{
 				Stage:           "read_upstream_failed",
 				Direction:       "upstream_to_client",
 				Error:           err.Error(),
-				Graceful:        isDisconnectError(err),
+				Graceful:        graceful,
 				WroteDownstream: wroteDownstream,
 			})
 			exitCh <- relayExitSignal{
 				stage:           "read_upstream",
 				err:             err,
-				graceful:        isDisconnectError(err),
+				graceful:        graceful,
 				wroteDownstream: wroteDownstream,
 			}
 			return
@@ -1024,6 +1033,10 @@ func openAIWSRelayActiveTurnID(state *relayState) string {
 		}
 	}
 	return ""
+}
+
+func openAIWSRelayHasInFlightTurn(state *relayState) bool {
+	return state != nil && (state.pendingTurnStart.Load() != nil || state.activeTurn != nil)
 }
 
 func openAIWSRelayCloneIntPtr(v *int) *int {
