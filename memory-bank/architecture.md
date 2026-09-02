@@ -308,6 +308,14 @@ sub2api/
 - 合并继续保留 AI Chat、AI Images、Canvas、默认 CNY/动态币种、Prompt Audit、Strict Step-up、原子设置、安全 shutdown、partial/disconnect exactly-once 计费、图片权限门、Grok identity-bound billing CAS 和 Custom Docker workflow。本轮无数据库 migration/schema 或依赖锁变更；官方 compose 的 PostgreSQL SQL healthcheck 与延长宽限不会自动进入 OVH 的固定 target JSON。
 - CI run `33472496074`、Security Scan run `33472496081`、Custom Docker Image run `33472496070` 均成功。稳定、短 SHA、完整 SHA 标签固定 OCI index `sha256:24b1916d42a6f0e06ddbc01b0f895d0e537f4553f5ffe1e6ad907456115a0892`，包含 linux/amd64 child `sha256:afc91bca38b62ab6e33de8f8fdf8134c19a7e5013151ec8aeababf9f8129e304` 与 linux/arm64 child `sha256:8e04b0d3377f655a4c09927fcc24b57df21fc6445550545f563d198d348249f0`；两边 revision 均为完整 merge SHA。生产继续由用户手动 SSH 固定完整 SHA 标签和 OCI digest，仅重建 `sub2api` 服务。
 
+## v0.2.0 合并架构边界（2026-09-02）
+- 当前发布从 v0.1.185 发布记录提交 `d5011109c9d2d3e8ebb4f0c7dc973bba66f37339` 创建回滚分支 `backup/pre-v020-d5011109c` 和候选分支 `merge/v0.2.0-chat-image-tools`，合入官方 annotated tag object `dd07c4d8d484878e617c945cc8bacc304a5a6560`（peeled commit `aa236488351eb71e120fc2b6fb32e36b0374c918`）；最终 merge commit 为 `bed05d0635823e32d38ff23e7c753bd74964be38`，源码版本与嵌入断言统一为 `0.2.0`。
+- 上游引入 OpenAI Fast 分组强制/免费策略、按模型 reasoning effort 映射与超限动作、Kimi 原生 Responses、Fable 5.1、无 call ID 自动化启动以及四个 schema 迁移。迁移仍按完整文件名/checksum 串行记录；四张 pricing 表增加 nullable `NUMERIC(20,12)` 1h cache-write 列，groups 增加 force/free boolean 与默认 `downgrade` 的 over-limit 字段。
+- cache-write 分档保持三条计费不变量：缺省 5m 价继承原统一 cache-write 价、显式 5m 零价不被回退覆盖、priority TTL 档按最终 priority/standard cache-write 比例缩放；自定义 Fast/Flex multiplier 与长上下文倍率仍各自只乘一次。所有新增 pricing 指针在认证/调度快照 Clone 中隔离。
+- WebSocket 的进行中 turn 同时由 pending start 与 active response ID 表示，任一存在时 clean EOF/1000 都不能伪装为 graceful terminal；reasoning policy 在模型映射前使用客户端 session model，后续无 model 帧和 `session.update` 模型切换不能绕过 exact/prefix/suffix 规则。Messages raw Chat fallback 与 Responses 路径共享 Fast policy，并以最终出站 tier 驱动 Free Fast 计费。
+- 合并继续保留 AI Chat、AI Images、Canvas、默认 CNY/动态币种、Prompt Audit、Strict Step-up、原子设置、安全 shutdown、partial/disconnect exactly-once 计费、图片权限门、Grok identity-bound billing CAS、DeepSeek account-stats `PricingAt`、仅重试 `PingContext` 的数据库就绪流程和 Custom Docker workflow。
+- CI run `33608930254`、Security Scan run `33608930210`、Custom Docker Image run `33608930292` 均成功。稳定、短 SHA、完整 SHA 标签固定 OCI index `sha256:19e58de459e5b4c1b8b9907cd2445d80907d0e98057075bc05e5bdfe45000844`，包含 linux/amd64 child `sha256:1d577a2f50fad34d6b5cba132e78b4c46e2325f2c842b98e0bf04a8d60c2f76a` 与 linux/arm64 child `sha256:8b2bf7e2b841eb54b245438241718585ba2b01bb2c2b608a32c8e292117c5a13`；两边 revision 均为完整 merge SHA。OVH 继续由用户手动固定完整 SHA+digest，升级前 dump PostgreSQL，只重建 `sub2api` 服务。
+
 ## 安全状态（2026-04-24 审查）
 
 ### 已加固
