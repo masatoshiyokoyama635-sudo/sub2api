@@ -180,7 +180,7 @@ func compatBufferedFailedUpstreamRecorder(code string) *httpUpstreamRecorder {
 	}, "\n")
 	return &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_failed"}},
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid_failed"}},
 		Body:       io.NopCloser(strings.NewReader(sse)),
 	}}
 }
@@ -210,6 +210,7 @@ func TestCompatBufferedFailedResponsePartialUsage(t *testing.T) {
 			require.False(t, errors.As(err, &failoverErr))
 			require.NotNil(t, result)
 			require.Equal(t, OpenAIUsage{InputTokens: 23, OutputTokens: 4}, result.Usage)
+			require.Equal(t, "rid_failed", result.UpstreamHeaders.Get("x-request-id"))
 		})
 
 		t.Run(endpoint+"_failover", func(t *testing.T) {

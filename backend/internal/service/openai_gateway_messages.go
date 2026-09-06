@@ -603,6 +603,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 	observer.ObserveServiceTier(finalResponse.ServiceTier, true)
 	result := &OpenAIForwardResult{
 		RequestID:                     requestID,
+		UpstreamHeaders:               resp.Header,
 		ResponseID:                    finalResponse.ID,
 		Usage:                         usage,
 		Model:                         originalModel,
@@ -682,28 +683,6 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 	c.Header("Content-Type", "application/json; charset=utf-8")
 	c.JSON(http.StatusOK, anthropicResp)
 
-	result := &OpenAIForwardResult{
-		RequestID:                     requestID,
-		UpstreamHeaders:               resp.Header,
-		ResponseID:                    finalResponse.ID,
-		Usage:                         usage,
-		Model:                         originalModel,
-		BillingModel:                  billingModel,
-		UpstreamModel:                 upstreamModel,
-		UpstreamResponseModel:         observedUpstreamResponseModel(c),
-		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
-		UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
-		Stream:                        false,
-		Duration:                      time.Since(startTime),
-	}
-	// Grok /v1/messages uses Responses upstream; count native search for surcharge.
-	if account != nil && account.IsGrok() && finalResponse != nil {
-		if body, err := json.Marshal(finalResponse); err == nil {
-			if n := countGrokNativeSearchCallsFromJSONBytes(body); n > 0 {
-				result.SearchCount = n
-			}
-		}
-	}
 	return result, nil
 }
 

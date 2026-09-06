@@ -22,15 +22,16 @@ func resolveAccountStatsCost(
 	requestCount int,
 	totalCost float64,
 	serviceTier string,
+	reasoningEfforts ...string,
 ) *float64 {
 	return resolveAccountStatsCostAt(
 		ctx, channelService, billingService, accountID, groupID, upstreamModel,
-		tokens, requestCount, totalCost, serviceTier, time.Time{},
+		tokens, requestCount, totalCost, serviceTier, time.Time{}, reasoningEfforts...,
 	)
 }
 
-func tryModelFilePricing(billingService *BillingService, model string, tokens UsageTokens, serviceTier string) *float64 {
-	return tryModelFilePricingAt(context.Background(), billingService, model, tokens, serviceTier, time.Time{})
+func tryModelFilePricing(billingService *BillingService, model string, tokens UsageTokens, serviceTier string, reasoningEfforts ...string) *float64 {
+	return tryModelFilePricingAt(context.Background(), billingService, model, tokens, serviceTier, time.Time{}, reasoningEfforts...)
 }
 
 func applyAccountStatsCost(

@@ -813,6 +813,7 @@ func TestForwardAsChatCompletions_BufferedTopLevelTerminalUsage(t *testing.T) {
 	require.Equal(t, 18, result.Usage.InputTokens)
 	require.Equal(t, 6, result.Usage.OutputTokens)
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
+	require.Equal(t, upstream.resp.Header, result.UpstreamHeaders)
 
 	responseBody := rec.Body.String()
 	require.Contains(t, responseBody, `"usage"`)
