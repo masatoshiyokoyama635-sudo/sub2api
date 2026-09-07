@@ -15,7 +15,8 @@ describe('admin platform filters', () => {
 
   it('uses the shared catalogs on the groups page', () => {
     const source = readSource('src/views/admin/GroupsView.vue')
-    expect(source).toContain('...GROUP_PLATFORM_OPTIONS')
+    expect(source).toContain('GROUP_PLATFORM_OPTIONS.filter')
+    expect(source).toContain('...platformOptions.value')
     expect(source).toContain('...CONCRETE_PLATFORM_OPTIONS')
   })
 

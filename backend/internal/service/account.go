@@ -1786,10 +1786,9 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 			return true
 		case OpenAIEndpointCapabilityGrokMediaGeneration:
 			eligible, reason := a.GrokMediaGenerationEligibility()
-			// Unobserved OAuth accounts remain scheduler candidates only so the
-			// request path can run the billing probe before forwarding. The
-			// forwarding gate itself fails closed if that probe is unavailable or
-			// cannot produce positive paid-entitlement evidence.
+			// Unobserved OAuth accounts remain scheduler candidates so the request
+			// path can probe billing before forwarding. Inconclusive observations
+			// are already eligible under the backwards-compatible media policy.
 			return eligible || reason == "billing_unobserved"
 		default:
 			return false
@@ -1840,9 +1839,10 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 }
 
 // GrokMediaGenerationEligibility reports whether a Grok account may receive
-// new image/video generation requests. OAuth media fails closed unless billing
-// observations provide positive paid-entitlement evidence. An explicit
-// operator override takes precedence over probe data.
+// new image/video generation requests. Explicit evidence of a forbidden or
+// free account blocks media, while an incomplete successful billing response
+// remains eligible for backwards compatibility. An explicit operator
+// override takes precedence over probe data.
 func (a *Account) GrokMediaGenerationEligibility() (bool, string) {
 	if a == nil || !a.IsGrok() {
 		return false, "not_grok"
@@ -1867,8 +1867,13 @@ func (a *Account) GrokMediaGenerationEligibility() (bool, string) {
 	if isKnownGrokFreeAccount(a) {
 		return false, "billing_free_tier"
 	}
-	if billing.Partial || len(billing.FailedWindows) > 0 || !grokBillingHasAuthoritativeQuota(billing) {
-		return false, "billing_inconclusive"
+	if !grokBillingHasAuthoritativeQuota(billing) {
+		// Billing endpoints can return 200 with an account-specific schema that
+		// omits plan/quota fields (for example, some SuperGrok accounts). An
+		// incomplete observation is not proof of ineligibility; keep the account
+		// routable and expose the reason for diagnostics. Operators can still
+		// quarantine a known-bad account with grok_media_eligible=false.
+		return true, "billing_inconclusive"
 	}
 	return true, "eligible"
 }

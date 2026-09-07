@@ -25,7 +25,7 @@ import (
 )
 
 func TestEmbeddedVersionMatchesRelease(t *testing.T) {
-	require.Equal(t, "0.2.1", strings.TrimSpace(embeddedVersion))
+	require.Equal(t, "0.2.2", strings.TrimSpace(embeddedVersion))
 }
 
 func TestProvideServiceBuildInfo(t *testing.T) {
