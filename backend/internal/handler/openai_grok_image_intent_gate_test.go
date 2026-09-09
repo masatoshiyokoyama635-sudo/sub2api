@@ -90,7 +90,7 @@ func TestOpenAIGatewayHandlerResponses_ChannelMappedImageModelIsRejectedBeforeSc
 			},
 		}},
 		groupPlatforms: map[int64]string{groupID: service.PlatformOpenAI},
-	}, nil, nil, nil)
+	}, nil, nil, nil, nil)
 	cfg := &config.Config{RunMode: config.RunModeSimple}
 	gatewaySvc := service.NewOpenAIGatewayService(
 		nil, nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, nil,

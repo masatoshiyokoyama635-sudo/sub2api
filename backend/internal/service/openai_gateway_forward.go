@@ -969,6 +969,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			break
 		}
+		var failoverErr *UpstreamFailoverError
+		if wsErr != nil && (wsResult == nil || errors.As(wsErr, &failoverErr)) {
+			s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
+			return nil, wsErr
+		}
 		if wsErr == nil {
 			firstTokenMs := int64(0)
 			hasFirstTokenMs := wsResult != nil && wsResult.FirstTokenMs != nil
@@ -988,19 +993,19 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				firstTokenMs,
 				wsAttempts,
 			)
-			wsResult.UpstreamModel = upstreamModel
-			if wsResult.BillingModel == "" {
-				wsResult.BillingModel = billingModel
-			}
-			if wsResult.ImageCount > 0 {
-				wsResult.ImageSize = imageSizeTier
-				wsResult.ImageInputSize = imageInputSize
-				wsResult.BillingModel = imageBillingModel
-			}
-			return wsResult, nil
 		}
-		s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
-		return nil, wsErr
+		// Non-failover drain errors still carry usage and disconnect state for
+		// the handler. Apply the same billing metadata as a completed WS turn.
+		wsResult.UpstreamModel = upstreamModel
+		if wsResult.BillingModel == "" {
+			wsResult.BillingModel = billingModel
+		}
+		if wsResult.ImageCount > 0 {
+			wsResult.ImageSize = imageSizeTier
+			wsResult.ImageInputSize = imageInputSize
+			wsResult.BillingModel = imageBillingModel
+		}
+		return wsResult, wsErr
 	}
 
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
