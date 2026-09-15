@@ -1030,6 +1030,7 @@ func buildOpenAIFastPolicySetting(settings *OpenAIFastPolicySettings) (string, e
 	}
 	validTiers := map[string]bool{
 		OpenAIFastTierAny: true, OpenAIFastTierPriority: true, OpenAIFastTierUltrafast: true, OpenAIFastTierFlex: true,
+		OpenAIFastTierMissing: true,
 	}
 
 	for i := range normalized.Rules {

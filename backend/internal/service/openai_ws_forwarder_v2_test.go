@@ -224,7 +224,7 @@ func TestForwardOpenAIWSV2_PreservesAccountingMetadataOnEveryUsageReturn(t *test
 				"model": "gpt-5.5", "stream": tt.stream, "input": "draw a landscape",
 				"reasoning": map[string]any{"effort": "max"},
 			}
-			result, err := svc.forwardOpenAIWSV2(ctx, c, account, reqBody, "", "sk-test",
+			result, err := svc.forwardOpenAIWSV2(ctx, c, account, reqBody, "", "", "sk-test",
 				OpenAIWSProtocolDecision{Transport: OpenAIUpstreamTransportResponsesWebsocketV2},
 				false, tt.stream, "gpt-5.5", "gpt-5.5", time.Now(), 1, "", nil)
 			if tt.complete {
