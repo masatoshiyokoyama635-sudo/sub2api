@@ -2251,12 +2251,26 @@
         </div>
       </div>
 
-      <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
+      <!-- Codex 身份版本与指纹收敛（OpenAI OAuth / setup-token） -->
       <div
-        v-if="account?.platform === 'openai' && account?.type === 'oauth'"
+        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
-        <div class="flex items-center justify-between gap-4">
+        <div class="mb-4 flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.codexIdentityVersion') }}</label>
+            <p v-if="!isSparkShadow" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.codexIdentityVersionDesc') }}
+            </p>
+          </div>
+          <p v-if="isSparkShadow" data-testid="edit-codex-identity-inherited" class="text-sm text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.openai.codexIdentityInherited') }}
+          </p>
+          <div v-else class="w-52 flex-shrink-0">
+            <Select v-model="codexIdentityVersion" data-testid="edit-codex-identity-version-select" :options="codexIdentityVersionOptions" />
+          </div>
+        </div>
+        <div v-if="!isSparkShadow" class="flex items-center justify-between gap-4">
           <div class="min-w-0">
             <label class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -3528,6 +3542,11 @@ const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OF
 const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
+const codexIdentityVersion = ref<'v1' | 'v2'>('v1')
+const codexIdentityVersionOptions = computed(() => [
+  { value: 'v1', label: t('admin.accounts.openai.codexIdentityV1') },
+  { value: 'v2', label: t('admin.accounts.openai.codexIdentityV2') },
+])
 const codexFingerprintMode = ref<CodexFingerprintMode>('off')
 type CodexImageToolMode = 'inherit' | 'enabled' | 'disabled' | 'block'
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
@@ -4011,6 +4030,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
   codexFingerprintMode.value = 'off'
+  codexIdentityVersion.value = 'v1'
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -4062,8 +4082,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       codexCLIOnlyAppServerEnabled.value =
         extra?.codex_cli_only_allow_app_server === true
     }
-    if (newAccount.type === 'oauth') {
+    if (newAccount.type === 'oauth' || newAccount.type === 'setup-token') {
       const fpMode = extra?.codex_fingerprint_mode as string | undefined
+      codexIdentityVersion.value = extra?.codex_identity_version === 'v2' ? 'v2' : 'v1'
       // 缺省/非法值按 off 呈现，与后端 GetCodexFingerprintMode 的 opt-in 语义一致（#5610）
       codexFingerprintMode.value = (['off', 'device', 'session', 'full'].includes(fpMode || '')
         ? fpMode as CodexFingerprintMode
@@ -5598,7 +5619,15 @@ const handleSubmit = async () => {
 
       // 指纹收敛模式：默认 off（不写入）；device/session/full 是显式 opt-in，
       // 必须落键，否则管理员的选择会被后端当作"未设置"而回落到 off（#5610）。
-      if (props.account.type === 'oauth') {
+      if (props.account.type === 'oauth' || props.account.type === 'setup-token') {
+        if (isSparkShadow.value) {
+          delete newExtra.codex_identity_version
+        } else if (codexIdentityVersion.value === 'v2' || currentExtra.codex_identity_version !== undefined) {
+          // Explicit v1 also serves as a rollback; omission preserves older accounts.
+          newExtra.codex_identity_version = codexIdentityVersion.value
+        }
+      }
+      if (!isSparkShadow.value && (props.account.type === 'oauth' || props.account.type === 'setup-token')) {
         if (codexFingerprintMode.value !== 'off') {
           newExtra.codex_fingerprint_mode = codexFingerprintMode.value
         } else {

@@ -214,6 +214,30 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
 
   afterEach(() => vi.useRealTimers())
 
+  it('new Codex imports keep the identity version absent by default', async () => {
+    const wrapper = await openCodexImportStep()
+    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
+    await flushPromises()
+    expect(importCodexSessionMock).toHaveBeenCalledOnce()
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_identity_version')
+    wrapper.unmount()
+  })
+
+  it('new Codex imports submit an explicitly selected v2 version', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    const versionSelect = wrapper.findComponent('[data-testid="create-codex-identity-version-select"]')
+    expect(versionSelect.attributes('modelvalue')).toBe('v1')
+    versionSelect.vm.$emit('update:modelValue', 'v2')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Codex v2 import')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
+    await flushPromises()
+    expect(importCodexSessionMock).toHaveBeenCalledOnce()
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_identity_version).toBe('v2')
+    wrapper.unmount()
+  })
+
   it('sets month and year expiry presets without submitting the account form', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-01-31T12:34:00'))

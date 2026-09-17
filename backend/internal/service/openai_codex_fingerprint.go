@@ -262,6 +262,8 @@ func resolveConvergedThreadID(seed, clientSessionID string) string {
 // 确保所有载体中的 turn_id 等随机字段一致。体改写时还会补记原始
 // client_metadata.session_id，用于识别 root prompt_cache_key 的默认值。
 type codexFingerprintIDs struct {
+	identityV2                    bool
+	windowNumber                  string
 	accountID                     int64
 	mode                          codexFingerprintMode
 	installationID                string
@@ -437,6 +439,9 @@ func applyCodexFingerprintClientMetadata(reqBody map[string]any, ids *codexFinge
 // map 版（非透传，body 已解码）与 raw 字节版（透传热路径）都经由它，保证两条
 // 路径的收敛语义永不漂移。
 func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *codexFingerprintIDs) bool {
+	if ids != nil && ids.identityV2 {
+		return applyCodexV2FingerprintMetadata(existing, ids)
+	}
 	if existing == nil || ids == nil {
 		return false
 	}

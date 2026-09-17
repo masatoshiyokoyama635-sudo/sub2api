@@ -146,6 +146,7 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	}
 	applyCodexAccountIdentityHeaders(headers, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 	applyStagedCodexFingerprintHeaders(c, account, headers)
+	applyCodexIdentityV2Headers(c, account, headers)
 
 	if account != nil && account.UsesOpenAICodexProtocol() {
 		if err := resolveAndSetOpenAIChatGPTAccountHeaders(ctx, s.accountRepo, headers, account); err != nil {
@@ -229,9 +230,15 @@ func setOpenAIWSTurnMetadata(payload map[string]any, turnMetadata string) {
 
 	switch existing := payload["client_metadata"].(type) {
 	case map[string]any:
+		if current, ok := existing[openAIWSTurnMetadataHeader].(string); ok && strings.TrimSpace(current) != "" {
+			return
+		}
 		existing[openAIWSTurnMetadataHeader] = metadata
 		payload["client_metadata"] = existing
 	case map[string]string:
+		if strings.TrimSpace(existing[openAIWSTurnMetadataHeader]) != "" {
+			return
+		}
 		next := make(map[string]any, len(existing)+1)
 		for k, v := range existing {
 			next[k] = v

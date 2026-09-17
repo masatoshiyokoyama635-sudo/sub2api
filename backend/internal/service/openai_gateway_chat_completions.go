@@ -320,7 +320,12 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		} else if promptCacheKey != "" {
 			reqBody["prompt_cache_key"] = promptCacheKey
 		}
-		applyCodexAccountIdentityClientMetadataMap(reqBody, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+		if codexIdentityV2Enabled(codexAccountIdentitySource(c, account)) {
+			seedCodexIdentityV2BridgeMetadata(c, account, reqBody, promptCacheKey)
+			applyCodexIdentityV2Map(c, account, reqBody)
+		} else {
+			applyCodexAccountIdentityClientMetadataMap(reqBody, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+		}
 		responsesBody, err = json.Marshal(reqBody)
 		if err != nil {
 			return nil, fmt.Errorf("remarshal after codex transform: %w", err)
@@ -386,6 +391,8 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		}
 		upstreamReq.Header.Set("session_id", generateSessionUUID(sessionKey))
 	}
+
+	applyCodexIdentityV2Headers(c, account, upstreamReq.Header)
 
 	// 7. Send request
 	proxyURL := ""

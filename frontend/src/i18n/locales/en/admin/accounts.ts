@@ -661,6 +661,12 @@ export default {
         codexCLIOnlyAppServer: 'Allow Codex app-server clients',
         codexCLIOnlyAppServerDesc:
           "Effective only when the switch above is on. When enabled, this account also allows third-party clients that embed the Codex engine over the app-server protocol (e.g. Claude Code's codex plugin); they still pass the global engine-fingerprint gate. OR-combined with the global app-server toggle.",
+        codexIdentityVersion: 'Codex identity version',
+        codexIdentityVersionDesc: 'Defaults to v1 and keeps the original identity algorithm. v2 preserves thread, parent/child and window relationships. Start a new conversation after switching. Select v1 to roll back; the fingerprint seed is retained.',
+        codexIdentityV1: 'v1 (compatible, default)',
+        codexIdentityV2: 'v2 (experimental)',
+        codexIdentityInherited: 'Inherited from credential account',
+        codexIdentityBulkInherited: 'Shadows inherit the credential account. Select credential accounts only when changing this version in bulk; submissions containing shadows are rejected.',
         codexFingerprintMode: 'Codex fingerprint convergence',
         codexFingerprintModeDesc: 'When multiple users share the same OAuth account, converge device/session identifiers to account-level stable values to reduce upstream-visible device and session count. Off by default (client identifiers pass through as-is); opt in explicitly when needed. Some accounts reported quota shrinkage after enabling convergence, so choose based on your own measurements.',
         codexFingerprintOff: 'Off (passthrough, default)',

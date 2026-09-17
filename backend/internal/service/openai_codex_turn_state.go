@@ -1,28 +1,147 @@
 package service
 
 import (
+	"container/list"
+	"crypto/sha256"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // openAICodexTurnStateHeader 是 Codex 的回合状态头。上游在响应头中铸造该
-// 不透明 blob，客户端在同一回合的后续请求中原样回带（codex-rs 侧从
-// /responses SSE、/responses/compact JSON 与 WS 握手三种响应中捕获，见
-// codex-api/src/sse/responses.rs 与 endpoint/compact.rs）。
+// 不透明 blob，客户端在同一回合的后续请求中原样回带。HTTP 从 /responses
+// 与 /responses/compact 响应头捕获；原生 WS 从 response.metadata.headers
+// 捕获，不能把未转发的上游握手响应头当作客户端已经收到的状态。
 const openAICodexTurnStateHeader = "x-codex-turn-state"
 
 // turn-state blob 是上游在"出站身份"（含 #5553 指纹收敛改写后的
 // installation/session/thread 标识）下铸造的，同账号回放自洽；跨账号回放
 // （failover 换号后客户端仍回带旧账号的 blob）是代理链独有、真实 Codex
-// 永远不会产生的矛盾信号。溯源表记录每个下游会话最近一次铸造该 blob 的
+// 永远不会产生的矛盾信号。v1 溯源表记录每个下游会话最近一次铸造该 blob 的
 // 账号，出站守卫据此剥离已知异账号的回带值。
 type openAICodexTurnStateOrigin struct {
 	accountID int64
 	expiresAt time.Time
+}
+
+// v1 retains its session-based guard. The opt-in v2 guard tracks each committed
+// blob independently: a client may keep the first blob in a turn even after a
+// later attempt issued a different one. Raw blobs are never retained here.
+const openAICodexTurnStateMaxOrigins = 16384
+
+type openAICodexTurnStateBlobOrigin struct {
+	owner     string
+	version   string
+	expiresAt time.Time
+}
+
+type openAICodexTurnStateCacheEntry struct {
+	key    [sha256.Size]byte
+	origin openAICodexTurnStateBlobOrigin
+}
+
+// openAICodexTurnStateCache is a zero-value-ready, bounded process-local cache.
+// Oldest writes are evicted at capacity; expired entries are removed on lookup
+// and on subsequent writes. Other instances, restarts and evictions therefore
+// yield unknown provenance and preserve the client's blob.
+type openAICodexTurnStateCache struct {
+	mu      sync.Mutex
+	entries map[[sha256.Size]byte]*list.Element
+	order   list.List
+}
+
+func (cache *openAICodexTurnStateCache) store(key [sha256.Size]byte, origin openAICodexTurnStateBlobOrigin, now time.Time) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.entries == nil {
+		cache.entries = make(map[[sha256.Size]byte]*list.Element)
+	}
+	for element := cache.order.Front(); element != nil; element = cache.order.Front() {
+		entry, ok := element.Value.(openAICodexTurnStateCacheEntry)
+		if !ok {
+			cache.entries = make(map[[sha256.Size]byte]*list.Element)
+			cache.order.Init()
+			break
+		}
+		if now.Before(entry.origin.expiresAt) {
+			break
+		}
+		delete(cache.entries, entry.key)
+		cache.order.Remove(element)
+	}
+	entry := openAICodexTurnStateCacheEntry{key: key, origin: origin}
+	if element, ok := cache.entries[key]; ok {
+		element.Value = entry
+		cache.order.MoveToBack(element)
+		return
+	}
+	if len(cache.entries) >= openAICodexTurnStateMaxOrigins {
+		oldest := cache.order.Front()
+		if oldest != nil {
+			if entry, ok := oldest.Value.(openAICodexTurnStateCacheEntry); ok {
+				delete(cache.entries, entry.key)
+				cache.order.Remove(oldest)
+			} else {
+				cache.entries = make(map[[sha256.Size]byte]*list.Element)
+				cache.order.Init()
+			}
+		} else {
+			cache.entries = make(map[[sha256.Size]byte]*list.Element)
+		}
+	}
+	cache.entries[key] = cache.order.PushBack(entry)
+}
+
+func (cache *openAICodexTurnStateCache) load(key [sha256.Size]byte, now time.Time) (openAICodexTurnStateBlobOrigin, bool) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	element, ok := cache.entries[key]
+	if !ok {
+		return openAICodexTurnStateBlobOrigin{}, false
+	}
+	entry, valid := element.Value.(openAICodexTurnStateCacheEntry)
+	origin := entry.origin
+	if !valid || !now.Before(origin.expiresAt) {
+		delete(cache.entries, key)
+		cache.order.Remove(element)
+		return openAICodexTurnStateBlobOrigin{}, false
+	}
+	return origin, true
+}
+
+func openAICodexTurnStateKey(state string) [sha256.Size]byte {
+	return sha256.Sum256([]byte(strings.TrimSpace(state)))
+}
+
+func openAICodexTurnStateIdentityVersion(c *gin.Context, account *Account) string {
+	if source := codexAccountIdentitySource(c, account); source != nil {
+		return source.GetCodexIdentityVersion()
+	}
+	return "v1"
+}
+
+// Credential shadows use the same prepared identity source as outbound identity
+// projection. The version is part of ownership so a rollout/rollback cannot
+// reuse a known blob minted under the other identity algorithm.
+func openAICodexTurnStateOwner(c *gin.Context, account *Account) string {
+	source := codexAccountIdentitySource(c, account)
+	if source == nil {
+		return ""
+	}
+	owner := codexAccountIdentityNamespace(source)
+	if owner == "" {
+		if source.ID <= 0 {
+			return ""
+		}
+		owner = "id:" + strconv.FormatInt(source.ID, 10)
+	}
+	return owner + "\x00identity:" + source.GetCodexIdentityVersion()
 }
 
 // openAICodexTurnStateSeed 返回溯源表键：API Key + 客户端原始会话标识。
@@ -56,7 +175,7 @@ func (s *OpenAIGatewayService) relayOpenAICodexTurnState(c *gin.Context, account
 		return
 	}
 	c.Writer.Header().Set(canonical, state)
-	s.noteOpenAICodexTurnStateProvenance(c, account)
+	s.noteOpenAICodexTurnStateOrigin(c, account, state)
 }
 
 // stageOpenAICodexTurnState 将上游 turn-state 暂存到延迟提交的响应头集合
@@ -89,7 +208,7 @@ func (s *OpenAIGatewayService) noteStagedOpenAICodexTurnStateCommitted(c *gin.Co
 	if staged == nil || strings.TrimSpace(staged.Get(openAICodexTurnStateHeader)) == "" {
 		return
 	}
-	s.noteOpenAICodexTurnStateProvenance(c, account)
+	s.noteOpenAICodexTurnStateOrigin(c, account, staged.Get(openAICodexTurnStateHeader))
 }
 
 func extractOpenAICodexTurnState(upstream http.Header) string {
@@ -115,6 +234,104 @@ func (s *OpenAIGatewayService) noteOpenAICodexTurnStateProvenance(c *gin.Context
 	s.sweepOpenAICodexTurnStateOrigins()
 }
 
+// noteOpenAICodexTurnStateOrigin must only run at the response commit point.
+// Record both versions in the bounded blob cache so switching to v2 can reject
+// a blob minted by v1, and switching back to v1 can reject a known v2 blob.
+// Legacy session provenance remains available for unchanged v1 behavior.
+func (s *OpenAIGatewayService) noteOpenAICodexTurnStateOrigin(c *gin.Context, account *Account, state string) {
+	s.noteOpenAICodexTurnStateBlobOrigin(c, account, state)
+	if strings.TrimSpace(state) != "" && openAICodexTurnStateIdentityVersion(c, account) != "v2" {
+		s.noteOpenAICodexTurnStateProvenance(c, account)
+	}
+}
+
+func (s *OpenAIGatewayService) noteOpenAICodexTurnStateBlobOrigin(c *gin.Context, account *Account, state string) {
+	if s == nil || account == nil || strings.TrimSpace(state) == "" {
+		return
+	}
+	owner := openAICodexTurnStateOwner(c, account)
+	if owner == "" {
+		return
+	}
+	now := time.Now()
+	s.openaiCodexTurnStateV2Origins.store(openAICodexTurnStateKey(state), openAICodexTurnStateBlobOrigin{
+		owner:     owner,
+		version:   openAICodexTurnStateIdentityVersion(c, account),
+		expiresAt: now.Add(s.openAIWSSessionStickyTTL()),
+	}, now)
+}
+
+// noteOpenAICodexTurnStateFromWSEvent observes metadata only after the frame was
+// successfully forwarded. A handshake-only blob is not a client-visible WS
+// response.metadata event and must not be recorded through this helper.
+func (s *OpenAIGatewayService) noteOpenAICodexTurnStateFromWSEvent(c *gin.Context, account *Account, frame []byte) {
+	if s == nil || account == nil || !containsASCIIFold(frame, []byte(openAICodexTurnStateHeader)) || !gjson.ValidBytes(frame) {
+		return
+	}
+	if gjson.GetBytes(frame, "type").String() != "response.metadata" {
+		return
+	}
+	headers := gjson.GetBytes(frame, "headers")
+	if !headers.IsObject() {
+		return
+	}
+	headers.ForEach(func(key, value gjson.Result) bool {
+		if strings.EqualFold(key.String(), openAICodexTurnStateHeader) && value.Type == gjson.String {
+			// WS did not update the legacy session table before v2. Observe
+			// its blob without altering the default v1 HTTP guard semantics.
+			s.noteOpenAICodexTurnStateBlobOrigin(c, account, value.String())
+		}
+		return true
+	})
+}
+
+// Unknown provenance deliberately passes through. This cache does not provide
+// shared provenance across gateway instances.
+func (s *OpenAIGatewayService) openAICodexTurnStateMintedByOther(c *gin.Context, account *Account, state string) bool {
+	if s == nil || account == nil || strings.TrimSpace(state) == "" {
+		return false
+	}
+	origin, ok := s.openaiCodexTurnStateV2Origins.load(openAICodexTurnStateKey(state), time.Now())
+	if !ok {
+		return false
+	}
+	if openAICodexTurnStateIdentityVersion(c, account) != "v2" {
+		return origin.version == "v2"
+	}
+	owner := openAICodexTurnStateOwner(c, account)
+	return owner == "" || owner != origin.owner
+}
+
+func (s *OpenAIGatewayService) guardOpenAICodexTurnStateValue(c *gin.Context, account *Account, state string) string {
+	state = strings.TrimSpace(state)
+	if s.openAICodexTurnStateMintedByOther(c, account, state) {
+		return ""
+	}
+	return state
+}
+
+// Frame guards leave v1 traffic byte-for-byte unchanged unless it carries a
+// known v2 blob after rollback. v2 applies the same ownership rule as HTTP.
+func (s *OpenAIGatewayService) guardOpenAICodexWSFrameTurnState(c *gin.Context, account *Account, payload []byte) []byte {
+	if s == nil || account == nil || !containsASCIIFold(payload, []byte(openAICodexTurnStateHeader)) || !gjson.ValidBytes(payload) {
+		return payload
+	}
+	metadata := gjson.GetBytes(payload, "client_metadata")
+	if !metadata.IsObject() {
+		return payload
+	}
+	metadata.ForEach(func(key, value gjson.Result) bool {
+		if strings.EqualFold(key.String(), openAICodexTurnStateHeader) && value.Type == gjson.String &&
+			s.openAICodexTurnStateMintedByOther(c, account, value.String()) {
+			if next, err := sjson.DeleteBytes(payload, "client_metadata."+key.String()); err == nil {
+				payload = next
+			}
+		}
+		return true
+	})
+	return payload
+}
+
 // guardOpenAICodexTurnStateEcho 出站守卫：客户端回带的 turn-state 若已知由
 // 其他账号铸造则剥离，同账号或无溯源记录时保持原样。只剥离、不注入——
 // /responses 路径的客户端是真实 Codex，会按自身回合语义自行回带；服务端
@@ -124,6 +341,13 @@ func (s *OpenAIGatewayService) guardOpenAICodexTurnStateEcho(c *gin.Context, acc
 		return
 	}
 	if strings.TrimSpace(h.Get(openAICodexTurnStateHeader)) == "" {
+		return
+	}
+	if s.openAICodexTurnStateMintedByOther(c, account, h.Get(openAICodexTurnStateHeader)) {
+		h.Del(openAICodexTurnStateHeader)
+		return
+	}
+	if openAICodexTurnStateIdentityVersion(c, account) == "v2" {
 		return
 	}
 	seed := openAICodexTurnStateSeed(c)

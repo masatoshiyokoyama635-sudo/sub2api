@@ -67,7 +67,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	turnState := ""
 	turnMetadata := ""
 	if c != nil && c.Request != nil {
-		turnState = strings.TrimSpace(c.GetHeader(openAIWSTurnStateHeader))
+		turnState = s.guardOpenAICodexTurnStateValue(c, account, c.GetHeader(openAIWSTurnStateHeader))
 		turnMetadata = strings.TrimSpace(c.GetHeader(openAIWSTurnMetadataHeader))
 	}
 	setOpenAIWSTurnMetadata(payload, turnMetadata)
@@ -131,9 +131,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	if executionScope = strings.TrimSpace(executionScope); executionScope != "" {
 		sessionHash = executionScope
 	}
+	sessionHash = codexIdentityV2StateKey(c, account, sessionHash)
 	if turnState == "" && stateStore != nil && sessionHash != "" {
 		if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, sessionHash); ok {
-			turnState = savedTurnState
+			turnState = s.guardOpenAICodexTurnStateValue(c, account, savedTurnState)
 		}
 	}
 	preferredConnID := ""
@@ -203,9 +204,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	defer acquireCancel()
 
 	lease, err := s.getOpenAIWSConnPool().Acquire(acquireCtx, openAIWSAcquireRequest{
-		Account: account,
-		WSURL:   wsURL,
-		Headers: wsHeaders,
+		IdentitySource: codexAccountIdentitySource(c, account),
+		Account:        account,
+		WSURL:          wsURL,
+		Headers:        wsHeaders,
 		HeadersFactory: func(factoryCtx context.Context, headers http.Header) (http.Header, error) {
 			return s.refreshOpenAIAgentIdentityHeaders(factoryCtx, account, headers)
 		},
@@ -311,6 +313,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 
+	turnStateHeadersWereOpen := c != nil && c.Writer != nil && !c.Writer.Written()
 	handshakeTurnState := strings.TrimSpace(lease.HandshakeHeader(openAIWSTurnStateHeader))
 	logOpenAIWSModeDebug(
 		"handshake account_id=%d conn_id=%s has_turn_state=%v turn_state_len=%d",
@@ -328,6 +331,11 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 
+	if cm, ok := payload["client_metadata"].(map[string]any); ok {
+		if state, ok := cm[openAIWSTurnStateHeader].(string); ok && s.openAICodexTurnStateMintedByOther(c, account, state) {
+			delete(cm, openAIWSTurnStateHeader)
+		}
+	}
 	if err := s.performOpenAIWSGeneratePrewarm(
 		ctx,
 		lease,
@@ -485,6 +493,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		frame = append(frame, '\n', '\n')
 		_, wErr := c.Writer.Write(frame)
 		if wErr == nil {
+			if !wroteDownstream && turnStateHeadersWereOpen {
+				s.noteOpenAICodexTurnStateOrigin(c, account, extractOpenAICodexTurnState(c.Writer.Header()))
+			}
+			s.noteOpenAICodexTurnStateFromWSEvent(c, account, message)
 			wroteDownstream = true
 			pendingFlushEvents++
 			flushStreamWriter(forceFlush)
@@ -818,6 +830,9 @@ readLoop:
 		}
 
 		c.Data(http.StatusOK, "application/json", finalResponse)
+		if turnStateHeadersWereOpen {
+			s.noteOpenAICodexTurnStateOrigin(c, account, extractOpenAICodexTurnState(c.Writer.Header()))
+		}
 	} else {
 		flushStreamWriter(true)
 	}

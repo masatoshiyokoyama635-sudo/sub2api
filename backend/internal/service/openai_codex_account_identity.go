@@ -31,6 +31,7 @@ func (s *OpenAIGatewayService) prepareCodexAccountIdentitySource(ctx context.Con
 	}
 	if c != nil {
 		c.Set(codexAccountIdentitySourceContextKey, source)
+		c.Set(codexV2SnapshotKey, nil)
 	}
 	return source, nil
 }
@@ -96,6 +97,9 @@ func scopeCodexAccountIdentityValue(account *Account, apiKeyID int64, kind, raw 
 	if raw == "" || namespace == "" {
 		return raw
 	}
+	if codexIdentityV2Enabled(account) {
+		return scopeCodexIdentityV2(account, apiKeyID, kind, raw)
+	}
 	return deriveStableUUIDv4(fmt.Sprintf(
 		"sub2api:codex-account-identity:%s:user:%d:account:%s:kind:%s:value:%s",
 		codexAccountIdentityNamespaceVersion,
@@ -106,10 +110,12 @@ func scopeCodexAccountIdentityValue(account *Account, apiKeyID int64, kind, raw 
 	))
 }
 
-var codexAccountIdentityFields = []struct {
+type codexAccountIdentityField struct {
 	name string
 	kind string
-}{
+}
+
+var codexAccountIdentityFields = []codexAccountIdentityField{
 	{name: "installation_id", kind: "installation"},
 	{name: "x-codex-installation-id", kind: "installation"},
 	{name: "session_id", kind: "session"},
@@ -128,7 +134,7 @@ func applyCodexAccountIdentityFields(values map[string]any, account *Account, ap
 		return false
 	}
 	changed := false
-	for _, field := range codexAccountIdentityFields {
+	for _, field := range codexIdentityFieldsFor(account) {
 		raw, ok := values[field.name].(string)
 		if !ok || strings.TrimSpace(raw) == "" {
 			continue
@@ -146,6 +152,11 @@ func applyCodexAccountIdentityEmbeddedMetadata(values map[string]any, account *A
 	raw, ok := values[openAIWSTurnMetadataHeader].(string)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return false
+	}
+	if codexIdentityV2Enabled(account) {
+		next := scopeCodexV2TurnMetadata(raw, account, apiKeyID)
+		values[openAIWSTurnMetadataHeader] = next
+		return next != raw
 	}
 	metadata := map[string]any{}
 	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
@@ -209,7 +220,11 @@ func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, a
 	originalBodySessionID := ""
 	if cm := gjson.GetBytes(body, "client_metadata"); cm.IsObject() {
 		clientMetadata := map[string]any{}
-		if err := json.Unmarshal([]byte(cm.Raw), &clientMetadata); err != nil {
+		decode := json.Unmarshal
+		if codexIdentityV2Enabled(account) {
+			decode = decodeCodexIdentityJSON
+		}
+		if err := decode([]byte(cm.Raw), &clientMetadata); err != nil {
 			return body, false, fmt.Errorf("decode client_metadata for account identity: %w", err)
 		}
 		originalBodySessionID, _ = clientMetadata["session_id"].(string)
@@ -218,7 +233,11 @@ func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, a
 			metadataChanged = true
 		}
 		if metadataChanged {
-			raw, err := json.Marshal(clientMetadata)
+			marshal := json.Marshal
+			if codexIdentityV2Enabled(account) {
+				marshal = marshalCodexIdentityJSON
+			}
+			raw, err := marshal(clientMetadata)
 			if err != nil {
 				return body, false, fmt.Errorf("encode account-scoped client_metadata: %w", err)
 			}
@@ -253,7 +272,7 @@ func applyCodexAccountIdentityHeaders(headers http.Header, account *Account, api
 	if headers == nil || codexAccountIdentityNamespace(account) == "" {
 		return
 	}
-	for _, field := range codexAccountIdentityFields {
+	for _, field := range codexIdentityFieldsFor(account) {
 		// Underscore session/conversation headers are rebuilt separately from the
 		// prompt cache key by each request builder.
 		if field.name == "session_id" {
@@ -264,7 +283,12 @@ func applyCodexAccountIdentityHeaders(headers http.Header, account *Account, api
 			headers.Set(field.name, scopeCodexAccountIdentityValue(account, apiKeyID, field.kind, raw))
 		}
 	}
-	if raw := strings.TrimSpace(headers.Get(openAIWSTurnMetadataHeader)); raw != "" {
+	if raw := headers.Get(openAIWSTurnMetadataHeader); strings.TrimSpace(raw) != "" {
+		if codexIdentityV2Enabled(account) {
+			headers.Set(openAIWSTurnMetadataHeader, scopeCodexV2TurnMetadata(raw, account, apiKeyID))
+			return
+		}
+		raw = strings.TrimSpace(raw)
 		metadata := map[string]any{}
 		if err := json.Unmarshal([]byte(raw), &metadata); err == nil && metadata != nil && applyCodexAccountIdentityFields(metadata, account, apiKeyID) {
 			if rebuilt, err := json.Marshal(metadata); err == nil {

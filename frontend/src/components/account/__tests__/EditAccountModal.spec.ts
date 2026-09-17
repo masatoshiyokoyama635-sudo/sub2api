@@ -330,6 +330,49 @@ describe('EditAccountModal', () => {
 
   afterEach(() => vi.useRealTimers())
 
+  it.each(['oauth', 'setup-token'])('edits %s Codex identity version and preserves unrelated extra', async (type) => {
+    const account = { ...buildOpenAIOAuthParentAccount(), type, extra: {
+      codex_identity_version: 'v2', codex_fingerprint_mode: 'device',
+      codex_fingerprint_seed: '11111111-1111-4111-8111-111111111111', custom: { retained: true }
+    } }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLSelectElement>('[data-testid="edit-codex-identity-version-select"]').element.value).toBe('v2')
+    await wrapper.get('[data-testid="edit-codex-identity-version-select"]').setValue('v1')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+      ...account.extra, codex_identity_version: 'v1'
+    })
+    wrapper.unmount()
+  })
+
+  it('keeps legacy Codex identity configuration absent on an unrelated edit', async () => {
+    const account = buildOpenAIOAuthParentAccount()
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLSelectElement>('[data-testid="edit-codex-identity-version-select"]').element.value).toBe('v1')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_identity_version')
+    wrapper.unmount()
+  })
+
+  it('shadow accounts show inherited Codex identity without submitting a shadow version', async () => {
+    const account = { ...buildOpenAISparkShadowAccount(), extra: { codex_identity_version: 'v2', custom: true } }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.find('[data-testid="edit-codex-identity-version-select"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="edit-codex-fingerprint-mode-select"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="edit-codex-identity-inherited"]').text()).toBe('admin.accounts.openai.codexIdentityInherited')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).toHaveBeenCalledOnce()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_identity_version')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra.custom).toBe(true)
+    wrapper.unmount()
+  })
+
   it('sets expiry presets from now instead of extending the saved expiry', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2028-02-29T12:34:00'))

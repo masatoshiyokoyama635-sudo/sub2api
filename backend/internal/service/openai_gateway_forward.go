@@ -555,30 +555,36 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if currentClientPromptCacheKey, ok := decoded["prompt_cache_key"].(string); ok {
 			clientPromptCacheKey = currentClientPromptCacheKey
 		}
-		// Account namespace is orthogonal to fingerprint convergence: preserve
-		// each client's identity cardinality, but never reuse it across OAuth
-		// credentials after scheduler failover.
-		if !isCompactRequest && applyCodexAccountIdentityClientMetadataMap(decoded, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c)) {
-			markDecodedModified()
-		}
-		stageCodexFingerprintIDs(c, nil)
-		// 指纹收敛：一次性解析收敛 ID，请求体和出站头共享同一份 IDs（保证 turn_id 等随机字段一致）。
-		// fingerprintIDs 在此处解析，后续 buildUpstreamRequest 中使用同一份。
-		if !isCompactRequest {
-			var clientHeaders http.Header
-			if c != nil && c.Request != nil {
-				clientHeaders = c.Request.Header
+		if !isCompactRequest && codexIdentityV2Enabled(codexAccountIdentitySource(c, account)) {
+			if applyCodexIdentityV2Map(c, account, decoded) {
+				markDecodedModified()
 			}
-			fpIDs := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
-			if fpIDs != nil {
-				if applyCodexFingerprintClientMetadata(decoded, fpIDs) {
-					markDecodedModified()
+		} else {
+			// Account namespace is orthogonal to fingerprint convergence: preserve
+			// each client's identity cardinality, but never reuse it across OAuth
+			// credentials after scheduler failover.
+			if !isCompactRequest && applyCodexAccountIdentityClientMetadataMap(decoded, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c)) {
+				markDecodedModified()
+			}
+			stageCodexFingerprintIDs(c, nil)
+			// 指纹收敛：一次性解析收敛 ID，请求体和出站头共享同一份 IDs（保证 turn_id 等随机字段一致）。
+			// fingerprintIDs 在此处解析，后续 buildUpstreamRequest 中使用同一份。
+			if !isCompactRequest {
+				var clientHeaders http.Header
+				if c != nil && c.Request != nil {
+					clientHeaders = c.Request.Header
 				}
+				fpIDs := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
+				if fpIDs != nil {
+					if applyCodexFingerprintClientMetadata(decoded, fpIDs) {
+						markDecodedModified()
+					}
+				}
+				// 将 fpIDs 存入 gin context，供 buildUpstreamRequest 中头改写使用。
+				// 无条件覆写（含 nil）：failover 从收敛账号切到 off 账号时，上一
+				// 账号的 IDs 不得残留（stageCodexFingerprintIDs 注释）。
+				stageCodexFingerprintIDs(c, fpIDs)
 			}
-			// 将 fpIDs 存入 gin context，供 buildUpstreamRequest 中头改写使用。
-			// 无条件覆写（含 nil）：failover 从收敛账号切到 off 账号时，上一
-			// 账号的 IDs 不得残留（stageCodexFingerprintIDs 注释）。
-			stageCodexFingerprintIDs(c, fpIDs)
 		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
@@ -1528,6 +1534,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 
 	// 指纹收敛：使用 Forward() 中预计算的收敛 ID 改写出站头，与请求体使用同一份 IDs。
 	applyStagedCodexFingerprintHeaders(c, account, req.Header)
+	applyCodexIdentityV2Headers(c, account, req.Header)
 
 	// 终态收口：强制统一 OAuth 出站身份（User-Agent / originator / version 同源自洽）。
 	// 客户端自报身份不参与构造，浏览器型 UA 也因此不会再到达上游（原浏览器 UA 兜底已被吸收）。

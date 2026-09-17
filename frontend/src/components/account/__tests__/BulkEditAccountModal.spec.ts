@@ -920,6 +920,43 @@ describe('BulkEditAccountModal', () => {
       status: 'active'
     })
   })
+  it.each(['oauth', 'setup-token'])('Codex identity version explicitly rolls back %s accounts to v1', async (type) => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: [type] })
+    await wrapper.get('#bulk-edit-openai-codex-identity-version-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: { codex_identity_version: 'v1' }
+    })
+  })
+
+  it('Codex identity version only submits v2 when explicitly selected', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    await wrapper.get('#bulk-edit-openai-codex-identity-version-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-codex-identity-version-select"]').setValue('v2')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: { codex_identity_version: 'v2' }
+    })
+    expect(wrapper.text()).toContain('admin.accounts.openai.codexIdentityBulkInherited')
+  })
+
+  it('unselected Codex identity version leaves existing versions untouched', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    await wrapper.get('#bulk-edit-openai-codex-fingerprint-mode-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: { codex_fingerprint_mode: 'off' }
+    })
+  })
+
+  it('hides Codex identity version for an API-key selection', () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey'] })
+    expect(wrapper.find('[data-testid="bulk-codex-identity-version-select"]').exists()).toBe(false)
+  })
+
   // issue #6327：批量编辑无法把 Codex 指纹收敛关掉。
   //
   // 批量更新走 JSONB 顶层合并（extra = COALESCE(extra,'{}') || payload），删掉 payload

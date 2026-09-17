@@ -973,7 +973,23 @@
         </div>
       </div>
 
-      <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
+      <!-- Codex identity version: explicit v1 switches existing v2 accounts back. -->
+      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <label for="bulk-edit-openai-codex-identity-version-enabled" class="input-label mb-0">{{ t('admin.accounts.openai.codexIdentityVersion') }}</label>
+          <input
+            id="bulk-edit-openai-codex-identity-version-enabled"
+            v-model="enableCodexIdentityVersion"
+            type="checkbox"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.codexIdentityVersionDesc') }}</p>
+        <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.codexIdentityBulkInherited') }}</p>
+        <Select v-model="codexIdentityVersion" data-testid="bulk-codex-identity-version-select" :disabled="!enableCodexIdentityVersion" :options="codexIdentityVersionOptions" />
+      </div>
+
+      <!-- Codex 指纹收敛模式（OpenAI OAuth / setup-token） -->
       <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
           <label class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
@@ -1707,6 +1723,12 @@ const upstreamBillingAutoProbeMode = ref<'enabled' | 'disabled'>('enabled')
 const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
+const enableCodexIdentityVersion = ref(false)
+const codexIdentityVersion = ref<'v1' | 'v2'>('v1')
+const codexIdentityVersionOptions = computed(() => [
+  { value: 'v1', label: t('admin.accounts.openai.codexIdentityV1') },
+  { value: 'v2', label: t('admin.accounts.openai.codexIdentityV2') },
+])
 const enableCodexFingerprintMode = ref(false)
 const codexFingerprintMode = ref<CodexFingerprintMode>('off')
 const codexFingerprintModeOptions = computed(() => [
@@ -2088,6 +2110,11 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.codex_cli_only_allow_app_server = codexCLIOnlyAppServerEnabled.value
   }
 
+  if (enableCodexIdentityVersion.value && allOpenAIOAuth.value) {
+    const extra = ensureExtra()
+    extra.codex_identity_version = codexIdentityVersion.value
+  }
+
   if (enableCodexFingerprintMode.value) {
     const extra = ensureExtra()
     // off 必须显式落键，不能靠删本地键表达。批量更新走 JSONB 顶层合并
@@ -2222,6 +2249,7 @@ const handleSubmit = async () => {
     enableUpstreamBillingAutoProbe.value ||
     enableCodexCLIOnly.value ||
     enableCodexCLIOnlyAppServer.value ||
+    (enableCodexIdentityVersion.value && allOpenAIOAuth.value) ||
     enableCodexFingerprintMode.value ||
     enableOpenAICompactMode.value ||
     enableOpenAICompactModelMapping.value ||
@@ -2373,6 +2401,8 @@ watch(
       enableUpstreamBillingAutoProbe.value = false
       enableCodexCLIOnly.value = false
       enableCodexCLIOnlyAppServer.value = false
+      enableCodexIdentityVersion.value = false
+      codexIdentityVersion.value = 'v1'
       enableCodexFingerprintMode.value = false
       codexFingerprintMode.value = 'off'
       enableOpenAICompactMode.value = false

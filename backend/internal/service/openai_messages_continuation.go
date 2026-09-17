@@ -153,6 +153,7 @@ func openAICompatSessionResponseKey(c *gin.Context, account *Account, promptCach
 	if c != nil {
 		apiKeyID = getAPIKeyIDFromContext(c)
 	}
+	key = codexIdentityV2StateKey(c, account, key)
 	return strings.Join([]string{
 		strconv.FormatInt(account.ID, 10),
 		strconv.FormatInt(apiKeyID, 10),

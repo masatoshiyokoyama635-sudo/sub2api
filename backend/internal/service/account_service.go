@@ -223,6 +223,9 @@ func NewAccountService(accountRepo AccountRepository, groupRepo GroupRepository)
 
 // Create 创建账号
 func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (*Account, error) {
+	if err := validateCodexIdentityVersionTarget(&Account{Platform: req.Platform, Type: req.Type}, req.Extra); err != nil {
+		return nil, err
+	}
 	// 验证分组是否存在（如果指定了分组）
 	if len(req.GroupIDs) > 0 {
 		if err := s.validateGroupIDsExist(ctx, req.GroupIDs); err != nil {
@@ -319,6 +322,11 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 	if err != nil {
 		return nil, fmt.Errorf("get account: %w", err)
 	}
+	if req.Extra != nil {
+		if err := validateCodexIdentityVersionTarget(account, *req.Extra); err != nil {
+			return nil, err
+		}
+	}
 
 	// 更新字段
 	if req.Name != nil {
@@ -340,6 +348,7 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 		delete(extra, OllamaCloudUsageSessionExtraKey)
 		delete(extra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(extra, OllamaCloudUsageSnapshotExtraKey)
+		extra = preserveCodexIdentityVersionForUpdate(account, extra)
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, extra)
 	} else {
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, account.Extra)
