@@ -3,7 +3,7 @@ name: Custom Docker Image
 on:
   push:
     branches:
-      - feature/chat-image-tools
+      - codex/port-codex-identity-v2
   workflow_dispatch:
 
 concurrency:
@@ -17,7 +17,7 @@ permissions:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
-  STABLE_TAG: chat-image-tools
+  STABLE_TAG: codex-identity-v2
 
 jobs:
   test:
@@ -71,6 +71,7 @@ jobs:
           pnpm run build
 
   build:
+    if: github.ref == 'refs/heads/codex/port-codex-identity-v2'
     needs: test
     permissions:
       contents: read
@@ -112,7 +113,7 @@ jobs:
           IMAGE: ${{ steps.meta.outputs.image }}
           SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
         run: |
-          for TAG in "chat-image-tools-${GITHUB_SHA}" "chat-image-tools-${SHORT_SHA}"; do
+          for TAG in "${STABLE_TAG}-${GITHUB_SHA}" "${STABLE_TAG}-${SHORT_SHA}"; do
             if docker buildx imagetools inspect "${IMAGE}:${TAG}" >"/tmp/${TAG}-inspect.txt" 2>&1; then
               echo "Refusing to overwrite existing immutable tag ${TAG}" >&2
               exit 1
@@ -132,7 +133,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            VERSION=${{ steps.meta.outputs.version }}-zz
+            VERSION=${{ steps.meta.outputs.version }}-zz-identity-v2
             BUILD_TYPE=custom
             COMMIT=${{ github.sha }}
             DATE=${{ steps.meta.outputs.build_date }}
@@ -143,6 +144,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}-zz-identity-v2
             org.opencontainers.image.created=${{ steps.meta.outputs.build_date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
