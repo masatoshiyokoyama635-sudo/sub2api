@@ -223,7 +223,7 @@ func NewAccountService(accountRepo AccountRepository, groupRepo GroupRepository)
 
 // Create 创建账号
 func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (*Account, error) {
-	if err := validateCodexIdentityVersionTarget(&Account{Platform: req.Platform, Type: req.Type}, req.Extra); err != nil {
+	if err := validateCodexIdentityVersionTarget(&Account{Platform: req.Platform, Type: req.Type, Credentials: req.Credentials}, req.Extra); err != nil {
 		return nil, err
 	}
 	// 验证分组是否存在（如果指定了分组）
@@ -323,7 +323,11 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 		return nil, fmt.Errorf("get account: %w", err)
 	}
 	if req.Extra != nil {
-		if err := validateCodexIdentityVersionTarget(account, *req.Extra); err != nil {
+		identityTarget := *account
+		if req.Credentials != nil {
+			identityTarget.Credentials = *req.Credentials
+		}
+		if err := validateCodexIdentityVersionTarget(&identityTarget, *req.Extra); err != nil {
 			return nil, err
 		}
 	}

@@ -63,6 +63,8 @@ func TestCodexIdentityV2TurnStateSharesCredentialOwnerAndShadowSource(t *testing
 	svc := &OpenAIGatewayService{}
 	first := newTurnStateV2Account(41, "shared-credential")
 	second := newTurnStateV2Account(42, "shared-credential")
+	first.Credentials["chatgpt_user_id"] = "shared-user"
+	second.Credentials["chatgpt_user_id"] = "shared-user"
 	other := newTurnStateV2Account(43, "different-credential")
 	svc.noteOpenAICodexTurnStateOrigin(nil, first, "shared-blob")
 	require.Equal(t, "shared-blob", svc.guardOpenAICodexTurnStateValue(nil, second, "shared-blob"))

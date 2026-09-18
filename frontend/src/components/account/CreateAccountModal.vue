@@ -3314,6 +3314,12 @@
             <Select v-model="codexIdentityVersion" data-testid="create-codex-identity-version-select" :options="codexIdentityVersionOptions" />
           </div>
         </div>
+        <CodexTurnStateSettings
+          v-if="codexIdentityVersion === 'v2' && oauthFlowRef?.inputMethod !== 'agent_identity'"
+          v-model:mode="codexTurnStateMode"
+          v-model:lengths="codexTurnStateLengths"
+          id-prefix="create-codex-turn-state"
+        />
         <div class="flex items-center justify-between gap-4">
           <div class="min-w-0">
             <label class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
@@ -3936,6 +3942,8 @@ import type {
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
+import CodexTurnStateSettings from '@/components/account/CodexTurnStateSettings.vue'
+import { DEFAULT_CODEX_TURN_STATE_LENGTHS, parseCodexTurnStateLengths, type CodexTurnStateMode } from '@/utils/codexTurnState'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
@@ -4451,6 +4459,8 @@ const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
 const codexIdentityVersion = ref<'v1' | 'v2'>('v1')
+const codexTurnStateMode = ref<CodexTurnStateMode>('off')
+const codexTurnStateLengths = ref(DEFAULT_CODEX_TURN_STATE_LENGTHS)
 const codexIdentityVersionOptions = computed(() => [
   { value: 'v1', label: t('admin.accounts.openai.codexIdentityV1') },
   { value: 'v2', label: t('admin.accounts.openai.codexIdentityV2') },
@@ -5377,6 +5387,8 @@ const resetForm = () => {
   codexCLIOnlyAppServerEnabled.value = false
   codexFingerprintMode.value = 'off'
   codexIdentityVersion.value = 'v1'
+  codexTurnStateMode.value = 'off'
+  codexTurnStateLengths.value = DEFAULT_CODEX_TURN_STATE_LENGTHS
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
@@ -5482,6 +5494,15 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.codex_identity_version = 'v2'
   } else {
     delete extra.codex_identity_version
+  }
+  if (accountCategory.value === 'oauth-based' && codexIdentityVersion.value === 'v2' && oauthFlowRef.value?.inputMethod !== 'agent_identity' && codexTurnStateMode.value !== 'off') {
+    const lengths = parseCodexTurnStateLengths(codexTurnStateLengths.value)
+    if (lengths === null) throw new Error(t('admin.accounts.openai.codexTurnStateLengthsInvalid'))
+    extra.codex_turn_state_mode = codexTurnStateMode.value
+    extra.codex_turn_state_candidate_lengths = lengths
+  } else {
+    delete extra.codex_turn_state_mode
+    delete extra.codex_turn_state_candidate_lengths
   }
   if (accountCategory.value === 'oauth-based' && codexFingerprintMode.value !== 'off') {
     extra.codex_fingerprint_mode = codexFingerprintMode.value
@@ -5640,6 +5661,10 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
 }
 
 const handleSubmit = async () => {
+  if (form.platform === 'openai' && accountCategory.value === 'oauth-based' && codexIdentityVersion.value === 'v2' && oauthFlowRef.value?.inputMethod !== 'agent_identity' && codexTurnStateMode.value !== 'off' && parseCodexTurnStateLengths(codexTurnStateLengths.value) === null) {
+    appStore.showError(t('admin.accounts.openai.codexTurnStateLengthsInvalid'))
+    return
+  }
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
     if (!isGrokSSOInputMethod.value && !form.name.trim()) {
@@ -6459,6 +6484,10 @@ const handleOpenAIImportCodexSession = async (content: string) => {
 
   try {
     const extra = buildOpenAICodexImportExtra()
+    if (extra && isAgentIdentityImportContent(trimmed)) {
+      delete extra.codex_turn_state_mode
+      delete extra.codex_turn_state_candidate_lengths
+    }
     const result = await adminAPI.accounts.importCodexSession({
       content: trimmed,
       name: form.name,

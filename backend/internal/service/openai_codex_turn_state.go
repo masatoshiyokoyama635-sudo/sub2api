@@ -3,6 +3,7 @@ package service
 import (
 	"container/list"
 	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strconv"
 	"strings"
@@ -141,6 +142,16 @@ func openAICodexTurnStateOwner(c *gin.Context, account *Account) string {
 		}
 		owner = "id:" + strconv.FormatInt(source.ID, 10)
 	}
+	// A Team workspace can contain many members. Without a user ID, sharing a
+	// workspace does not establish that two imported rows are the same principal.
+	// Keep this fallback local to state ownership; do not rotate outbound IDs.
+	if source.GetCodexIdentityVersion() == "v2" && strings.TrimSpace(source.GetCredential("chatgpt_user_id")) == "" {
+		owner += "\x00row:" + strconv.FormatInt(source.ID, 10)
+		if token := source.GetOpenAIAccessToken(); token != "" {
+			hash := sha256.Sum256([]byte(token))
+			owner += "\x00bearer:" + hex.EncodeToString(hash[:])
+		}
+	}
 	return owner + "\x00identity:" + source.GetCodexIdentityVersion()
 }
 
@@ -175,7 +186,9 @@ func (s *OpenAIGatewayService) relayOpenAICodexTurnState(c *gin.Context, account
 		return
 	}
 	c.Writer.Header().Set(canonical, state)
-	s.noteOpenAICodexTurnStateOrigin(c, account, state)
+	if !c.Writer.Written() {
+		s.noteOpenAICodexTurnStateOrigin(c, account, state)
+	}
 }
 
 // stageOpenAICodexTurnState 将上游 turn-state 暂存到延迟提交的响应头集合
@@ -240,6 +253,7 @@ func (s *OpenAIGatewayService) noteOpenAICodexTurnStateProvenance(c *gin.Context
 // Legacy session provenance remains available for unchanged v1 behavior.
 func (s *OpenAIGatewayService) noteOpenAICodexTurnStateOrigin(c *gin.Context, account *Account, state string) {
 	s.noteOpenAICodexTurnStateBlobOrigin(c, account, state)
+	s.observeCodexTurnStateHTTP(c, account, state)
 	if strings.TrimSpace(state) != "" && openAICodexTurnStateIdentityVersion(c, account) != "v2" {
 		s.noteOpenAICodexTurnStateProvenance(c, account)
 	}

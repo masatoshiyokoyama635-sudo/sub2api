@@ -27,17 +27,20 @@ func codexIdentityV2Enabled(account *Account) bool {
 func validateCodexIdentityVersionExtra(extra map[string]any) error {
 	value, provided := extra[codexIdentityVersionExtraKey]
 	if !provided {
-		return nil
+		return validateCodexTurnStateSettingsExtra(extra)
 	}
 	version, ok := value.(string)
 	if !ok || (version != "v1" && version != "v2") {
 		return infraerrors.BadRequest("INVALID_CODEX_IDENTITY_VERSION", "codex_identity_version must be v1 or v2")
 	}
-	return nil
+	return validateCodexTurnStateSettingsExtra(extra)
 }
 
 func validateCodexIdentityVersionTarget(account *Account, extra map[string]any) error {
 	if err := validateCodexIdentityVersionExtra(extra); err != nil {
+		return err
+	}
+	if err := validateCodexTurnStateSettingsTarget(account, extra); err != nil {
 		return err
 	}
 	if _, provided := extra[codexIdentityVersionExtraKey]; !provided {
@@ -55,6 +58,7 @@ func validateCodexIdentityVersionTarget(account *Account, extra map[string]any) 
 // An omitted field is not a request to migrate an account. This also protects
 // existing v2 accounts edited by older clients that send a full extra object.
 func preserveCodexIdentityVersionForUpdate(account *Account, extra map[string]any) map[string]any {
+	extra = preserveCodexTurnStateSettingsForUpdate(account, extra)
 	if account == nil {
 		return extra
 	}

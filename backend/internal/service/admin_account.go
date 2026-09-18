@@ -411,7 +411,7 @@ func normalizeOpenAILongContextBillingUpdateExtra(account *Account, input *Updat
 // Grok media eligibility helpers live in account_grok_media_eligibility.go.
 
 func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]any) (*Account, error) {
-	if err := validateCodexIdentityVersionTarget(&Account{Platform: input.Platform, Type: input.Type}, accountExtra); err != nil {
+	if err := validateCodexIdentityVersionTarget(&Account{Platform: input.Platform, Type: input.Type, Credentials: input.Credentials}, accountExtra); err != nil {
 		return nil, err
 	}
 	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
@@ -593,6 +593,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 		identityTarget := *account
 		identityTarget.Type = effectiveType
+		if len(input.Credentials) > 0 && !account.IsCredentialShadow() {
+			identityTarget.Credentials = MergePreservingSensitiveCreds(account.Credentials, input.Credentials)
+		}
 		if err := validateCodexIdentityVersionTarget(&identityTarget, input.Extra); err != nil {
 			return nil, err
 		}
@@ -911,7 +914,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 // UpdateAccountExtra 仅对 Extra JSONB 做 key 级合并，避免覆盖其它运行态键
 // （如 model_rate_limits / passive_usage_* 等）。
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
-	if _, provided := updates[codexIdentityVersionExtraKey]; provided {
+	if _, provided := updates[codexIdentityVersionExtraKey]; provided || hasCodexTurnStateSettingsExtra(updates) {
 		account, err := s.accountRepo.GetByID(ctx, id)
 		if err != nil {
 			return err
@@ -950,6 +953,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		return nil, err
 	}
 	_, updatesCodexIdentityVersion := input.Extra[codexIdentityVersionExtraKey]
+	updatesCodexIdentityVersion = updatesCodexIdentityVersion || hasCodexTurnStateSettingsExtra(input.Extra)
 	// Managed probe/session state may only enter through dedicated typed endpoints.
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
 	input.Extra = stripOpenAIAutoResetCreditManagedExtra(input.Extra, true)
@@ -1013,7 +1017,14 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			if account == nil {
 				return nil, ErrAccountNotFound
 			}
-			if err := validateCodexIdentityVersionTarget(account, input.Extra); err != nil {
+			identityTarget := *account
+			if len(input.Credentials) > 0 {
+				// Bulk credential writes merge keys, unlike a single-account edit.
+				identityTarget.Credentials = make(map[string]any, len(account.Credentials)+len(input.Credentials))
+				maps.Copy(identityTarget.Credentials, account.Credentials)
+				maps.Copy(identityTarget.Credentials, input.Credentials)
+			}
+			if err := validateCodexIdentityVersionTarget(&identityTarget, input.Extra); err != nil {
 				return nil, err
 			}
 		}

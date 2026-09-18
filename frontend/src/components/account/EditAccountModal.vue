@@ -2270,6 +2270,16 @@
             <Select v-model="codexIdentityVersion" data-testid="edit-codex-identity-version-select" :options="codexIdentityVersionOptions" />
           </div>
         </div>
+        <CodexTurnStateSettings
+          v-if="!isSparkShadow && !isAgentIdentity && codexIdentityVersion === 'v2'"
+          v-model:mode="codexTurnStateMode"
+          v-model:lengths="codexTurnStateLengths"
+          id-prefix="edit-codex-turn-state"
+        />
+        <CodexTurnStateStatusPanel
+          v-if="!isSparkShadow && !isAgentIdentity && codexIdentityVersion === 'v2' && account"
+          :account-id="account.id"
+        />
         <div v-if="!isSparkShadow" class="flex items-center justify-between gap-4">
           <div class="min-w-0">
             <label class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
@@ -3055,6 +3065,9 @@ import type {
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
+import CodexTurnStateSettings from '@/components/account/CodexTurnStateSettings.vue'
+import CodexTurnStateStatusPanel from '@/components/account/CodexTurnStateStatusPanel.vue'
+import { DEFAULT_CODEX_TURN_STATE_LENGTHS, parseCodexTurnStateLengths, formatCodexTurnStateLengths, readCodexTurnStateMode, type CodexTurnStateMode } from '@/utils/codexTurnState'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import Toggle from '@/components/common/Toggle.vue'
@@ -3158,6 +3171,7 @@ const selectableGroups = computed(() => {
 // Spark 影子账号(parent_account_id 非空):代理恒继承母账号,不可独立编辑(外审 B/P1),
 // 故隐藏代理选择器。
 const isSparkShadow = computed(() => props.account?.parent_account_id != null)
+const isAgentIdentity = computed(() => props.account?.platform === 'openai' && props.account.type === 'oauth' && String(props.account.credentials?.auth_mode ?? '').trim().toLowerCase() === 'agentidentity')
 
 const hideAccountLongContextBilling = computed(() => {
   return allSelectedGroupsEnableLongContextPricing(form.group_ids, props.groups)
@@ -3543,6 +3557,8 @@ const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
 const codexIdentityVersion = ref<'v1' | 'v2'>('v1')
+const codexTurnStateMode = ref<CodexTurnStateMode>('off')
+const codexTurnStateLengths = ref(DEFAULT_CODEX_TURN_STATE_LENGTHS)
 const codexIdentityVersionOptions = computed(() => [
   { value: 'v1', label: t('admin.accounts.openai.codexIdentityV1') },
   { value: 'v2', label: t('admin.accounts.openai.codexIdentityV2') },
@@ -4031,6 +4047,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   codexCLIOnlyAppServerEnabled.value = false
   codexFingerprintMode.value = 'off'
   codexIdentityVersion.value = 'v1'
+  codexTurnStateMode.value = 'off'
+  codexTurnStateLengths.value = DEFAULT_CODEX_TURN_STATE_LENGTHS
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -4085,6 +4103,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     if (newAccount.type === 'oauth' || newAccount.type === 'setup-token') {
       const fpMode = extra?.codex_fingerprint_mode as string | undefined
       codexIdentityVersion.value = extra?.codex_identity_version === 'v2' ? 'v2' : 'v1'
+      codexTurnStateMode.value = readCodexTurnStateMode(extra?.codex_turn_state_mode)
+      codexTurnStateLengths.value = formatCodexTurnStateLengths(extra?.codex_turn_state_candidate_lengths)
       // 缺省/非法值按 off 呈现，与后端 GetCodexFingerprintMode 的 opt-in 语义一致（#5610）
       codexFingerprintMode.value = (['off', 'device', 'session', 'full'].includes(fpMode || '')
         ? fpMode as CodexFingerprintMode
@@ -5622,12 +5642,29 @@ const handleSubmit = async () => {
       if (props.account.type === 'oauth' || props.account.type === 'setup-token') {
         if (isSparkShadow.value) {
           delete newExtra.codex_identity_version
+          delete newExtra.codex_turn_state_mode
+          delete newExtra.codex_turn_state_candidate_lengths
         } else if (codexIdentityVersion.value === 'v2' || currentExtra.codex_identity_version !== undefined) {
           // Explicit v1 also serves as a rollback; omission preserves older accounts.
           newExtra.codex_identity_version = codexIdentityVersion.value
         }
       }
       if (!isSparkShadow.value && (props.account.type === 'oauth' || props.account.type === 'setup-token')) {
+        if (isAgentIdentity.value) {
+          delete newExtra.codex_turn_state_mode
+          delete newExtra.codex_turn_state_candidate_lengths
+        } else if (codexIdentityVersion.value === 'v2' && codexTurnStateMode.value !== 'off') {
+          const lengths = parseCodexTurnStateLengths(codexTurnStateLengths.value)
+          if (lengths === null) throw new Error(t('admin.accounts.openai.codexTurnStateLengthsInvalid'))
+          newExtra.codex_turn_state_mode = codexTurnStateMode.value
+          newExtra.codex_turn_state_candidate_lengths = lengths
+        } else {
+          // Explicit off can disable saved capture; omission preserves legacy defaults.
+          if (currentExtra.codex_turn_state_mode !== undefined) newExtra.codex_turn_state_mode = 'off'
+          if (currentExtra.codex_turn_state_candidate_lengths !== undefined) {
+            newExtra.codex_turn_state_candidate_lengths = parseCodexTurnStateLengths(codexTurnStateLengths.value) ?? []
+          }
+        }
         if (codexFingerprintMode.value !== 'off') {
           newExtra.codex_fingerprint_mode = codexFingerprintMode.value
         } else {

@@ -942,6 +942,48 @@ describe('BulkEditAccountModal', () => {
     expect(wrapper.text()).toContain('admin.accounts.openai.codexIdentityBulkInherited')
   })
 
+  it('bulk state settings keep lengths configurable for Team accounts', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    await wrapper.get('#bulk-edit-codex-turn-state-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-codex-turn-state-mode"]').setValue('reuse')
+    await wrapper.get('[data-testid="bulk-codex-turn-state-lengths"]').setValue('332, 292, 332')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: { codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332, 292] }
+    })
+  })
+
+  it('bulk state opt-out explicitly writes off and leaves candidate settings alone', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    await wrapper.get('#bulk-edit-codex-turn-state-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { extra: { codex_turn_state_mode: 'off' } })
+  })
+
+  it.each(['332.5', '99', '2049', '100,101,102,103,104,105,106,107,108'])('rejects invalid bulk candidate lengths %s', async (lengths) => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    await wrapper.get('#bulk-edit-codex-turn-state-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-codex-turn-state-mode"]').setValue('observe')
+    await wrapper.get('[data-testid="bulk-codex-turn-state-lengths"]').setValue(lengths)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith('admin.accounts.openai.codexTurnStateLengthsInvalid')
+  })
+
+  it('cannot enable state reuse and explicitly switch to v1 in the same bulk edit', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    await wrapper.get('#bulk-edit-openai-codex-identity-version-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-codex-turn-state-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-codex-turn-state-mode"]').setValue('reuse')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith('admin.accounts.openai.codexTurnStateRequiresV2')
+  })
+
   it('unselected Codex identity version leaves existing versions untouched', async () => {
     const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
     await wrapper.get('#bulk-edit-openai-codex-fingerprint-mode-enabled').setValue(true)
