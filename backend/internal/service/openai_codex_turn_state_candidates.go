@@ -128,6 +128,24 @@ func (bucket *openAICodexTurnStateCandidateBucket) expire(now time.Time) {
 	}
 }
 
+// bucketLocked drops malformed nodes instead of exposing an unverified owner.
+// Callers must hold cache.mu.
+func (cache *openAICodexTurnStateCandidates) bucketLocked(key openAICodexTurnStateCandidateKey) *openAICodexTurnStateCandidateBucket {
+	element, exists := cache.buckets[key]
+	if !exists {
+		return nil
+	}
+	if element != nil {
+		bucket, ok := element.Value.(*openAICodexTurnStateCandidateBucket)
+		if ok && bucket != nil && bucket.key == key && bucket.lengths != nil {
+			return bucket
+		}
+		cache.order.Remove(element)
+	}
+	delete(cache.buckets, key)
+	return nil
+}
+
 // Observe counts every supplied header length, including malformed or
 // ineligible states. Empty lengths disables candidate selection. The account
 // getter, rather than this store, supplies any default length policy.
@@ -141,23 +159,32 @@ func (cache *openAICodexTurnStateCandidates) Observe(scope, model, value string,
 		cache.buckets = make(map[openAICodexTurnStateCandidateKey]*list.Element)
 	}
 	key := openAICodexTurnStateCandidateKey{scope: scope, model: model}
-	element := cache.buckets[key]
-	if element == nil {
+	bucket := cache.bucketLocked(key)
+	if bucket == nil {
 		if len(cache.buckets) >= openAICodexTurnStateCandidateMaxBuckets {
 			oldest := cache.order.Front()
-			delete(cache.buckets, oldest.Value.(*openAICodexTurnStateCandidateBucket).key)
-			cache.order.Remove(oldest)
+			if oldest != nil {
+				oldestBucket, ok := oldest.Value.(*openAICodexTurnStateCandidateBucket)
+				if ok && oldestBucket != nil && cache.buckets[oldestBucket.key] == oldest {
+					delete(cache.buckets, oldestBucket.key)
+					cache.order.Remove(oldest)
+				} else {
+					cache.buckets = make(map[openAICodexTurnStateCandidateKey]*list.Element)
+					cache.order.Init()
+				}
+			} else {
+				cache.buckets = make(map[openAICodexTurnStateCandidateKey]*list.Element)
+				cache.order.Init()
+			}
 		}
-		bucket := &openAICodexTurnStateCandidateBucket{
+		bucket = &openAICodexTurnStateCandidateBucket{
 			key:     key,
 			lengths: make(map[int]uint64),
 		}
-		element = cache.order.PushBack(bucket)
-		cache.buckets[key] = element
+		cache.buckets[key] = cache.order.PushBack(bucket)
 	} else {
-		cache.order.MoveToBack(element)
+		cache.order.MoveToBack(cache.buckets[key])
 	}
-	bucket := element.Value.(*openAICodexTurnStateCandidateBucket)
 	bucket.expire(now)
 	bucket.observedCount++
 	bucket.lastObservedAt = now.UTC()
@@ -214,11 +241,10 @@ func (cache *openAICodexTurnStateCandidates) Candidate(scope, model string, now 
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	element := cache.buckets[openAICodexTurnStateCandidateKey{scope: scope, model: model}]
-	if element == nil {
+	bucket := cache.bucketLocked(openAICodexTurnStateCandidateKey{scope: scope, model: model})
+	if bucket == nil {
 		return "", false
 	}
-	bucket := element.Value.(*openAICodexTurnStateCandidateBucket)
 	bucket.expire(now)
 	if bucket.candidate == nil || now.Before(bucket.candidate.metadata.IssuedAt) {
 		return "", false
@@ -239,11 +265,14 @@ func (cache *openAICodexTurnStateCandidates) Snapshot(scope string, now time.Tim
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	for key, element := range cache.buckets {
+	for key := range cache.buckets {
 		if key.scope != scope {
 			continue
 		}
-		bucket := element.Value.(*openAICodexTurnStateCandidateBucket)
+		bucket := cache.bucketLocked(key)
+		if bucket == nil {
+			continue
+		}
 		bucket.expire(now)
 		snapshot := CodexTurnStateModelSnapshot{
 			Model:            key.model,
@@ -279,7 +308,9 @@ func (cache *openAICodexTurnStateCandidates) Clear(scope string) {
 	for key, element := range cache.buckets {
 		if key.scope == scope {
 			delete(cache.buckets, key)
-			cache.order.Remove(element)
+			if element != nil {
+				cache.order.Remove(element)
+			}
 		}
 	}
 }
@@ -293,11 +324,10 @@ func (cache *openAICodexTurnStateCandidates) Invalidate(scope, model, value stri
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	element := cache.buckets[openAICodexTurnStateCandidateKey{scope: scope, model: model}]
-	if element == nil {
+	bucket := cache.bucketLocked(openAICodexTurnStateCandidateKey{scope: scope, model: model})
+	if bucket == nil {
 		return
 	}
-	bucket := element.Value.(*openAICodexTurnStateCandidateBucket)
 	if bucket.candidate != nil && bucket.candidate.value == value {
 		bucket.candidate = nil
 	}
