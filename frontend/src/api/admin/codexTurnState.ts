@@ -11,12 +11,37 @@ export interface CodexTurnStateCandidate {
   last_reused_at?: string
 }
 
+export interface CodexTurnStateDiagnostic {
+  reason: string
+  at: string
+}
+
+export interface CodexTurnStateRequestSnapshot {
+  at: string
+  request_id?: string
+  state_source: 'none' | 'client' | 'candidate'
+  outbound_state_length: number
+  upstream_response_model?: string
+  response_model_observed: boolean
+  model_mismatch: boolean
+  selection_reason: string
+  failed: boolean
+}
+
 export interface CodexTurnStateModelSnapshot {
   model: string
   observed_count: number
   last_observed_at: string
   lengths: Array<{ length: number; count: number }>
   other_length_count: number
+  // Optional for compatibility with snapshots produced before bucket diagnostics.
+  reuse_attempt_count?: number
+  last_reuse_attempt_at?: string
+  last_selection?: CodexTurnStateDiagnostic
+  last_candidate_observation?: CodexTurnStateDiagnostic
+  last_candidate_rejection?: CodexTurnStateDiagnostic
+  last_candidate_invalidation?: CodexTurnStateDiagnostic
+  last_request?: CodexTurnStateRequestSnapshot
   candidate?: CodexTurnStateCandidate
 }
 

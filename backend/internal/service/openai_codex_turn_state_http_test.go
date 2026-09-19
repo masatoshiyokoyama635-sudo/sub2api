@@ -5,8 +5,10 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"maps"
@@ -176,7 +178,13 @@ func TestCodexTeamHTTPFailedUncommittedAttemptDoesNotCollect(t *testing.T) {
 	_, err := svc.Forward(context.Background(), c, account, body)
 	require.Error(t, err)
 	require.False(t, c.Writer.Written())
-	require.Empty(t, svc.CodexTurnStateStatus(context.Background(), account).Models)
+	models := svc.CodexTurnStateStatus(context.Background(), account).Models
+	require.Len(t, models, 1, "failed requests may retain diagnostics without collecting a state")
+	require.Zero(t, models[0].ObservedCount)
+	require.Empty(t, models[0].Lengths)
+	require.Nil(t, models[0].Candidate)
+	require.NotNil(t, models[0].LastRequest)
+	require.True(t, models[0].LastRequest.Failed)
 }
 
 func TestCodexTeamStateUnknownMemberIsNotShared(t *testing.T) {
@@ -186,4 +194,85 @@ func TestCodexTeamStateUnknownMemberIsNotShared(t *testing.T) {
 	svc.noteOpenAICodexTurnStateOrigin(nil, first, "opaque-332")
 	require.Empty(t, svc.guardOpenAICodexTurnStateValue(nil, second, "opaque-332"))
 	require.Equal(t, "opaque-332", svc.guardOpenAICodexTurnStateValue(nil, first, "opaque-332"))
+}
+
+type codexTurnStateRefreshInterleavingUpstream struct {
+	HTTPUpstream
+	beforeResponse func()
+}
+
+func (u *codexTurnStateRefreshInterleavingUpstream) Do(req *http.Request, proxyURL string, accountID int64, concurrency int) (*http.Response, error) {
+	if u.beforeResponse != nil {
+		u.beforeResponse()
+	}
+	return u.HTTPUpstream.Do(req, proxyURL, accountID, concurrency)
+}
+
+func TestCodexTeamHTTPRefreshAfterInjectedState(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	stateA := testCodexTurnStateEnvelope(now.Add(-10*time.Minute), 12, 1)
+	stateB := testCodexTurnStateEnvelope(now.Add(-time.Minute), 12, 2)
+	stateC := testCodexTurnStateEnvelope(now.Add(-30*time.Second), 12, 3)
+	hashPrefix := func(value string) string {
+		digest := sha256.Sum256([]byte(value))
+		return hex.EncodeToString(digest[:])[:12]
+	}
+	for _, passthrough := range []bool{false, true} {
+		transport := "standard"
+		if passthrough {
+			transport = "passthrough"
+		}
+		for _, tc := range []struct {
+			name              string
+			returned          string
+			want              string
+			intervening       string
+			wantObservedCount uint64
+		}{
+			{"same_value_echo", stateA, stateA, "", 2},
+			{"fresh_successor", stateB, stateB, "", 2},
+			{"disallowed_length", testCodexTurnStateEnvelope(now.Add(-time.Minute), 13, 2), stateA, "", 2},
+			{"expired", testCodexTurnStateEnvelope(now.Add(-2*time.Hour), 12, 2), stateA, "", 2},
+			{"future", testCodexTurnStateEnvelope(now.Add(time.Minute), 12, 2), stateA, "", 2},
+			{"malformed", strings.Repeat("!", 332), stateA, "", 2},
+			{"older_successor", testCodexTurnStateEnvelope(now.Add(-20*time.Minute), 12, 2), stateA, "", 2},
+			{"concurrent_newer_candidate", stateB, stateC, stateC, 3},
+		} {
+			t.Run(transport+"/"+tc.name, func(t *testing.T) {
+				resp := codexTurnStateSubmissionResponse("text/event-stream", tc.returned, io.NopCloser(strings.NewReader(codexTurnStateSubmissionSSE)))
+				svc, account, c, recorder, upstream, _ := newCodexTurnStateSubmissionRequest(t, true, resp)
+				account.Extra["openai_passthrough"] = passthrough
+				account.Extra["codex_turn_state_mode"] = "reuse"
+				account.Credentials["chatgpt_user_id"] = "synthetic-member"
+				scope := codexTurnStateCandidateScope(account, account)
+				svc.openaiCodexTurnStateCandidates.Observe(scope, "gpt-5.4", stateA, []int{332}, now)
+				if tc.intervening != "" {
+					// Publish C after this request selected A but before B's response
+					// is committed: the exact ordering of two concurrent requests.
+					svc.httpUpstream = &codexTurnStateRefreshInterleavingUpstream{
+						HTTPUpstream: upstream,
+						beforeResponse: func() {
+							svc.openaiCodexTurnStateCandidates.Observe(scope, "gpt-5.4", tc.intervening, []int{332}, now)
+						},
+					}
+				}
+				body := []byte(`{"model":"gpt-5.4","stream":true,"instructions":"local refresh fixture","input":[{"role":"user","content":"local only"}]}`)
+				_, err := svc.Forward(context.Background(), c, account, body)
+				require.NoError(t, err)
+				require.Len(t, upstream.requests, 1)
+				require.True(t, upstream.requests[0].Header.Get(openAICodexTurnStateHeader) == stateA, "the attempt must have selected synthetic candidate A")
+				require.Equal(t, "gpt-5.4", gjson.GetBytes(upstream.lastBody, "model").String())
+				require.True(t, c.Writer.Written())
+				require.True(t, recorder.Result().Header.Get(openAICodexTurnStateHeader) == tc.returned, "candidate validation must not change downstream state relay")
+				snapshots := svc.openaiCodexTurnStateCandidates.Snapshot(scope, time.Now())
+				require.Len(t, snapshots, 1)
+				require.Equal(t, tc.wantObservedCount, snapshots[0].ObservedCount)
+				require.NotNil(t, snapshots[0].Candidate)
+				require.Equal(t, hashPrefix(tc.want), snapshots[0].Candidate.HashPrefix)
+				_, expectedExpiry, valid := parseOpenAICodexTurnStateCandidate(tc.want, now)
+				require.True(t, valid)
+				require.Equal(t, expectedExpiry, snapshots[0].Candidate.ExpiresAt, "a deadline belongs to the selected token's envelope timestamp")
+			})
+		}
+	}
 }

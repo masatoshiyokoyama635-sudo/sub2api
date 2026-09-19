@@ -18,7 +18,13 @@ import (
 )
 
 // Forward forwards request to OpenAI API
-func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (forwardResult *OpenAIForwardResult, forwardError error) {
+	if c != nil {
+		c.Set(codexTurnStateHTTPDiagnosticsKey, (*codexTurnStateRequestAttempt)(nil))
+	}
+	defer func() {
+		s.finishCodexTurnStateHTTPRequest(ctx, c, account, forwardResult, forwardError)
+	}()
 	recordCodexTurnStateClientIntent(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)

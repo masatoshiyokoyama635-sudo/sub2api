@@ -268,3 +268,166 @@ func TestCodexTurnStateCandidatesConcurrentObservationAndAdministration(t *testi
 	require.LessOrEqual(t, len(cache.buckets), 8)
 	require.Equal(t, len(cache.buckets), cache.order.Len())
 }
+
+func TestCodexTurnStateCandidatesDiagnosticsPreserveBucketAttemptsAcrossReplacement(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	var cache openAICodexTurnStateCandidates
+	first := testCodexTurnStateEnvelope(now.Add(-time.Minute), 12, 1)
+	second := testCodexTurnStateEnvelope(now, 12, 2)
+	cache.Observe("member-a", "gpt-test", first, []int{332}, now)
+	_, ok := cache.SelectCandidate("member-a", "gpt-test", []int{332}, now)
+	require.True(t, ok)
+	cache.Observe("member-a", "gpt-test", second, []int{332}, now.Add(time.Second))
+	snapshot := cache.Snapshot("member-a", now.Add(time.Second))[0]
+	require.Equal(t, uint64(1), snapshot.ReuseAttemptCount)
+	require.Equal(t, uint64(0), snapshot.Candidate.ReuseCount)
+	require.Equal(t, now, *snapshot.LastReuseAttemptAt)
+	require.Equal(t, "refreshed", snapshot.LastCandidateObservation.Reason)
+	_, ok = cache.SelectCandidate("member-a", "gpt-test", []int{332}, now.Add(2*time.Second))
+	require.True(t, ok)
+	cache.Invalidate("member-a", "gpt-test", second)
+	snapshot = cache.Snapshot("member-a", now.Add(3*time.Second))[0]
+	require.Nil(t, snapshot.Candidate)
+	require.Equal(t, uint64(2), snapshot.ReuseAttemptCount)
+	require.Equal(t, now.Add(2*time.Second), *snapshot.LastReuseAttemptAt)
+	require.Equal(t, "upstream_rejected", snapshot.LastCandidateInvalidation.Reason)
+	cache.Observe("member-a", "gpt-test", first, []int{332}, now.Add(3*time.Second))
+	snapshot = cache.Snapshot("member-a", now.Add(time.Hour))[0]
+	require.Nil(t, snapshot.Candidate)
+	require.Equal(t, uint64(2), snapshot.ReuseAttemptCount)
+	require.Equal(t, "expired", snapshot.LastCandidateInvalidation.Reason)
+	cache.Clear("member-a")
+	require.Empty(t, cache.Snapshot("member-a", now))
+}
+
+func TestCodexTurnStateCandidatesDiagnosticsSelectionIncludesMissesAndLengthPolicy(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	var cache openAICodexTurnStateCandidates
+	_, ok := cache.SelectCandidate("member-a", "gpt-test", []int{332}, now)
+	require.False(t, ok)
+	snapshot := cache.Snapshot("member-a", now)[0]
+	require.Equal(t, "no_candidate", snapshot.LastSelection.Reason)
+	require.Equal(t, uint64(0), snapshot.ObservedCount)
+	value := testCodexTurnStateEnvelope(now, 12, 1)
+	cache.Observe("member-a", "gpt-test", value, []int{332}, now)
+	for _, lengths := range [][]int{{292}, nil, {}} {
+		_, ok = cache.SelectCandidate("member-a", "gpt-test", lengths, now)
+		require.False(t, ok)
+		snapshot = cache.Snapshot("member-a", now)[0]
+		require.Equal(t, "length_not_allowed", snapshot.LastSelection.Reason)
+		require.Zero(t, snapshot.ReuseAttemptCount)
+		require.Zero(t, snapshot.Candidate.ReuseCount)
+	}
+	_, ok = cache.SelectCandidate("member-a", "gpt-test", []int{332}, now)
+	require.True(t, ok)
+	snapshot = cache.Snapshot("member-a", now)[0]
+	require.Equal(t, "reused", snapshot.LastSelection.Reason)
+	require.Equal(t, uint64(1), snapshot.ReuseAttemptCount)
+	// A status poll may expire the candidate before the next selection.
+	cache.Snapshot("member-a", now.Add(time.Hour))
+	_, ok = cache.SelectCandidate("member-a", "gpt-test", []int{332}, now.Add(time.Hour))
+	require.False(t, ok)
+	snapshot = cache.Snapshot("member-a", now.Add(time.Hour))[0]
+	require.Equal(t, "expired", snapshot.LastSelection.Reason)
+	require.Equal(t, "expired", snapshot.LastCandidateInvalidation.Reason)
+	require.Equal(t, uint64(1), snapshot.ReuseAttemptCount)
+}
+
+func TestCodexTurnStateCandidatesDiagnosticsExplainObservationWithoutDisplacingCandidate(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	valid := testCodexTurnStateEnvelope(now.Add(-time.Minute), 12, 1)
+	for _, tc := range []struct {
+		name, value, reason string
+		lengths             []int
+	}{
+		{name: "policy", value: valid, lengths: []int{292}, reason: "length_not_allowed"},
+		{name: "malformed", value: "!" + valid[1:], lengths: []int{332}, reason: "invalid_format"},
+		{name: "future", value: testCodexTurnStateEnvelope(now.Add(time.Second), 12, 1), lengths: []int{332}, reason: "future_timestamp"},
+		{name: "expired", value: testCodexTurnStateEnvelope(now.Add(-time.Hour), 12, 1), lengths: []int{332}, reason: "expired"},
+		{name: "stale", value: testCodexTurnStateEnvelope(now.Add(-2*time.Minute), 12, 1), lengths: []int{332}, reason: "stale"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cache openAICodexTurnStateCandidates
+			cache.Observe("member-a", "gpt-test", valid, []int{332}, now)
+			require.Equal(t, "accepted", cache.Snapshot("member-a", now)[0].LastCandidateObservation.Reason)
+			cache.Observe("member-a", "gpt-test", tc.value, tc.lengths, now)
+			snapshot := cache.Snapshot("member-a", now)[0]
+			require.Equal(t, tc.reason, snapshot.LastCandidateObservation.Reason)
+			require.Equal(t, tc.reason, snapshot.LastCandidateRejection.Reason)
+			require.Equal(t, now, snapshot.LastCandidateRejection.At)
+			got, ok := cache.SelectCandidate("member-a", "gpt-test", []int{332}, now)
+			require.True(t, ok)
+			require.Equal(t, valid, got)
+			cache.Observe("member-a", "gpt-test", valid, []int{332}, now)
+			snapshot = cache.Snapshot("member-a", now)[0]
+			require.Equal(t, "unchanged", snapshot.LastCandidateObservation.Reason)
+			require.Equal(t, tc.reason, snapshot.LastCandidateRejection.Reason, "retain the last rejection as history")
+		})
+	}
+}
+
+func TestCodexTurnStateCandidatesDiagnosticsEchoDoesNotRenewOrSeed(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	var cache openAICodexTurnStateCandidates
+	value := testCodexTurnStateEnvelope(now, 12, 1)
+	cache.Observe("member-a", "gpt-test", value, []int{332}, now)
+	cache.ObserveEcho("member-a", "gpt-test", value, now.Add(time.Minute))
+	snapshot := cache.Snapshot("member-a", now.Add(time.Minute))[0]
+	require.Equal(t, uint64(2), snapshot.ObservedCount)
+	require.Equal(t, "state_echo", snapshot.LastCandidateObservation.Reason)
+	require.Equal(t, "state_echo", snapshot.LastCandidateRejection.Reason)
+	require.Equal(t, uint64(1), snapshot.Candidate.ObservedCount)
+	require.Equal(t, now, snapshot.Candidate.LastObservedAt)
+	require.Equal(t, now.Add(time.Hour), snapshot.Candidate.ExpiresAt)
+	cache.ObserveEcho("member-a", "gpt-empty", value, now)
+	require.Nil(t, cache.Snapshot("member-a", now)[0].Candidate)
+	cache.ObserveEcho("member-a", "gpt-test", value, now.Add(time.Hour))
+	require.Nil(t, cache.Snapshot("member-a", now.Add(time.Hour))[1].Candidate)
+}
+
+func TestCodexTurnStateCandidatesDiagnosticsBoundRedactAndDetachRequestMetadata(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	var cache openAICodexTurnStateCandidates
+	value := testCodexTurnStateEnvelope(now, 12, 1)
+	cache.RecordSelection("secret-scope", "gpt-test", value, now)
+	require.Empty(t, cache.buckets, "arbitrary reason strings are discarded before allocation")
+	cache.Observe("secret-scope", "gpt-test", value, []int{332}, now)
+	cache.RecordSelection("secret-scope", "gpt-test", "client_continuation", now)
+	cache.RecordRequest("secret-scope", "gpt-test", CodexTurnStateRequestSnapshot{
+		At: now, RequestID: "request-1", StateSource: "candidate", OutboundStateLength: 332,
+		SelectionReason: "reused", UpstreamResponseModel: "gpt-luna", ResponseModelObserved: true, ModelMismatch: true,
+	})
+	snapshot := cache.Snapshot("secret-scope", now)[0]
+	require.Equal(t, "client_continuation", snapshot.LastSelection.Reason)
+	require.Zero(t, snapshot.ReuseAttemptCount, "diagnostic writes do not increment attempts")
+	snapshot.LastSelection.Reason = "mutated"
+	snapshot.LastCandidateObservation.At = now.Add(time.Hour)
+	snapshot.LastRequest.RequestID = "mutated"
+	again := cache.Snapshot("secret-scope", now)[0]
+	require.Equal(t, "client_continuation", again.LastSelection.Reason)
+	require.Equal(t, now, again.LastCandidateObservation.At)
+	require.Equal(t, "request-1", again.LastRequest.RequestID)
+	cache.RecordRequest("secret-scope", "gpt-test", CodexTurnStateRequestSnapshot{
+		At: now, RequestID: value, SelectionReason: value, StateSource: value,
+		UpstreamResponseModel: "private@example.invalid\nBearer secret", ResponseModelObserved: true, ModelMismatch: true,
+	})
+	again = cache.Snapshot("secret-scope", now)[0]
+	require.Empty(t, again.LastRequest.RequestID)
+	require.Empty(t, again.LastRequest.SelectionReason)
+	require.Equal(t, "none", again.LastRequest.StateSource)
+	require.Empty(t, again.LastRequest.UpstreamResponseModel)
+	require.False(t, again.LastRequest.ResponseModelObserved)
+	require.False(t, again.LastRequest.ModelMismatch)
+	raw, err := json.Marshal(again)
+	require.NoError(t, err)
+	for _, sensitive := range []string{value, "secret-scope", "private@example.invalid", "Bearer"} {
+		require.NotContains(t, string(raw), sensitive)
+	}
+	for i := 0; i < openAICodexTurnStateCandidateMaxBuckets+1; i++ {
+		model := fmt.Sprintf("gpt-%04d", i)
+		cache.RecordSelection("member-a", model, "observe_mode", now)
+		cache.RecordRequest("member-a", model, CodexTurnStateRequestSnapshot{At: now, StateSource: "none"})
+	}
+	require.Len(t, cache.buckets, openAICodexTurnStateCandidateMaxBuckets)
+	require.Equal(t, openAICodexTurnStateCandidateMaxBuckets, cache.order.Len())
+}

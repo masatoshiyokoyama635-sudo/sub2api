@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 
 const codexTurnStateHTTPContextKey = "openai_codex_turn_state_http_attempt"
 const codexTurnStateClientIntentKey = "openai_codex_turn_state_client_continuation"
+const codexTurnStateClientIntentReasonKey = "openai_codex_turn_state_client_intent_reason"
 
 // Forward may remove a client continuation ID when normalizing an HTTP body.
 // Remember the client's intent before that transformation so candidate reuse
@@ -25,13 +25,19 @@ func recordCodexTurnStateClientIntent(c *gin.Context, body []byte) {
 		return
 	}
 	continuation := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String()) != ""
+	reason := ""
+	if continuation {
+		reason = "client_continuation"
+	}
 	gjson.GetBytes(body, "client_metadata").ForEach(func(key, value gjson.Result) bool {
-		if strings.EqualFold(key.String(), openAICodexTurnStateHeader) && strings.TrimSpace(value.String()) != "" {
+		if !continuation && strings.EqualFold(key.String(), openAICodexTurnStateHeader) && strings.TrimSpace(value.String()) != "" {
 			continuation = true
+			reason = "client_metadata_state"
 		}
 		return !continuation
 	})
 	c.Set(codexTurnStateClientIntentKey, continuation)
+	c.Set(codexTurnStateClientIntentReasonKey, reason)
 }
 
 type codexTurnStateHTTPRequestKey struct{}
@@ -115,6 +121,7 @@ func (s *OpenAIGatewayService) prepareCodexTurnStateHTTP(c *gin.Context, account
 	// Gin contexts are reused across failover attempts. Always reset this slot,
 	// including attempts whose new credential has the feature switched off.
 	c.Set(codexTurnStateHTTPContextKey, (*codexTurnStateHTTPAttempt)(nil))
+	c.Set(codexTurnStateHTTPDiagnosticsKey, (*codexTurnStateRequestAttempt)(nil))
 	source := codexAccountIdentitySource(c, account)
 	if source == nil || account == nil || source.IsOpenAIAgentIdentity() || !account.UsesOpenAICodexProtocol() || source.GetCodexTurnStateMode() == "off" {
 		return req
@@ -134,11 +141,27 @@ func (s *OpenAIGatewayService) prepareCodexTurnStateHTTP(c *gin.Context, account
 	}
 	attempt := &codexTurnStateHTTPAttempt{scope: scope, model: model, accountID: account.ID, lengths: source.GetCodexTurnStateCandidateLengths()}
 	c.Set(codexTurnStateHTTPContextKey, attempt)
+	selectionReason := "no_candidate"
+	defer func() {
+		s.recordCodexTurnStateHTTPSelection(c, attempt, body, req, selectionReason)
+	}()
 	// A client-supplied state (even one stripped by the provenance guard) and a
 	// response-ID continuation are not invitations to choose another turn state.
-	if source.GetCodexTurnStateMode() != "reuse" || c.GetBool(codexTurnStateClientIntentKey) || req.Header.Get(openAICodexTurnStateHeader) != "" ||
-		(c.Request != nil && strings.TrimSpace(c.GetHeader(openAICodexTurnStateHeader)) != "") ||
+	if source.GetCodexTurnStateMode() != "reuse" {
+		selectionReason = "observe_mode"
+		return req
+	}
+	if c.GetBool(codexTurnStateClientIntentKey) ||
 		strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String()) != "" {
+		selectionReason = "client_continuation"
+		if c.GetString(codexTurnStateClientIntentReasonKey) == "client_metadata_state" {
+			selectionReason = "client_metadata_state"
+		}
+		return req
+	}
+	if req.Header.Get(openAICodexTurnStateHeader) != "" ||
+		(c.Request != nil && strings.TrimSpace(c.GetHeader(openAICodexTurnStateHeader)) != "") {
+		selectionReason = "client_state"
 		return req
 	}
 	hasFrameState := false
@@ -149,21 +172,16 @@ func (s *OpenAIGatewayService) prepareCodexTurnStateHTTP(c *gin.Context, account
 		return !hasFrameState
 	})
 	if hasFrameState {
+		selectionReason = "client_metadata_state"
 		return req
 	}
-	// Inspect metadata first so a removed length does not count as a reuse. Check
-	// the actual value again after lookup to cover a concurrent newer observation.
-	for _, snapshot := range s.openaiCodexTurnStateCandidates.Snapshot(scope, time.Now()) {
-		if snapshot.Model != model || snapshot.Candidate == nil || !slices.Contains(attempt.lengths, snapshot.Candidate.Length) {
-			continue
-		}
-		value, ok := s.openaiCodexTurnStateCandidates.Candidate(scope, model, time.Now())
-		if ok && slices.Contains(attempt.lengths, len(value)) {
-			req.Header.Set(openAICodexTurnStateHeader, value)
-			attempt.injected = value
-			return req.WithContext(context.WithValue(req.Context(), codexTurnStateHTTPRequestKey{}, *attempt))
-		}
-		break
+	// Check the active allowlist and count the selected candidate under one lock.
+	value, ok, reason := s.openaiCodexTurnStateCandidates.SelectCandidateWithReason(scope, model, attempt.lengths, time.Now())
+	selectionReason = reason
+	if ok {
+		req.Header.Set(openAICodexTurnStateHeader, value)
+		attempt.injected = value
+		return req.WithContext(context.WithValue(req.Context(), codexTurnStateHTTPRequestKey{}, *attempt))
 	}
 	return req
 }
@@ -181,12 +199,13 @@ func (s *OpenAIGatewayService) observeCodexTurnStateHTTP(c *gin.Context, account
 	if source == nil || source.GetCodexTurnStateMode() == "off" || attempt.scope != codexTurnStateCandidateScope(source, account) {
 		return
 	}
-	lengths := attempt.lengths
-	if attempt.injected != "" {
-		// Observe the length, but do not renew a candidate from its own replay.
-		lengths = nil
+	if attempt.injected != "" && value == attempt.injected {
+		// A replayed value cannot refresh its own lifetime. A distinct state
+		// still passes the normal length, envelope and issuance-time checks.
+		s.openaiCodexTurnStateCandidates.ObserveEcho(attempt.scope, attempt.model, value, time.Now())
+		return
 	}
-	s.openaiCodexTurnStateCandidates.Observe(attempt.scope, attempt.model, value, lengths, time.Now())
+	s.openaiCodexTurnStateCandidates.Observe(attempt.scope, attempt.model, value, attempt.lengths, time.Now())
 }
 
 func (s *OpenAIGatewayService) rejectCodexTurnStateHTTP(req *http.Request, resp *http.Response) {
