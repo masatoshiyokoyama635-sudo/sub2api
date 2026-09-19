@@ -224,3 +224,193 @@ func TestCodexTurnStateSettingsAgentIdentityUsesEffectiveUpdateCredentials(t *te
 		}
 	}
 }
+
+func TestCodexTurnStateActiveCollectionDefaultsAndEligibility(t *testing.T) {
+	require.False(t, (*Account)(nil).GetCodexTurnStateActiveCollectionEnabled())
+	for _, accountType := range []string{AccountTypeOAuth, AccountTypeSetupToken} {
+		account := &Account{Platform: PlatformOpenAI, Type: accountType, Extra: map[string]any{
+			codexIdentityVersionExtraKey: "v2", codexTurnStateModeExtraKey: "reuse",
+		}}
+		require.False(t, account.GetCodexTurnStateActiveCollectionEnabled())
+		for _, value := range []any{nil, false, "true", 1} {
+			account.Extra[codexTurnStateActiveCollectionExtraKey] = value
+			require.False(t, account.GetCodexTurnStateActiveCollectionEnabled())
+		}
+		account.Extra[codexTurnStateActiveCollectionExtraKey] = true
+		require.True(t, account.GetCodexTurnStateActiveCollectionEnabled())
+		for _, mode := range []string{"off", "observe"} {
+			account.Extra[codexTurnStateModeExtraKey] = mode
+			require.False(t, account.GetCodexTurnStateActiveCollectionEnabled())
+		}
+		account.Extra[codexTurnStateModeExtraKey] = "reuse"
+		account.Extra[codexIdentityVersionExtraKey] = "v1"
+		require.False(t, account.GetCodexTurnStateActiveCollectionEnabled())
+		account.Extra[codexIdentityVersionExtraKey] = "v2"
+		account.Type = AccountTypeOAuth
+		account.Credentials = map[string]any{"auth_mode": OpenAIAuthModeAgentIdentity}
+		require.False(t, account.GetCodexTurnStateActiveCollectionEnabled())
+		account.Credentials = nil
+		account.Type = AccountTypeAPIKey
+		require.False(t, account.GetCodexTurnStateActiveCollectionEnabled())
+	}
+}
+
+func TestCodexTurnStateActiveCollectionCreateValidatesExplicitOptIn(t *testing.T) {
+	for _, path := range []string{"admin", "account"} {
+		for _, tc := range []struct {
+			name, version, mode string
+			value               any
+			wantError           bool
+			wantEnabled         bool
+		}{
+			{"enabled", "v2", "reuse", true, false, true},
+			{"disabled_v1", "v1", "off", false, false, false},
+			{"non_boolean", "v2", "reuse", "true", true, false},
+			{"observe", "v2", "observe", true, true, false},
+			{"v1", "v1", "off", true, true, false},
+		} {
+			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				repo := &upstreamBillingProbeAccountRepo{}
+				extra := map[string]any{codexIdentityVersionExtraKey: tc.version, codexTurnStateModeExtraKey: tc.mode, codexTurnStateActiveCollectionExtraKey: tc.value}
+				var created *Account
+				var err error
+				if path == "admin" {
+					created, err = (&adminServiceImpl{accountRepo: repo}).CreateAccount(context.Background(), &CreateAccountInput{
+						Platform: PlatformOpenAI, Type: AccountTypeSetupToken, Extra: extra, SkipDefaultGroupBind: true,
+					})
+				} else {
+					created, err = NewAccountService(repo, nil).Create(context.Background(), CreateAccountRequest{
+						Platform: PlatformOpenAI, Type: AccountTypeSetupToken, Extra: extra,
+					})
+				}
+				if tc.wantError {
+					require.Error(t, err)
+					require.Empty(t, repo.accounts)
+					return
+				}
+				require.NoError(t, err)
+				require.Equal(t, tc.value, created.Extra[codexTurnStateActiveCollectionExtraKey])
+				require.Equal(t, tc.wantEnabled, created.GetCodexTurnStateActiveCollectionEnabled())
+			})
+		}
+	}
+}
+
+func TestCodexTurnStateActiveCollectionAllWritesValidateTargets(t *testing.T) {
+	parentID := int64(9)
+	for _, path := range []string{"admin", "account", "extra", "bulk"} {
+		for _, tc := range []struct {
+			name   string
+			mutate func(*Account)
+			value  any
+		}{
+			{"non_boolean", func(*Account) {}, "true"},
+			{"observe", func(a *Account) { a.Extra[codexTurnStateModeExtraKey] = "observe" }, true},
+			{"v1", func(a *Account) { a.Extra[codexIdentityVersionExtraKey] = "v1" }, true},
+			{"api_key", func(a *Account) { a.Type = AccountTypeAPIKey }, true},
+			{"other_platform", func(a *Account) { a.Platform = PlatformAnthropic }, true},
+			{"shadow_on", func(a *Account) { a.ParentAccountID = &parentID }, true},
+			{"shadow_off", func(a *Account) { a.ParentAccountID = &parentID }, false},
+			{"agent_identity", func(a *Account) {
+				a.Type = AccountTypeOAuth
+				a.Credentials = map[string]any{"auth_mode": OpenAIAuthModeAgentIdentity}
+			}, true},
+		} {
+			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeSetupToken,
+					Extra: map[string]any{codexIdentityVersionExtraKey: "v2", codexTurnStateModeExtraKey: "reuse"}}
+				tc.mutate(account)
+				repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{1: account}}
+				extra := map[string]any{codexTurnStateActiveCollectionExtraKey: tc.value}
+				_, err := writeCodexActiveCollectionSettingsForTest(path, repo, extra)
+				require.Error(t, err)
+				require.NotContains(t, repo.accounts[1].Extra, codexTurnStateActiveCollectionExtraKey)
+				require.Empty(t, repo.updates)
+				require.Empty(t, repo.bulkUpdates)
+			})
+		}
+	}
+}
+
+func writeCodexActiveCollectionSettingsForTest(path string, repo *upstreamBillingProbeAccountRepo, extra map[string]any) (*Account, error) {
+	ctx := context.Background()
+	svc := &adminServiceImpl{accountRepo: repo}
+	switch path {
+	case "admin":
+		return svc.UpdateAccount(ctx, 1, &UpdateAccountInput{Extra: extra})
+	case "account":
+		return NewAccountService(repo, nil).Update(ctx, 1, UpdateAccountRequest{Extra: &extra})
+	case "extra":
+		if err := svc.UpdateAccountExtra(ctx, 1, extra); err != nil {
+			return nil, err
+		}
+		return repo.GetByID(ctx, 1)
+	case "bulk":
+		if _, err := svc.BulkUpdateAccounts(ctx, &BulkUpdateAccountsInput{AccountIDs: []int64{1}, Extra: extra}); err != nil {
+			return nil, err
+		}
+		// The repository stub records JSONB updates without applying them.
+		updated := *repo.accounts[1]
+		updated.Extra = mergeMap(updated.Extra, repo.bulkUpdates[len(repo.bulkUpdates)-1].Extra)
+		return &updated, nil
+	}
+	return nil, fmt.Errorf("unsupported settings test path %q", path)
+}
+
+func TestCodexTurnStateActiveCollectionUpdatesPreserveDormantConfiguration(t *testing.T) {
+	for _, path := range []string{"admin", "account", "extra", "bulk"} {
+		for _, tc := range []struct {
+			name        string
+			patch       map[string]any
+			wantStored  bool
+			wantEnabled bool
+		}{
+			{"unrelated", map[string]any{"custom": "updated"}, true, true},
+			{"off", map[string]any{codexTurnStateModeExtraKey: "off"}, true, false},
+			{"observe", map[string]any{codexTurnStateModeExtraKey: "observe"}, true, false},
+			{"v1", map[string]any{codexIdentityVersionExtraKey: "v1"}, true, false},
+			{"explicit_disable_with_v1", map[string]any{codexIdentityVersionExtraKey: "v1", codexTurnStateActiveCollectionExtraKey: false}, false, false},
+		} {
+			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeSetupToken, Status: StatusActive,
+					Extra: map[string]any{codexIdentityVersionExtraKey: "v2", codexTurnStateModeExtraKey: "reuse", codexTurnStateActiveCollectionExtraKey: true}}
+				repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{1: account}}
+				updated, err := writeCodexActiveCollectionSettingsForTest(path, repo, mergeMap(nil, tc.patch))
+				require.NoError(t, err)
+				require.Equal(t, tc.wantStored, updated.Extra[codexTurnStateActiveCollectionExtraKey])
+				require.Equal(t, tc.wantEnabled, updated.GetCodexTurnStateActiveCollectionEnabled())
+			})
+		}
+		for _, initial := range []struct{ version, mode, patchMode string }{
+			{"v1", "reuse", ""}, {"v2", "reuse", ""}, {"v2", "observe", "reuse"}, {"v1", "off", "reuse"},
+		} {
+			t.Run(path+"/enable_from_"+initial.version+"_"+initial.mode, func(t *testing.T) {
+				account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeSetupToken, Status: StatusActive,
+					Extra: map[string]any{codexIdentityVersionExtraKey: initial.version, codexTurnStateModeExtraKey: initial.mode}}
+				repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{1: account}}
+				patch := map[string]any{
+					codexIdentityVersionExtraKey: "v2", codexTurnStateActiveCollectionExtraKey: true,
+				}
+				if initial.patchMode != "" {
+					patch[codexTurnStateModeExtraKey] = initial.patchMode
+				}
+				updated, err := writeCodexActiveCollectionSettingsForTest(path, repo, patch)
+				require.NoError(t, err)
+				require.True(t, updated.GetCodexTurnStateActiveCollectionEnabled())
+			})
+		}
+	}
+}
+
+func TestCodexTurnStateActiveCollectionBulkValidatesAllBeforeWriting(t *testing.T) {
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		1: {ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{codexIdentityVersionExtraKey: "v2", codexTurnStateModeExtraKey: "reuse"}},
+		2: {ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{codexIdentityVersionExtraKey: "v2", codexTurnStateModeExtraKey: "observe"}},
+	}}
+	_, err := (&adminServiceImpl{accountRepo: repo}).BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{1, 2}, Extra: map[string]any{codexTurnStateActiveCollectionExtraKey: true},
+	})
+	require.ErrorContains(t, err, "reuse mode")
+	require.Empty(t, repo.bulkUpdates)
+	require.NotContains(t, repo.accounts[1].Extra, codexTurnStateActiveCollectionExtraKey)
+}

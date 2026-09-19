@@ -431,3 +431,124 @@ func TestCodexTurnStateCandidatesDiagnosticsBoundRedactAndDetachRequestMetadata(
 	require.Len(t, cache.buckets, openAICodexTurnStateCandidateMaxBuckets)
 	require.Equal(t, openAICodexTurnStateCandidateMaxBuckets, cache.order.Len())
 }
+
+func TestCodexTurnStateCandidatesCollectionTracksRealStartsAndPreservesResults(t *testing.T) {
+	now := time.Date(2026, 9, 19, 15, 0, 0, 0, time.UTC)
+	var cache openAICodexTurnStateCandidates
+	cache.RecordCollectionStart("scope-a", "model-a", now)
+	snapshot := cache.Snapshot("scope-a", now)[0]
+	require.Zero(t, snapshot.ObservedCount)
+	require.Nil(t, snapshot.Candidate)
+	require.NotNil(t, snapshot.Collection)
+	require.Equal(t, uint64(1), snapshot.Collection.AttemptCount)
+	require.True(t, snapshot.Collection.InFlight)
+	require.Equal(t, now, snapshot.Collection.LastAttemptAt)
+	require.Equal(t, "in_progress", snapshot.Collection.LastReason)
+	finished := now.Add(time.Second)
+	next := now.Add(5 * time.Minute)
+	cache.RecordCollectionResult("scope-a", "model-a", CodexTurnStateCollectionSnapshot{
+		AttemptCount: 999, LastAttemptAt: now.Add(time.Hour), InFlight: true,
+		LastFinishedAt: &finished, NextEligibleAt: &next, LastReason: "accepted", LastHTTPStatus: 200,
+		LastObservedLength: 332, LastResponseModel: "gpt-6-astra",
+	})
+	finished = finished.Add(time.Hour)
+	next = next.Add(time.Hour)
+	snapshot = cache.Snapshot("scope-a", now)[0]
+	require.Equal(t, uint64(1), snapshot.Collection.AttemptCount, "result cannot invent network attempts")
+	require.Equal(t, now, snapshot.Collection.LastAttemptAt)
+	require.False(t, snapshot.Collection.InFlight)
+	require.Equal(t, now.Add(time.Second), *snapshot.Collection.LastFinishedAt)
+	require.Equal(t, now.Add(5*time.Minute), *snapshot.Collection.NextEligibleAt)
+	require.Equal(t, "accepted", snapshot.Collection.LastReason)
+	require.Equal(t, 200, snapshot.Collection.LastHTTPStatus)
+	require.Equal(t, 332, snapshot.Collection.LastObservedLength)
+	require.Equal(t, "gpt-6-astra", snapshot.Collection.LastResponseModel)
+	// Neither status mutation nor a gateway's cooldown presentation may mutate
+	// the shared cache or overwrite the last completed collection result.
+	*snapshot.Collection.LastFinishedAt = now.Add(10 * time.Hour)
+	*snapshot.Collection.NextEligibleAt = now.Add(11 * time.Hour)
+	snapshot.Collection.AttemptCount = 777
+	snapshot.Collection.LastReason = "mutated"
+	again := cache.Snapshot("scope-a", now)[0].Collection
+	require.Equal(t, uint64(1), again.AttemptCount)
+	require.Equal(t, "accepted", again.LastReason)
+	require.Equal(t, now.Add(time.Second), *again.LastFinishedAt)
+	require.Equal(t, now.Add(5*time.Minute), *again.NextEligibleAt)
+	cache.RecordCollectionStart("scope-a", "model-a", now.Add(6*time.Minute))
+	again = cache.Snapshot("scope-a", now)[0].Collection
+	require.Equal(t, uint64(2), again.AttemptCount)
+	require.Equal(t, now.Add(6*time.Minute), again.LastAttemptAt)
+	require.Equal(t, "in_progress", again.LastReason)
+	require.True(t, again.InFlight)
+	require.Equal(t, now.Add(time.Second), *again.LastFinishedAt)
+	cache.Clear("scope-a")
+	require.Empty(t, cache.Snapshot("scope-a", now))
+}
+
+func TestCodexTurnStateCandidatesCollectionBoundsAndRedactsMetadata(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	var cache openAICodexTurnStateCandidates
+	for _, reason := range []string{
+		"accepted", "missing_state", "length_not_allowed", "invalid_format", "future_timestamp", "expired", "stale",
+		"model_mismatch", "model_unobserved", "incomplete_response", "response_failed", "body_too_large", "transport_error",
+		"timeout", "unauthorized", "forbidden", "rate_limited", "upstream_error", "configuration_changed", "collection_failed", "in_progress",
+	} {
+		cache.RecordCollectionResult("scope-a", "model-a", CodexTurnStateCollectionSnapshot{LastReason: reason})
+		require.Equal(t, reason, cache.Snapshot("scope-a", now)[0].Collection.LastReason)
+	}
+	require.Zero(t, cache.Snapshot("scope-a", now)[0].Collection.AttemptCount, "result-only records never add attempts")
+	state := testCodexTurnStateEnvelope(now, 12, 1)
+	for _, unsafe := range []string{state, "private@example.invalid", "Bearer secret", "gpt-model\nprivate"} {
+		cache.RecordCollectionResult("scope-a", "model-a", CodexTurnStateCollectionSnapshot{
+			LastReason: unsafe, LastResponseModel: unsafe, LastHTTPStatus: 99999, LastObservedLength: -3,
+		})
+		snapshot := cache.Snapshot("scope-a", now)[0]
+		require.Equal(t, "collection_failed", snapshot.Collection.LastReason)
+		require.Empty(t, snapshot.Collection.LastResponseModel)
+		require.Zero(t, snapshot.Collection.LastHTTPStatus)
+		require.Zero(t, snapshot.Collection.LastObservedLength)
+		raw, err := json.Marshal(snapshot)
+		require.NoError(t, err)
+		require.NotContains(t, string(raw), unsafe)
+	}
+	cache.RecordCollectionStart("scope-b", "model-a", now)
+	require.Len(t, cache.Snapshot("scope-b", now), 1)
+	cache.RecordCollectionStart("scope-a", "model-b", now)
+	require.Len(t, cache.Snapshot("scope-a", now), 2)
+	cache.RecordCollectionStart("scope-a", strings.Repeat("m", 129), now)
+	require.Len(t, cache.Snapshot("scope-a", now), 2)
+	for i := 0; i < openAICodexTurnStateCandidateMaxBuckets+1; i++ {
+		model := fmt.Sprintf("model-%04d", i)
+		cache.RecordCollectionStart("bounded", model, now)
+		cache.RecordCollectionResult("bounded", model, CodexTurnStateCollectionSnapshot{LastReason: "missing_state"})
+	}
+	require.Len(t, cache.buckets, openAICodexTurnStateCandidateMaxBuckets)
+	require.Equal(t, openAICodexTurnStateCandidateMaxBuckets, cache.order.Len())
+}
+
+func TestCodexTurnStateCandidatesCollectionConcurrentAccess(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	var cache openAICodexTurnStateCandidates
+	var workers sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		workers.Add(1)
+		go func(i int) {
+			defer workers.Done()
+			model := fmt.Sprintf("model-%d", i)
+			for attempt := 0; attempt < 30; attempt++ {
+				cache.RecordCollectionStart("scope-a", model, now)
+				cache.RecordCollectionResult("scope-a", model, CodexTurnStateCollectionSnapshot{
+					LastFinishedAt: &now, LastReason: "accepted", LastHTTPStatus: 200,
+				})
+				cache.Snapshot("scope-a", now)
+			}
+		}(i)
+	}
+	workers.Wait()
+	snapshots := cache.Snapshot("scope-a", now)
+	require.Len(t, snapshots, 8)
+	for _, snapshot := range snapshots {
+		require.Equal(t, uint64(30), snapshot.Collection.AttemptCount)
+		require.False(t, snapshot.Collection.InFlight)
+	}
+}

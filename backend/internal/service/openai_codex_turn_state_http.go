@@ -55,11 +55,12 @@ type codexTurnStateHTTPAttempt struct {
 // CodexTurnStateStatus contains metadata only. Raw states stay in the bounded
 // process-local cache and must never be exposed through admin APIs or logs.
 type CodexTurnStateStatus struct {
-	Mode             string                        `json:"mode"`
-	IdentityVersion  string                        `json:"identity_version"`
-	CandidateLengths []int                         `json:"candidate_lengths"`
-	ProcessLocal     bool                          `json:"process_local"`
-	Models           []CodexTurnStateModelSnapshot `json:"models"`
+	Mode                    string                        `json:"mode"`
+	IdentityVersion         string                        `json:"identity_version"`
+	CandidateLengths        []int                         `json:"candidate_lengths"`
+	ProcessLocal            bool                          `json:"process_local"`
+	ActiveCollectionEnabled bool                          `json:"active_collection_enabled"`
+	Models                  []CodexTurnStateModelSnapshot `json:"models"`
 }
 
 func codexTurnStateCandidateScope(source, selected *Account) string {
@@ -94,10 +95,19 @@ func (s *OpenAIGatewayService) CodexTurnStateStatus(ctx context.Context, account
 	status.Mode = source.GetCodexTurnStateMode()
 	status.IdentityVersion = source.GetCodexIdentityVersion()
 	status.CandidateLengths = source.GetCodexTurnStateCandidateLengths()
+	status.ActiveCollectionEnabled = source.GetCodexTurnStateActiveCollectionEnabled()
 	if status.CandidateLengths == nil {
 		status.CandidateLengths = []int{}
 	}
 	status.Models = s.openaiCodexTurnStateCandidates.Snapshot(codexTurnStateCandidateScope(source, account), time.Now())
+	if next := s.openaiCodexTurnStateCollection.NextAllowedAt(source.ID); !next.IsZero() {
+		for i := range status.Models {
+			if status.Models[i].Collection != nil {
+				value := next
+				status.Models[i].Collection.NextEligibleAt = &value
+			}
+		}
+	}
 	if status.Models == nil {
 		status.Models = []CodexTurnStateModelSnapshot{}
 	}
@@ -151,6 +161,12 @@ func (s *OpenAIGatewayService) prepareCodexTurnStateHTTP(c *gin.Context, account
 		selectionReason = "observe_mode"
 		return req
 	}
+	if source.GetCodexTurnStateActiveCollectionEnabled() {
+		if blocked, ok := s.openaiCodexTurnStateCollection.BlockedResult(source.ID); ok {
+			selectionReason = "collection_cooldown"
+			return req.WithContext(context.WithValue(req.Context(), codexTurnStateCollectionBlockKey{}, blocked))
+		}
+	}
 	if c.GetBool(codexTurnStateClientIntentKey) ||
 		strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String()) != "" {
 		selectionReason = "client_continuation"
@@ -177,6 +193,17 @@ func (s *OpenAIGatewayService) prepareCodexTurnStateHTTP(c *gin.Context, account
 	}
 	// Check the active allowlist and count the selected candidate under one lock.
 	value, ok, reason := s.openaiCodexTurnStateCandidates.SelectCandidateWithReason(scope, model, attempt.lengths, time.Now())
+	if !ok && source.GetCodexTurnStateActiveCollectionEnabled() && len(attempt.lengths) > 0 {
+		collection := s.collectCodexTurnState(req, source, account, attempt)
+		if collection.GenerationBlocked || collection.HTTPStatus == http.StatusUnauthorized || collection.HTTPStatus == http.StatusForbidden || collection.HTTPStatus == http.StatusTooManyRequests {
+			selectionReason = "collection_rejected"
+			if collection.GenerationBlocked {
+				selectionReason = "collection_pending"
+			}
+			return req.WithContext(context.WithValue(req.Context(), codexTurnStateCollectionBlockKey{}, collection))
+		}
+		value, ok, reason = s.openaiCodexTurnStateCandidates.SelectCandidateWithReason(scope, model, attempt.lengths, time.Now())
+	}
 	selectionReason = reason
 	if ok {
 		req.Header.Set(openAICodexTurnStateHeader, value)

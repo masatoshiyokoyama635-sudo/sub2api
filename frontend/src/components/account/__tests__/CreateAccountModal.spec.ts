@@ -221,6 +221,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(importCodexSessionMock).toHaveBeenCalledOnce()
     expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_identity_version')
     expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_turn_state_mode')
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_turn_state_active_collection')
     wrapper.unmount()
   })
 
@@ -259,12 +260,44 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     wrapper.unmount()
   })
 
+  it.each(['reuse', 'observe'])('active collection remains opt-in and is cleared outside %s mode', async (mode) => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    wrapper.findComponent('[data-testid="create-codex-identity-version-select"]').vm.$emit('update:modelValue', 'v2')
+    await flushPromises()
+    expect(wrapper.findComponent('[data-testid="create-codex-turn-state-collection"]').attributes('modelvalue')).toBe('passive')
+    expect(wrapper.findComponent('[data-testid="create-codex-turn-state-collection"]').attributes('disabled')).toBeDefined()
+    wrapper.findComponent('[data-testid="create-codex-turn-state-mode"]').vm.$emit('update:modelValue', 'reuse')
+    await flushPromises()
+    wrapper.findComponent('[data-testid="create-codex-turn-state-collection"]').vm.$emit('update:modelValue', 'active')
+    await flushPromises()
+    if (mode === 'observe') {
+      wrapper.findComponent('[data-testid="create-codex-turn-state-mode"]').vm.$emit('update:modelValue', 'observe')
+      await flushPromises()
+      expect(wrapper.findComponent('[data-testid="create-codex-turn-state-collection"]').attributes('modelvalue')).toBe('passive')
+    }
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Active collection import')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
+    await flushPromises()
+    expect(importCodexSessionMock).toHaveBeenCalledOnce()
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_turn_state_mode).toBe(mode)
+    if (mode === 'reuse') {
+      expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_turn_state_active_collection).toBe(true)
+    } else {
+      expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_turn_state_active_collection')
+    }
+    wrapper.unmount()
+  })
+
   it('does not attach turn-state capture settings to an agentIdentity import', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
     wrapper.findComponent('[data-testid="create-codex-identity-version-select"]').vm.$emit('update:modelValue', 'v2')
     await flushPromises()
     wrapper.findComponent('[data-testid="create-codex-turn-state-mode"]').vm.$emit('update:modelValue', 'reuse')
+    await flushPromises()
+    wrapper.findComponent('[data-testid="create-codex-turn-state-collection"]').vm.$emit('update:modelValue', 'active')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('Agent identity import')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     wrapper.findComponent(OAuthAuthorizationFlowStub).vm.$emit('import-codex-session', JSON.stringify({ auth_mode: 'agentIdentity' }))
@@ -272,6 +305,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(importCodexSessionMock).toHaveBeenCalledOnce()
     expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).toMatchObject({ codex_identity_version: 'v2' })
     expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_turn_state_mode')
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_turn_state_active_collection')
     expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_turn_state_candidate_lengths')
     wrapper.unmount()
   })

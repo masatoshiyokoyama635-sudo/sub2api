@@ -1003,6 +1003,7 @@
         <CodexTurnStateSettings
           v-model:mode="codexTurnStateMode"
           v-model:lengths="codexTurnStateLengths"
+          v-model:active-collection="codexTurnStateActiveCollection"
           id-prefix="bulk-codex-turn-state"
           :disabled="!enableCodexTurnState"
         />
@@ -1749,6 +1750,7 @@ const enableCodexTurnState = ref(false)
 const codexIdentityVersion = ref<'v1' | 'v2'>('v1')
 const codexTurnStateMode = ref<CodexTurnStateMode>('off')
 const codexTurnStateLengths = ref(DEFAULT_CODEX_TURN_STATE_LENGTHS)
+const codexTurnStateActiveCollection = ref(false)
 const codexIdentityVersionOptions = computed(() => [
   { value: 'v1', label: t('admin.accounts.openai.codexIdentityV1') },
   { value: 'v2', label: t('admin.accounts.openai.codexIdentityV2') },
@@ -2137,11 +2139,13 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
   if (enableCodexIdentityVersion.value && allOpenAIOAuth.value) {
     const extra = ensureExtra()
     extra.codex_identity_version = codexIdentityVersion.value
+    if (codexIdentityVersion.value === 'v1') extra.codex_turn_state_active_collection = false
   }
 
   if (enableCodexTurnState.value && allOpenAIOAuth.value) {
     const extra = ensureExtra()
     extra.codex_turn_state_mode = codexTurnStateMode.value
+    extra.codex_turn_state_active_collection = codexTurnStateMode.value === 'reuse' && codexTurnStateActiveCollection.value
     if (codexTurnStateMode.value !== 'off') {
       extra.codex_turn_state_candidate_lengths = parseCodexTurnStateLengths(codexTurnStateLengths.value)
     }
@@ -2449,6 +2453,7 @@ watch(
       codexIdentityVersion.value = 'v1'
       codexTurnStateMode.value = 'off'
       codexTurnStateLengths.value = DEFAULT_CODEX_TURN_STATE_LENGTHS
+      codexTurnStateActiveCollection.value = false
       enableCodexFingerprintMode.value = false
       codexFingerprintMode.value = 'off'
       enableOpenAICompactMode.value = false

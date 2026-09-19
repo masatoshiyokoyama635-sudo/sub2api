@@ -350,7 +350,7 @@ describe('EditAccountModal', () => {
 
   it('edits Team state candidates, accepts observation without candidates and preserves unrelated fields', async () => {
     const account = { ...buildOpenAIOAuthParentAccount(), extra: {
-      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332], custom: true
+      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332], codex_turn_state_active_collection: true, custom: true
     } }
     updateAccountMock.mockReset().mockResolvedValue(account)
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
@@ -361,14 +361,14 @@ describe('EditAccountModal', () => {
     await wrapper.get('[data-testid="edit-codex-turn-state-lengths"]').setValue('')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
-      codex_identity_version: 'v2', codex_turn_state_mode: 'observe', codex_turn_state_candidate_lengths: [], custom: true
+      codex_identity_version: 'v2', codex_turn_state_mode: 'observe', codex_turn_state_candidate_lengths: [], codex_turn_state_active_collection: false, custom: true
     })
     wrapper.unmount()
   })
 
   it('switching back to v1 disables saved capture and hides v2 controls', async () => {
     const account = { ...buildOpenAIOAuthParentAccount(), extra: {
-      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332]
+      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332], codex_turn_state_active_collection: true
     } }
     updateAccountMock.mockReset().mockResolvedValue(account)
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
@@ -377,7 +377,23 @@ describe('EditAccountModal', () => {
     expect(wrapper.find('[data-testid="edit-codex-turn-state-mode"]').exists()).toBe(false)
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
-      codex_identity_version: 'v1', codex_turn_state_mode: 'off', codex_turn_state_candidate_lengths: [332]
+      codex_identity_version: 'v1', codex_turn_state_mode: 'off', codex_turn_state_candidate_lengths: [332], codex_turn_state_active_collection: false
+    })
+    wrapper.unmount()
+  })
+
+  it('loads the saved active collection option and explicitly disables it', async () => {
+    const account = { ...buildOpenAIOAuthParentAccount(), extra: {
+      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_active_collection: true, custom: true
+    } }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLSelectElement>('[data-testid="edit-codex-turn-state-collection"]').element.value).toBe('active')
+    await wrapper.get('[data-testid="edit-codex-turn-state-collection"]').setValue('passive')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_active_collection: false, custom: true
     })
     wrapper.unmount()
   })
@@ -398,7 +414,7 @@ describe('EditAccountModal', () => {
 
   it('hides turn-state controls and omits their fields for agentIdentity accounts', async () => {
     const account = { ...buildOpenAIOAuthParentAccount(), credentials: { auth_mode: ' AgentIdentity ' }, extra: {
-      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332], custom: true
+      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332], codex_turn_state_active_collection: true, custom: true
     } }
     updateAccountMock.mockReset().mockResolvedValue(account)
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
@@ -408,6 +424,7 @@ describe('EditAccountModal', () => {
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     expect(updateAccountMock).toHaveBeenCalledOnce()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_mode')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_active_collection')
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_candidate_lengths')
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({ codex_identity_version: 'v2', custom: true })
     wrapper.unmount()
@@ -422,11 +439,12 @@ describe('EditAccountModal', () => {
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_identity_version')
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_mode')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_active_collection')
     wrapper.unmount()
   })
 
   it('shadow accounts show inherited Codex identity without submitting a shadow version', async () => {
-    const account = { ...buildOpenAISparkShadowAccount(), extra: { codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332], custom: true } }
+    const account = { ...buildOpenAISparkShadowAccount(), extra: { codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332], codex_turn_state_active_collection: true, custom: true } }
     updateAccountMock.mockReset().mockResolvedValue(account)
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
     const wrapper = mountModal(account)
@@ -438,6 +456,7 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock).toHaveBeenCalledOnce()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_identity_version')
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_mode')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_active_collection')
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_candidate_lengths')
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra.custom).toBe(true)
     wrapper.unmount()

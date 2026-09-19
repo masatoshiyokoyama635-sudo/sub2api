@@ -2274,6 +2274,7 @@
           v-if="!isSparkShadow && !isAgentIdentity && codexIdentityVersion === 'v2'"
           v-model:mode="codexTurnStateMode"
           v-model:lengths="codexTurnStateLengths"
+          v-model:active-collection="codexTurnStateActiveCollection"
           id-prefix="edit-codex-turn-state"
         />
         <CodexTurnStateStatusPanel
@@ -3559,6 +3560,7 @@ type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
 const codexIdentityVersion = ref<'v1' | 'v2'>('v1')
 const codexTurnStateMode = ref<CodexTurnStateMode>('off')
 const codexTurnStateLengths = ref(DEFAULT_CODEX_TURN_STATE_LENGTHS)
+const codexTurnStateActiveCollection = ref(false)
 const codexIdentityVersionOptions = computed(() => [
   { value: 'v1', label: t('admin.accounts.openai.codexIdentityV1') },
   { value: 'v2', label: t('admin.accounts.openai.codexIdentityV2') },
@@ -4049,6 +4051,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   codexIdentityVersion.value = 'v1'
   codexTurnStateMode.value = 'off'
   codexTurnStateLengths.value = DEFAULT_CODEX_TURN_STATE_LENGTHS
+  codexTurnStateActiveCollection.value = false
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -4105,6 +4108,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       codexIdentityVersion.value = extra?.codex_identity_version === 'v2' ? 'v2' : 'v1'
       codexTurnStateMode.value = readCodexTurnStateMode(extra?.codex_turn_state_mode)
       codexTurnStateLengths.value = formatCodexTurnStateLengths(extra?.codex_turn_state_candidate_lengths)
+      codexTurnStateActiveCollection.value = extra?.codex_turn_state_active_collection === true
       // 缺省/非法值按 off 呈现，与后端 GetCodexFingerprintMode 的 opt-in 语义一致（#5610）
       codexFingerprintMode.value = (['off', 'device', 'session', 'full'].includes(fpMode || '')
         ? fpMode as CodexFingerprintMode
@@ -5644,6 +5648,7 @@ const handleSubmit = async () => {
           delete newExtra.codex_identity_version
           delete newExtra.codex_turn_state_mode
           delete newExtra.codex_turn_state_candidate_lengths
+          delete newExtra.codex_turn_state_active_collection
         } else if (codexIdentityVersion.value === 'v2' || currentExtra.codex_identity_version !== undefined) {
           // Explicit v1 also serves as a rollback; omission preserves older accounts.
           newExtra.codex_identity_version = codexIdentityVersion.value
@@ -5653,14 +5658,21 @@ const handleSubmit = async () => {
         if (isAgentIdentity.value) {
           delete newExtra.codex_turn_state_mode
           delete newExtra.codex_turn_state_candidate_lengths
+          delete newExtra.codex_turn_state_active_collection
         } else if (codexIdentityVersion.value === 'v2' && codexTurnStateMode.value !== 'off') {
           const lengths = parseCodexTurnStateLengths(codexTurnStateLengths.value)
           if (lengths === null) throw new Error(t('admin.accounts.openai.codexTurnStateLengthsInvalid'))
           newExtra.codex_turn_state_mode = codexTurnStateMode.value
           newExtra.codex_turn_state_candidate_lengths = lengths
+          if (codexTurnStateMode.value === 'reuse' && codexTurnStateActiveCollection.value) {
+            newExtra.codex_turn_state_active_collection = true
+          } else if (currentExtra.codex_turn_state_active_collection !== undefined) {
+            newExtra.codex_turn_state_active_collection = false
+          }
         } else {
           // Explicit off can disable saved capture; omission preserves legacy defaults.
           if (currentExtra.codex_turn_state_mode !== undefined) newExtra.codex_turn_state_mode = 'off'
+          if (currentExtra.codex_turn_state_active_collection !== undefined) newExtra.codex_turn_state_active_collection = false
           if (currentExtra.codex_turn_state_candidate_lengths !== undefined) {
             newExtra.codex_turn_state_candidate_lengths = parseCodexTurnStateLengths(codexTurnStateLengths.value) ?? []
           }

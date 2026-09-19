@@ -926,7 +926,7 @@ describe('BulkEditAccountModal', () => {
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      extra: { codex_identity_version: 'v1' }
+      extra: { codex_identity_version: 'v1', codex_turn_state_active_collection: false }
     })
   })
 
@@ -950,7 +950,21 @@ describe('BulkEditAccountModal', () => {
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      extra: { codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332, 292] }
+      extra: { codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332, 292], codex_turn_state_active_collection: false }
+    })
+  })
+
+  it('bulk editing enables active collection only with an explicit reuse choice', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    await wrapper.get('#bulk-edit-openai-codex-identity-version-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-codex-identity-version-select"]').setValue('v2')
+    await wrapper.get('#bulk-edit-codex-turn-state-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-codex-turn-state-mode"]').setValue('reuse')
+    await wrapper.get('[data-testid="bulk-codex-turn-state-collection"]').setValue('active')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: { codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [292, 332], codex_turn_state_active_collection: true }
     })
   })
 
@@ -959,7 +973,7 @@ describe('BulkEditAccountModal', () => {
     await wrapper.get('#bulk-edit-codex-turn-state-enabled').setValue(true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { extra: { codex_turn_state_mode: 'off' } })
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { extra: { codex_turn_state_mode: 'off', codex_turn_state_active_collection: false } })
   })
 
   it.each(['332.5', '99', '2049', '100,101,102,103,104,105,106,107,108'])('rejects invalid bulk candidate lengths %s', async (lengths) => {

@@ -12,9 +12,22 @@
           :disabled="disabled"
           :data-testid="`${idPrefix}-mode`"
           :options="modeOptions"
-          @update:model-value="$emit('update:mode', $event as CodexTurnStateMode)"
+          @update:model-value="updateMode($event as CodexTurnStateMode)"
         />
       </div>
+    </div>
+    <div>
+      <label :for="`${idPrefix}-collection`" class="input-label">{{ t('admin.accounts.openai.codexTurnStateCollection') }}</label>
+      <Select
+        :id="`${idPrefix}-collection`"
+        :model-value="activeCollection && mode === 'reuse' ? 'active' : 'passive'"
+        :disabled="disabled || mode !== 'reuse'"
+        :data-testid="`${idPrefix}-collection`"
+        :options="collectionOptions"
+        @update:model-value="$emit('update:activeCollection', $event === 'active' && mode === 'reuse')"
+      />
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.codexTurnStateCollectionDesc') }}</p>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.codexTurnStateCollectionLimits') }}</p>
     </div>
     <div>
       <label :for="`${idPrefix}-lengths`" class="input-label">{{ t('admin.accounts.openai.codexTurnStateLengths') }}</label>
@@ -44,13 +57,15 @@ import { parseCodexTurnStateLengths, type CodexTurnStateMode } from '@/utils/cod
 
 const props = withDefaults(defineProps<{
   mode: CodexTurnStateMode
+  activeCollection: boolean
   lengths: string
   idPrefix: string
   disabled?: boolean
 }>(), { disabled: false })
 
-defineEmits<{
+const emit = defineEmits<{
   'update:mode': [value: CodexTurnStateMode]
+  'update:activeCollection': [value: boolean]
   'update:lengths': [value: string]
 }>()
 
@@ -60,5 +75,13 @@ const modeOptions = computed(() => [
   { value: 'observe', label: t('admin.accounts.openai.codexTurnStateObserve') },
   { value: 'reuse', label: t('admin.accounts.openai.codexTurnStateReuse') },
 ])
+const collectionOptions = computed(() => [
+  { value: 'passive', label: t('admin.accounts.openai.codexTurnStateCollectionPassive') },
+  { value: 'active', label: t('admin.accounts.openai.codexTurnStateCollectionActive') },
+])
+function updateMode(mode: CodexTurnStateMode) {
+  emit('update:mode', mode)
+  if (mode !== 'reuse') emit('update:activeCollection', false)
+}
 const invalidLengths = computed(() => !props.disabled && props.mode !== 'off' && parseCodexTurnStateLengths(props.lengths) === null)
 </script>

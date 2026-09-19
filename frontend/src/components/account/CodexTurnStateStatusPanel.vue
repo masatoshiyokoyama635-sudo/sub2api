@@ -19,12 +19,24 @@ let requestVersion = 0
 const diagnosticReasons = new Set([
   'reused', 'no_candidate', 'expired', 'length_not_allowed', 'observe_mode',
   'client_state', 'client_continuation', 'client_metadata_state',
+  'collection_cooldown', 'collection_rejected', 'collection_pending',
   'accepted', 'refreshed', 'unchanged', 'invalid_format', 'future_timestamp',
   'stale', 'state_echo', 'upstream_rejected'
+])
+const collectionReasons = new Set([
+  'in_progress', 'accepted', 'missing_state', 'length_not_allowed', 'invalid_format',
+  'future_timestamp', 'expired', 'stale', 'model_mismatch', 'model_unobserved',
+  'incomplete_response', 'response_failed', 'body_too_large', 'transport_error',
+  'timeout', 'unauthorized', 'forbidden', 'rate_limited', 'upstream_error',
+  'configuration_changed', 'collection_failed'
 ])
 
 function reasonLabel(reason: string) {
   return t(`admin.accounts.codexTurnStateStatus.reasons.${diagnosticReasons.has(reason) ? reason : 'unknown'}`)
+}
+
+function collectionReasonLabel(reason: string) {
+  return t(`admin.accounts.codexTurnStateStatus.collectionReasons.${collectionReasons.has(reason) ? reason : 'unknown'}`)
 }
 
 function modeLabel(mode: CodexTurnStateStatus['mode']) {
@@ -85,6 +97,7 @@ onBeforeUnmount(() => { requestVersion++ })
     <dl v-if="state" class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-gray-700 dark:text-dark-200" data-testid="codex-turn-state-effective-settings">
       <dt>{{ t('admin.accounts.codexTurnStateStatus.effectiveMode') }}</dt><dd data-testid="codex-turn-state-effective-mode">{{ modeLabel(state.mode) }}</dd>
       <dt>{{ t('admin.accounts.codexTurnStateStatus.effectiveIdentity') }}</dt><dd class="font-mono">{{ state.identity_version }}</dd>
+      <dt>{{ t('admin.accounts.codexTurnStateStatus.effectiveCollection') }}</dt><dd data-testid="codex-turn-state-effective-collection">{{ state.active_collection_enabled ? t('admin.accounts.openai.codexTurnStateCollectionActive') : t('admin.accounts.openai.codexTurnStateCollectionPassive') }}</dd>
       <dt>{{ t('admin.accounts.codexTurnStateStatus.effectiveLengths') }}</dt>
       <dd class="font-mono">{{ state.candidate_lengths.length ? state.candidate_lengths.join(', ') : t('admin.accounts.codexTurnStateStatus.noSelectedLengths') }}</dd>
     </dl>
@@ -118,6 +131,24 @@ onBeforeUnmount(() => { requestVersion++ })
             <dd data-testid="codex-turn-state-last-invalidation">{{ reasonLabel(entry.last_candidate_invalidation.reason) }} · {{ formatDateTime(entry.last_candidate_invalidation.at) }}</dd>
           </template>
         </dl>
+        <section v-if="entry.collection && entry.collection.attempt_count > 0" class="space-y-1 rounded bg-gray-50 p-2 dark:bg-dark-700/60" data-testid="codex-turn-state-collection-result">
+          <h5 class="font-medium">{{ t('admin.accounts.codexTurnStateStatus.collectionTitle') }}</h5>
+          <p class="text-gray-500 dark:text-dark-400">{{ t('admin.accounts.codexTurnStateStatus.collectionActualOnly') }}</p>
+          <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-gray-600 dark:text-dark-300">
+            <dt>{{ t('admin.accounts.codexTurnStateStatus.collectionAttempts') }}</dt><dd>{{ entry.collection.attempt_count }}</dd>
+            <dt>{{ t('admin.accounts.codexTurnStateStatus.collectionResult') }}</dt><dd>{{ collectionReasonLabel(entry.collection.in_flight ? 'in_progress' : entry.collection.last_reason) }}</dd>
+            <dt>{{ t('admin.accounts.codexTurnStateStatus.collectionStarted') }}</dt><dd>{{ formatDateTime(entry.collection.last_attempt_at) }}</dd>
+            <template v-if="entry.collection.last_finished_at">
+              <dt>{{ t('admin.accounts.codexTurnStateStatus.collectionFinished') }}</dt><dd>{{ formatDateTime(entry.collection.last_finished_at) }}</dd>
+            </template>
+            <template v-if="entry.collection.next_eligible_at">
+              <dt>{{ t('admin.accounts.codexTurnStateStatus.collectionNextEligible') }}</dt><dd>{{ formatDateTime(entry.collection.next_eligible_at) }}</dd>
+            </template>
+            <dt>{{ t('admin.accounts.codexTurnStateStatus.collectionHTTPStatus') }}</dt><dd>{{ entry.collection.last_http_status || t('admin.accounts.codexTurnStateStatus.unavailable') }}</dd>
+            <dt>{{ t('admin.accounts.codexTurnStateStatus.collectionStateLength') }}</dt><dd>{{ entry.collection.last_observed_length }}</dd>
+            <dt>{{ t('admin.accounts.codexTurnStateStatus.responseModel') }}</dt><dd class="break-all font-mono">{{ entry.collection.last_response_model || t('admin.accounts.codexTurnStateStatus.responseModelUnknown') }}</dd>
+          </dl>
+        </section>
         <section v-if="entry.last_request" class="space-y-1 rounded bg-gray-50 p-2 dark:bg-dark-700/60" data-testid="codex-turn-state-last-request">
           <h5 class="font-medium">{{ t('admin.accounts.codexTurnStateStatus.lastRequest') }}</h5>
           <p class="text-gray-500 dark:text-dark-400">{{ t('admin.accounts.codexTurnStateStatus.lastRequestOnly') }}</p>

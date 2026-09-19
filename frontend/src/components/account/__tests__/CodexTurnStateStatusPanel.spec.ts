@@ -18,6 +18,7 @@ const observed = (model = 'gpt-team'): CodexTurnStateStatus => ({
   mode: 'observe',
   identity_version: 'v2',
   candidate_lengths: [292, 332],
+  active_collection_enabled: false,
   process_local: true,
   models: [{
     model,
@@ -77,6 +78,71 @@ describe('CodexTurnStateStatusPanel', () => {
     expect(wrapper.get('[data-testid="codex-turn-state-current-candidate"]').text()).toContain('admin.accounts.codexTurnStateStatus.candidateReuseAttempts0')
     expect(wrapper.text()).toContain('2026-09-18T11:59:00Z')
     expect(wrapper.text()).not.toContain('admin.accounts.codexTurnStateStatus.notReused')
+    expect(clearCodexTurnState).not.toHaveBeenCalled()
+  })
+
+  it.each(['collection_cooldown', 'collection_rejected', 'collection_pending'])('explains %s without claiming a client or candidate state was sent', async (reason) => {
+    const snapshot = observed()
+    snapshot.mode = 'reuse'
+    snapshot.models[0].last_selection = { reason, at: '2026-09-19T12:00:00Z' }
+    snapshot.models[0].last_request = {
+      at: '2026-09-19T12:00:00Z', state_source: 'none', outbound_state_length: 0,
+      response_model_observed: false, model_mismatch: false, selection_reason: reason, failed: true
+    }
+    getCodexTurnState.mockResolvedValueOnce(snapshot)
+    const wrapper = mount(CodexTurnStateStatusPanel, { props: { accountId: 7 } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="codex-turn-state-last-selection"]').text()).toContain(`reasons.${reason}`)
+    const request = wrapper.get('[data-testid="codex-turn-state-last-request"]')
+    expect(request.text()).toContain(`reasons.${reason}`)
+    expect(request.text()).toContain('0 · admin.accounts.codexTurnStateStatus.sourceNone')
+    expect(request.text()).not.toContain('sourceClient')
+    expect(request.text()).not.toContain('sourceCandidate')
+    expect(wrapper.find('[data-testid="codex-turn-state-current-candidate"]').exists()).toBe(true)
+  })
+
+  it('shows the saved active collection switch and actual collection results separately', async () => {
+    const snapshot = observed('gpt-6-astra')
+    snapshot.mode = 'reuse'
+    snapshot.active_collection_enabled = true
+    snapshot.models[0].collection = {
+      attempt_count: 2, in_flight: false, last_attempt_at: '2026-09-19T12:00:00Z',
+      last_finished_at: '2026-09-19T12:00:05Z', next_eligible_at: '2026-09-19T12:03:05Z',
+      last_reason: 'accepted', last_http_status: 200, last_observed_length: 332,
+      last_response_model: 'gpt-6-astra'
+    }
+    getCodexTurnState.mockResolvedValueOnce(snapshot)
+    const wrapper = mount(CodexTurnStateStatusPanel, { props: { accountId: 7 } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="codex-turn-state-effective-collection"]').text()).toBe('admin.accounts.openai.codexTurnStateCollectionActive')
+    const result = wrapper.get('[data-testid="codex-turn-state-collection-result"]')
+    expect(result.text()).toContain('collectionReasons.accepted')
+    expect(result.text()).toContain('2026-09-19T12:03:05Z')
+    expect(result.text()).toContain('200')
+    expect(result.text()).toContain('332')
+    expect(result.text()).toContain('gpt-6-astra')
+    expect(wrapper.get('[data-testid="codex-turn-state-total-attempts"]').text()).toBe('0')
+    expect(clearCodexTurnState).not.toHaveBeenCalled()
+  })
+
+  it.each(['rate_limited', 'private-error-from-server'])('renders collection reason %s without exposing arbitrary error text', async (reason) => {
+    const snapshot = observed()
+    snapshot.models[0].collection = {
+      attempt_count: 1, in_flight: false, last_attempt_at: '2026-09-19T12:00:00Z',
+      last_reason: reason, last_http_status: 429, last_observed_length: 0
+    }
+    getCodexTurnState.mockResolvedValueOnce(snapshot)
+    const wrapper = mount(CodexTurnStateStatusPanel, { props: { accountId: 7 } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="codex-turn-state-effective-collection"]').text()).toBe('admin.accounts.openai.codexTurnStateCollectionPassive')
+    const result = wrapper.get('[data-testid="codex-turn-state-collection-result"]')
+    expect(result.text()).toContain(reason === 'rate_limited' ? 'collectionReasons.rate_limited' : 'collectionReasons.unknown')
+    expect(result.text()).not.toContain('private-error-from-server')
+    expect(result.text()).toContain('429')
+    expect(getCodexTurnState).toHaveBeenCalledOnce()
     expect(clearCodexTurnState).not.toHaveBeenCalled()
   })
 

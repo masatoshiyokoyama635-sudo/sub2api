@@ -3318,6 +3318,7 @@
           v-if="codexIdentityVersion === 'v2' && oauthFlowRef?.inputMethod !== 'agent_identity'"
           v-model:mode="codexTurnStateMode"
           v-model:lengths="codexTurnStateLengths"
+          v-model:active-collection="codexTurnStateActiveCollection"
           id-prefix="create-codex-turn-state"
         />
         <div class="flex items-center justify-between gap-4">
@@ -4461,6 +4462,7 @@ type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
 const codexIdentityVersion = ref<'v1' | 'v2'>('v1')
 const codexTurnStateMode = ref<CodexTurnStateMode>('off')
 const codexTurnStateLengths = ref(DEFAULT_CODEX_TURN_STATE_LENGTHS)
+const codexTurnStateActiveCollection = ref(false)
 const codexIdentityVersionOptions = computed(() => [
   { value: 'v1', label: t('admin.accounts.openai.codexIdentityV1') },
   { value: 'v2', label: t('admin.accounts.openai.codexIdentityV2') },
@@ -5389,6 +5391,7 @@ const resetForm = () => {
   codexIdentityVersion.value = 'v1'
   codexTurnStateMode.value = 'off'
   codexTurnStateLengths.value = DEFAULT_CODEX_TURN_STATE_LENGTHS
+  codexTurnStateActiveCollection.value = false
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
@@ -5500,9 +5503,15 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     if (lengths === null) throw new Error(t('admin.accounts.openai.codexTurnStateLengthsInvalid'))
     extra.codex_turn_state_mode = codexTurnStateMode.value
     extra.codex_turn_state_candidate_lengths = lengths
+    if (codexTurnStateMode.value === 'reuse' && codexTurnStateActiveCollection.value) {
+      extra.codex_turn_state_active_collection = true
+    } else {
+      delete extra.codex_turn_state_active_collection
+    }
   } else {
     delete extra.codex_turn_state_mode
     delete extra.codex_turn_state_candidate_lengths
+    delete extra.codex_turn_state_active_collection
   }
   if (accountCategory.value === 'oauth-based' && codexFingerprintMode.value !== 'off') {
     extra.codex_fingerprint_mode = codexFingerprintMode.value
@@ -6487,6 +6496,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
     if (extra && isAgentIdentityImportContent(trimmed)) {
       delete extra.codex_turn_state_mode
       delete extra.codex_turn_state_candidate_lengths
+      delete extra.codex_turn_state_active_collection
     }
     const result = await adminAPI.accounts.importCodexSession({
       content: trimmed,

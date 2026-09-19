@@ -12,6 +12,7 @@ import (
 const (
 	codexTurnStateModeExtraKey             = "codex_turn_state_mode"
 	codexTurnStateCandidateLengthsExtraKey = "codex_turn_state_candidate_lengths"
+	codexTurnStateActiveCollectionExtraKey = "codex_turn_state_active_collection"
 )
 
 // GetCodexTurnStateMode is opt-in and only effective for identity v2. Resolve
@@ -23,6 +24,16 @@ func (a *Account) GetCodexTurnStateMode() string {
 		}
 	}
 	return "off"
+}
+
+// GetCodexTurnStateActiveCollectionEnabled requires an explicit opt-in on the
+// credential account. Preserved settings remain dormant outside v2 reuse mode.
+func (a *Account) GetCodexTurnStateActiveCollectionEnabled() bool {
+	if a == nil || !a.IsOpenAIOAuthLike() || a.GetCodexTurnStateMode() != "reuse" {
+		return false
+	}
+	enabled, ok := a.Extra[codexTurnStateActiveCollectionExtraKey].(bool)
+	return ok && enabled
 }
 
 // GetCodexTurnStateCandidateLengths selects candidates, not model quality.
@@ -44,7 +55,8 @@ func (a *Account) GetCodexTurnStateCandidateLengths() []int {
 func hasCodexTurnStateSettingsExtra(extra map[string]any) bool {
 	_, mode := extra[codexTurnStateModeExtraKey]
 	_, lengths := extra[codexTurnStateCandidateLengthsExtraKey]
-	return mode || lengths
+	_, activeCollection := extra[codexTurnStateActiveCollectionExtraKey]
+	return mode || lengths || activeCollection
 }
 
 func decodeCodexTurnStateCandidateLengths(value any) ([]int, bool) {
@@ -102,6 +114,11 @@ func decodeCodexTurnStateCandidateLengths(value any) ([]int, bool) {
 }
 
 func validateCodexTurnStateSettingsExtra(extra map[string]any) error {
+	if value, present := extra[codexTurnStateActiveCollectionExtraKey]; present {
+		if _, ok := value.(bool); !ok {
+			return infraerrors.BadRequest("INVALID_CODEX_TURN_STATE_ACTIVE_COLLECTION", "codex_turn_state_active_collection must be a boolean")
+		}
+	}
 	if value, present := extra[codexTurnStateModeExtraKey]; present {
 		mode, ok := value.(string)
 		if !ok || (mode != "off" && mode != "observe" && mode != "reuse") {
@@ -135,6 +152,19 @@ func validateCodexTurnStateSettingsTarget(account *Account, extra map[string]any
 			return infraerrors.BadRequest("CODEX_TURN_STATE_REQUIRES_V2", "Codex turn-state observation and reuse require identity v2")
 		}
 	}
+	if enabled, ok := extra[codexTurnStateActiveCollectionExtraKey].(bool); ok && enabled {
+		version := account.GetCodexIdentityVersion()
+		if requested, ok := extra[codexIdentityVersionExtraKey].(string); ok {
+			version = requested
+		}
+		mode, _ := account.Extra[codexTurnStateModeExtraKey].(string)
+		if requested, ok := extra[codexTurnStateModeExtraKey].(string); ok {
+			mode = requested
+		}
+		if version != "v2" || mode != "reuse" {
+			return infraerrors.BadRequest("CODEX_TURN_STATE_ACTIVE_COLLECTION_REQUIRES_REUSE", "active turn-state collection requires identity v2 and reuse mode")
+		}
+	}
 	return nil
 }
 
@@ -143,13 +173,13 @@ func preserveCodexTurnStateSettingsForUpdate(account *Account, extra map[string]
 		return extra
 	}
 	prepared := extra
-	for _, key := range []string{codexTurnStateModeExtraKey, codexTurnStateCandidateLengthsExtraKey} {
+	for _, key := range []string{codexTurnStateModeExtraKey, codexTurnStateCandidateLengthsExtraKey, codexTurnStateActiveCollectionExtraKey} {
 		if _, present := extra[key]; present {
 			continue
 		}
 		if current, exists := account.Extra[key]; exists {
 			if prepared == nil {
-				prepared = make(map[string]any, 2)
+				prepared = make(map[string]any, 3)
 			} else {
 				prepared = maps.Clone(prepared)
 			}

@@ -41,6 +41,7 @@ func (s *OpenAIGatewayService) recordCodexTurnStateHTTPSelection(c *gin.Context,
 		return
 	}
 	snapshot := CodexTurnStateRequestSnapshot{SelectionReason: reason, StateSource: "none"}
+	blocked := reason == "collection_cooldown" || reason == "collection_rejected" || reason == "collection_pending"
 	state := req.Header.Get(openAICodexTurnStateHeader)
 	if strings.TrimSpace(state) == "" {
 		gjson.GetBytes(body, "client_metadata").ForEach(func(key, value gjson.Result) bool {
@@ -51,7 +52,7 @@ func (s *OpenAIGatewayService) recordCodexTurnStateHTTPSelection(c *gin.Context,
 			return true
 		})
 	}
-	if state != "" {
+	if state != "" && !blocked {
 		snapshot.OutboundStateLength = len(state)
 		snapshot.StateSource = "client"
 		if attempt.injected != "" && state == attempt.injected {
@@ -64,7 +65,7 @@ func (s *OpenAIGatewayService) recordCodexTurnStateHTTPSelection(c *gin.Context,
 	// Cache lookups already record their outcome atomically. Only earlier HTTP
 	// gates need a separate selection event; none of these increments reuse.
 	switch reason {
-	case "observe_mode", "client_state", "client_continuation", "client_metadata_state":
+	case "observe_mode", "client_state", "client_continuation", "client_metadata_state", "collection_cooldown", "collection_rejected", "collection_pending":
 		s.openaiCodexTurnStateCandidates.RecordSelection(attempt.scope, attempt.model, reason, time.Now())
 	}
 }

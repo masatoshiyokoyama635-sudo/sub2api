@@ -28,6 +28,18 @@ export interface CodexTurnStateRequestSnapshot {
   failed: boolean
 }
 
+export interface CodexTurnStateCollectionSnapshot {
+  attempt_count: number
+  in_flight: boolean
+  last_attempt_at: string
+  last_finished_at?: string
+  next_eligible_at?: string
+  last_reason: string
+  last_http_status: number
+  last_observed_length: number
+  last_response_model?: string
+}
+
 export interface CodexTurnStateModelSnapshot {
   model: string
   observed_count: number
@@ -42,6 +54,7 @@ export interface CodexTurnStateModelSnapshot {
   last_candidate_rejection?: CodexTurnStateDiagnostic
   last_candidate_invalidation?: CodexTurnStateDiagnostic
   last_request?: CodexTurnStateRequestSnapshot
+  collection?: CodexTurnStateCollectionSnapshot
   candidate?: CodexTurnStateCandidate
 }
 
@@ -49,6 +62,7 @@ export interface CodexTurnStateStatus {
   mode: 'off' | 'observe' | 'reuse'
   identity_version: string
   candidate_lengths: number[]
+  active_collection_enabled?: boolean
   process_local: boolean
   models: CodexTurnStateModelSnapshot[]
 }

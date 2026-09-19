@@ -48,20 +48,35 @@ type CodexTurnStateDiagnostic struct {
 	At     time.Time `json:"at"`
 }
 
+// CodexTurnStateCollectionSnapshot contains only bounded collection metadata.
+// AttemptCount counts requests actually started by the collection leader.
+type CodexTurnStateCollectionSnapshot struct {
+	AttemptCount       uint64     `json:"attempt_count"`
+	InFlight           bool       `json:"in_flight"`
+	LastAttemptAt      time.Time  `json:"last_attempt_at"`
+	LastFinishedAt     *time.Time `json:"last_finished_at,omitempty"`
+	NextEligibleAt     *time.Time `json:"next_eligible_at,omitempty"`
+	LastReason         string     `json:"last_reason"`
+	LastHTTPStatus     int        `json:"last_http_status"`
+	LastObservedLength int        `json:"last_observed_length"`
+	LastResponseModel  string     `json:"last_response_model,omitempty"`
+}
+
 type CodexTurnStateModelSnapshot struct {
-	Model                     string                           `json:"model"`
-	ObservedCount             uint64                           `json:"observed_count"`
-	LastObservedAt            time.Time                        `json:"last_observed_at"`
-	Lengths                   []CodexTurnStateLengthCount      `json:"lengths"`
-	OtherLengthCount          uint64                           `json:"other_length_count"`
-	Candidate                 *CodexTurnStateCandidateSnapshot `json:"candidate,omitempty"`
-	ReuseAttemptCount         uint64                           `json:"reuse_attempt_count"`
-	LastReuseAttemptAt        *time.Time                       `json:"last_reuse_attempt_at,omitempty"`
-	LastSelection             *CodexTurnStateDiagnostic        `json:"last_selection,omitempty"`
-	LastCandidateObservation  *CodexTurnStateDiagnostic        `json:"last_candidate_observation,omitempty"`
-	LastCandidateRejection    *CodexTurnStateDiagnostic        `json:"last_candidate_rejection,omitempty"`
-	LastCandidateInvalidation *CodexTurnStateDiagnostic        `json:"last_candidate_invalidation,omitempty"`
-	LastRequest               *CodexTurnStateRequestSnapshot   `json:"last_request,omitempty"`
+	Model                     string                            `json:"model"`
+	ObservedCount             uint64                            `json:"observed_count"`
+	LastObservedAt            time.Time                         `json:"last_observed_at"`
+	Lengths                   []CodexTurnStateLengthCount       `json:"lengths"`
+	OtherLengthCount          uint64                            `json:"other_length_count"`
+	Candidate                 *CodexTurnStateCandidateSnapshot  `json:"candidate,omitempty"`
+	ReuseAttemptCount         uint64                            `json:"reuse_attempt_count"`
+	LastReuseAttemptAt        *time.Time                        `json:"last_reuse_attempt_at,omitempty"`
+	LastSelection             *CodexTurnStateDiagnostic         `json:"last_selection,omitempty"`
+	LastCandidateObservation  *CodexTurnStateDiagnostic         `json:"last_candidate_observation,omitempty"`
+	LastCandidateRejection    *CodexTurnStateDiagnostic         `json:"last_candidate_rejection,omitempty"`
+	LastCandidateInvalidation *CodexTurnStateDiagnostic         `json:"last_candidate_invalidation,omitempty"`
+	LastRequest               *CodexTurnStateRequestSnapshot    `json:"last_request,omitempty"`
+	Collection                *CodexTurnStateCollectionSnapshot `json:"collection,omitempty"`
 }
 
 type openAICodexTurnStateCandidateKey struct {
@@ -88,6 +103,7 @@ type openAICodexTurnStateCandidateBucket struct {
 	lastCandidateRejection    *CodexTurnStateDiagnostic
 	lastCandidateInvalidation *CodexTurnStateDiagnostic
 	lastRequest               *CodexTurnStateRequestSnapshot
+	collection                *CodexTurnStateCollectionSnapshot
 }
 
 // openAICodexTurnStateCandidates is a zero-value-ready, process-local store.
@@ -176,7 +192,8 @@ func (bucket *openAICodexTurnStateCandidateBucket) observation(reason string, no
 
 func validCodexTurnStateSelectionReason(reason string) bool {
 	switch reason {
-	case "reused", "no_candidate", "expired", "length_not_allowed", "observe_mode", "client_state", "client_continuation", "client_metadata_state", "unsupported_path":
+	case "reused", "no_candidate", "expired", "length_not_allowed", "observe_mode", "client_state", "client_continuation", "client_metadata_state", "unsupported_path",
+		"collection_cooldown", "collection_rejected", "collection_pending":
 		return true
 	default:
 		return false
@@ -412,6 +429,75 @@ func (cache *openAICodexTurnStateCandidates) RecordRequest(scope, model string, 
 	bucket.lastRequest = &snapshot
 }
 
+func (cache *openAICodexTurnStateCandidates) RecordCollectionStart(scope, model string, now time.Time) {
+	if cache == nil || !validOpenAICodexTurnStateCandidateKey(scope, model) {
+		return
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	key := openAICodexTurnStateCandidateKey{scope: scope, model: model}
+	bucket := cache.ensureBucketLocked(key)
+	cache.order.MoveToBack(cache.buckets[key])
+	if bucket.collection == nil {
+		bucket.collection = &CodexTurnStateCollectionSnapshot{}
+	}
+	bucket.collection.AttemptCount++
+	bucket.collection.InFlight = true
+	bucket.collection.LastAttemptAt = now.UTC()
+	bucket.collection.LastReason = "in_progress"
+}
+
+// RecordCollectionResult cannot invent attempts or change their start times.
+// Cooldown and busy paths must not call this method: no request was attempted.
+func (cache *openAICodexTurnStateCandidates) RecordCollectionResult(scope, model string, snapshot CodexTurnStateCollectionSnapshot) {
+	if cache == nil || !validOpenAICodexTurnStateCandidateKey(scope, model) {
+		return
+	}
+	switch snapshot.LastReason {
+	case "accepted", "missing_state", "length_not_allowed", "invalid_format", "future_timestamp", "expired", "stale",
+		"model_mismatch", "model_unobserved", "incomplete_response", "response_failed", "body_too_large", "transport_error",
+		"timeout", "unauthorized", "forbidden", "rate_limited", "upstream_error", "configuration_changed", "collection_failed", "in_progress":
+	default:
+		snapshot.LastReason = "collection_failed"
+	}
+	snapshot.LastResponseModel = codexTurnStateBoundedLabel(snapshot.LastResponseModel, openAICodexTurnStateCandidateMaxModelBytes)
+	if snapshot.LastHTTPStatus < 100 || snapshot.LastHTTPStatus > 599 {
+		snapshot.LastHTTPStatus = 0
+	}
+	if snapshot.LastObservedLength < 0 {
+		snapshot.LastObservedLength = 0
+	}
+	snapshot.AttemptCount = 0
+	snapshot.LastAttemptAt = time.Time{}
+	snapshot.InFlight = false
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	key := openAICodexTurnStateCandidateKey{scope: scope, model: model}
+	bucket := cache.ensureBucketLocked(key)
+	cache.order.MoveToBack(cache.buckets[key])
+	if bucket.collection != nil {
+		snapshot.AttemptCount = bucket.collection.AttemptCount
+		snapshot.LastAttemptAt = bucket.collection.LastAttemptAt
+	}
+	bucket.collection = cloneCodexTurnStateCollection(&snapshot)
+}
+
+func cloneCodexTurnStateCollection(value *CodexTurnStateCollectionSnapshot) *CodexTurnStateCollectionSnapshot {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	if value.LastFinishedAt != nil {
+		at := value.LastFinishedAt.UTC()
+		cloned.LastFinishedAt = &at
+	}
+	if value.NextEligibleAt != nil {
+		at := value.NextEligibleAt.UTC()
+		cloned.NextEligibleAt = &at
+	}
+	return &cloned
+}
+
 func codexTurnStateBoundedLabel(value string, limit int) string {
 	if len(value) > limit {
 		return ""
@@ -455,6 +541,7 @@ func (cache *openAICodexTurnStateCandidates) Snapshot(scope string, now time.Tim
 			LastCandidateObservation:  cloneCodexTurnStateDiagnostic(bucket.lastCandidateObservation),
 			LastCandidateRejection:    cloneCodexTurnStateDiagnostic(bucket.lastCandidateRejection),
 			LastCandidateInvalidation: cloneCodexTurnStateDiagnostic(bucket.lastCandidateInvalidation),
+			Collection:                cloneCodexTurnStateCollection(bucket.collection),
 		}
 		if bucket.lastReuseAttemptAt != nil {
 			at := *bucket.lastReuseAttemptAt
