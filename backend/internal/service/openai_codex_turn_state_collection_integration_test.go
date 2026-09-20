@@ -120,6 +120,7 @@ func assertCodexCollectionIntegrationProbe(t *testing.T, upstream *codexCollecti
 	body := upstream.bodies[0]
 	require.Equal(t, http.MethodPost, probe.Method)
 	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses", probe.URL.String())
+	require.True(t, probe.Close, "active collection must close each probe connection so rotating endpoints choose a new IP")
 	require.Equal(t, codexCollectionIntegrationModel, gjson.GetBytes(body, "model").String())
 	require.Equal(t, "Reply with OK.", gjson.GetBytes(body, "instructions").String())
 	require.Equal(t, "Reply with OK.", gjson.GetBytes(body, "input.0.content.0.text").String())

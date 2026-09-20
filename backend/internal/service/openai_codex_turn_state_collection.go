@@ -66,6 +66,10 @@ func (s *OpenAIGatewayService) collectCodexTurnState(req *http.Request, source, 
 					LastObservedLength: result.ObservedLength, LastResponseModel: result.ResponseModel,
 				})
 			}()
+			// Active collection deliberately performs one probe per generation
+			// attempt.  The proxy URL is the account's configured endpoint; Close
+			// on the probe below forces a fresh transport connection for endpoints
+			// that rotate their exit IP per request without changing account routing.
 			result, value := s.probeCodexTurnState(ctx, template, &selected, proxyURL, model, lengths)
 			if result.Reason != "accepted" {
 				return result
@@ -141,7 +145,15 @@ func (s *OpenAIGatewayService) probeCodexTurnState(ctx context.Context, template
 	probe.Header.Set("Accept", "text/event-stream")
 	probe.Header.Set("Accept-Encoding", "identity")
 	probe = probe.WithContext(WithHTTPUpstreamProfile(probe.Context(), HTTPUpstreamProfileOpenAI))
-	resp, err := s.doOpenAIUpstream(probe, proxyURL, account)
+	// req.Close is intentional: a rotating endpoint changes its exit on a new
+	// CONNECT/HTTP connection. The plugin transport may pool connections and
+	// ignore this signal, so active collection uses the native transport port.
+	probe.Close = true
+	if s.httpUpstream == nil {
+		result.Reason = "transport_error"
+		return result, ""
+	}
+	resp, err := s.httpUpstream.Do(probe, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
