@@ -45,16 +45,26 @@ type codexTurnStateHTTPRequestKey struct{}
 // Each HTTP attempt has its own immutable attribution. Never infer a model from
 // the client alias, a previous attempt, or a WebSocket handshake shared by turns.
 type codexTurnStateHTTPAttempt struct {
-	scope     string
-	model     string
-	accountID int64
-	lengths   []int
-	injected  string
+	scope           string
+	model           string
+	accountID       int64
+	lengths         []int
+	injected        string
+	hunterKey       string
+	hunterScope     string
+	hunterCandidate *CodexHunterCandidate
+	responseState   string
 }
 
 // CodexTurnStateStatus contains metadata only. Raw states stay in the bounded
 // process-local cache and must never be exposed through admin APIs or logs.
 type CodexTurnStateStatus struct {
+	HunterEnabled           bool                          `json:"hunter_enabled"`
+	Hunter                  *openAITurnStateHuntState     `json:"hunter,omitempty"`
+	RecoveryEnabled         bool                          `json:"recovery_enabled"`
+	Recovery                *openAITurnStateRecoveryState `json:"recovery,omitempty"`
+	HunterModels            []CodexTurnStateModelSnapshot `json:"hunter_models,omitempty"`
+	HunterSharedCache       bool                          `json:"hunter_shared_cache"`
 	Mode                    string                        `json:"mode"`
 	IdentityVersion         string                        `json:"identity_version"`
 	CandidateLengths        []int                         `json:"candidate_lengths"`
@@ -93,6 +103,15 @@ func (s *OpenAIGatewayService) CodexTurnStateStatus(ctx context.Context, account
 		return status
 	}
 	status.Mode = source.GetCodexTurnStateMode()
+	status.HunterEnabled = s.codexHunterReusable(source) && source.IsOpenAITurnStateHunterEnabled()
+	hunt := readOpenAITurnStateHuntState(source)
+	status.Hunter = &hunt
+	recoveryCfg, _ := readOpenAITurnStateRecoveryConfig(source)
+	status.RecoveryEnabled = codexHunterProbeEligible(s, source, nil) && recoveryCfg.Enabled
+	recovery := readOpenAITurnStateRecoveryState(source)
+	status.Recovery = &recovery
+	status.HunterModels = s.codexHunterModelStatus(ctx, source)
+	_, status.HunterSharedCache = s.cache.(CodexHunterCandidateStore)
 	status.IdentityVersion = source.GetCodexIdentityVersion()
 	status.CandidateLengths = source.GetCodexTurnStateCandidateLengths()
 	status.ActiveCollectionEnabled = source.GetCodexTurnStateActiveCollectionEnabled()
@@ -118,14 +137,24 @@ func (s *OpenAIGatewayService) ClearCodexTurnState(ctx context.Context, account 
 	if s == nil || account == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
 	source, err := resolveCredentialAccount(ctx, s.accountRepo, account)
 	if err == nil && source != nil {
 		s.openaiCodexTurnStateCandidates.Clear(codexTurnStateCandidateScope(source, account))
+		models := s.codexHunterKnownModels(source)
+		for _, model := range models {
+			if ctx.Err() != nil {
+				break
+			}
+			_ = s.hunterCandidateStore().DeleteCodexHunterCandidate(ctx, codexHunterStoreKey(source, model), "")
+		}
+		s.openaiCodexTurnStateCandidates.Clear(codexHunterScope(source))
 	}
 }
 
 func (s *OpenAIGatewayService) prepareCodexTurnStateHTTP(c *gin.Context, account *Account, body []byte, req *http.Request) *http.Request {
-	if c == nil || req == nil || s == nil {
+	if c == nil || req == nil || s == nil || openAITurnStateProbeContext(c) {
 		return req
 	}
 	// Gin contexts are reused across failover attempts. Always reset this slot,
@@ -149,6 +178,7 @@ func (s *OpenAIGatewayService) prepareCodexTurnStateHTTP(c *gin.Context, account
 		(c.Request != nil && !strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/responses")) {
 		return req
 	}
+	s.noteOpenAITurnStateTraffic(source.ID, model, time.Now())
 	attempt := &codexTurnStateHTTPAttempt{scope: scope, model: model, accountID: account.ID, lengths: source.GetCodexTurnStateCandidateLengths()}
 	c.Set(codexTurnStateHTTPContextKey, attempt)
 	selectionReason := "no_candidate"
@@ -161,7 +191,7 @@ func (s *OpenAIGatewayService) prepareCodexTurnStateHTTP(c *gin.Context, account
 		selectionReason = "observe_mode"
 		return req
 	}
-	if source.GetCodexTurnStateActiveCollectionEnabled() {
+	if source.GetCodexTurnStateActiveCollectionEnabled() && !source.IsOpenAITurnStateHunterEnabled() {
 		if blocked, ok := s.openaiCodexTurnStateCollection.BlockedResult(source.ID); ok {
 			selectionReason = "collection_cooldown"
 			return req.WithContext(context.WithValue(req.Context(), codexTurnStateCollectionBlockKey{}, blocked))
@@ -193,7 +223,17 @@ func (s *OpenAIGatewayService) prepareCodexTurnStateHTTP(c *gin.Context, account
 	}
 	// Check the active allowlist and count the selected candidate under one lock.
 	value, ok, reason := s.openaiCodexTurnStateCandidates.SelectCandidateWithReason(scope, model, attempt.lengths, time.Now())
-	if !ok && source.GetCodexTurnStateActiveCollectionEnabled() && len(attempt.lengths) > 0 {
+	if !ok && s.codexHunterReusable(account) && s.openAITurnStateHuntedModel(source, model) {
+		if candidate := s.codexHunterCandidate(req.Context(), source, model); candidate != nil {
+			value, ok, reason = candidate.Value, true, "reused"
+			attempt.hunterKey = codexHunterStoreKey(source, model)
+			attempt.hunterScope = codexHunterScope(source)
+			attempt.hunterCandidate = candidate
+			s.openaiCodexTurnStateCandidates.Observe(attempt.hunterScope, model, value, attempt.lengths, time.Now())
+			s.openaiCodexTurnStateCandidates.SelectCandidate(attempt.hunterScope, model, attempt.lengths, time.Now())
+		}
+	}
+	if !ok && source.GetCodexTurnStateActiveCollectionEnabled() && !source.IsOpenAITurnStateHunterEnabled() && len(attempt.lengths) > 0 {
 		collection := s.collectCodexTurnState(req, source, account, attempt)
 		if collection.GenerationBlocked || collection.HTTPStatus == http.StatusUnauthorized || collection.HTTPStatus == http.StatusForbidden || collection.HTTPStatus == http.StatusTooManyRequests {
 			selectionReason = "collection_rejected"
@@ -210,7 +250,7 @@ func (s *OpenAIGatewayService) prepareCodexTurnStateHTTP(c *gin.Context, account
 		attempt.injected = value
 		return req.WithContext(context.WithValue(req.Context(), codexTurnStateHTTPRequestKey{}, *attempt))
 	}
-	return req
+	return s.codexHunterHoldRequest(req, account, model)
 }
 
 func (s *OpenAIGatewayService) observeCodexTurnStateHTTP(c *gin.Context, account *Account, value string) {
@@ -224,6 +264,21 @@ func (s *OpenAIGatewayService) observeCodexTurnStateHTTP(c *gin.Context, account
 	}
 	source := codexAccountIdentitySource(c, account)
 	if source == nil || source.GetCodexTurnStateMode() == "off" || attempt.scope != codexTurnStateCandidateScope(source, account) {
+		return
+	}
+	attempt.responseState = value
+	if attempt.injected == "" {
+		s.noteOpenAITurnStateMinted(source.ID, attempt.model)
+		if !codexHunterValidState(source, value, time.Now()) {
+			s.resetOpenAITurnStateRecovery(c.Request.Context(), source)
+		}
+	}
+	// Hunter successors are accepted only after the response completes and its
+	// actual model is confirmed. They stay outside the passive candidate pool.
+	if attempt.hunterScope != "" {
+		if value == attempt.injected {
+			s.openaiCodexTurnStateCandidates.ObserveEcho(attempt.hunterScope, attempt.model, value, time.Now())
+		}
 		return
 	}
 	if attempt.injected != "" && value == attempt.injected {
@@ -243,5 +298,9 @@ func (s *OpenAIGatewayService) rejectCodexTurnStateHTTP(req *http.Request, resp 
 		// Let the existing error/failover pipeline handle the response. No extra
 		// request is sent, and a concurrently replaced candidate survives.
 		s.openaiCodexTurnStateCandidates.Invalidate(attempt.scope, attempt.model, attempt.injected)
+		if attempt.hunterKey != "" {
+			s.openaiCodexTurnStateCandidates.Invalidate(attempt.hunterScope, attempt.model, attempt.injected)
+			_ = s.hunterCandidateStore().DeleteCodexHunterCandidate(req.Context(), attempt.hunterKey, attempt.injected)
+		}
 	}
 }

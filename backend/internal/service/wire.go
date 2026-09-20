@@ -844,6 +844,7 @@ var ProviderSet = wire.NewSet(
 	NewAdminService,
 	NewGatewayService,
 	NewOpenAIGatewayService,
+	ProvideOpenAITurnStateHunterService,
 	ProvideImageStorageSettingService,
 	ProvideImageTaskService,
 	ProvideBatchImageModelPricingResolver,
@@ -1040,4 +1041,15 @@ func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.
 	}
 	aggregator.Start()
 	return aggregator
+}
+
+// ProvideOpenAITurnStateHunterService starts the opt-in background worker.
+func ProvideOpenAITurnStateHunterService(gateway *OpenAIGatewayService, accountRepo AccountRepository, proxyRepo ProxyRepository, prober ProxyExitInfoProber, keys *APIKeyService, subscriptions *SubscriptionService, lock LeaderLockCache, db *sql.DB) *OpenAITurnStateHunterService {
+	s := NewOpenAITurnStateHunterService(gateway, accountRepo, proxyRepo, prober, openAITurnStateHunterInterval)
+	gateway.openaiTurnStateHunter = s
+	s.SetAPIKeys(keys)
+	s.SetSubscriptions(subscriptions)
+	s.SetLeaderLock(lock, db)
+	s.Start()
+	return s
 }

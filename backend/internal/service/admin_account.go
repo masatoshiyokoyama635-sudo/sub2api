@@ -152,6 +152,8 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"codex_7d_reset_after_seconds":         {},
 	"codex_7d_window_minutes":              {},
 	"codex_7d_reset_at":                    {},
+	openAITurnStateHuntExtraKey:            {},
+	openAITurnStateRecoveryStateExtraKey:   {},
 }
 
 func duplicateAccountExtra(value map[string]any) (map[string]any, error) {
@@ -914,7 +916,10 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 // UpdateAccountExtra 仅对 Extra JSONB 做 key 级合并，避免覆盖其它运行态键
 // （如 model_rate_limits / passive_usage_* 等）。
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
-	if _, provided := updates[codexIdentityVersionExtraKey]; provided || hasCodexTurnStateSettingsExtra(updates) {
+	if err := ValidateOpenAITurnStateHunterExtra(updates); err != nil {
+		return err
+	}
+	if _, provided := updates[codexIdentityVersionExtraKey]; provided || hasCodexTurnStateSettingsExtra(updates) || hasOpenAITurnStateHunterSettingsExtra(updates) {
 		account, err := s.accountRepo.GetByID(ctx, id)
 		if err != nil {
 			return err
@@ -953,7 +958,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		return nil, err
 	}
 	_, updatesCodexIdentityVersion := input.Extra[codexIdentityVersionExtraKey]
-	updatesCodexIdentityVersion = updatesCodexIdentityVersion || hasCodexTurnStateSettingsExtra(input.Extra)
+	updatesCodexIdentityVersion = updatesCodexIdentityVersion || hasCodexTurnStateSettingsExtra(input.Extra) || hasOpenAITurnStateHunterSettingsExtra(input.Extra)
 	// Managed probe/session state may only enter through dedicated typed endpoints.
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
 	input.Extra = stripOpenAIAutoResetCreditManagedExtra(input.Extra, true)

@@ -25,6 +25,9 @@ func codexIdentityV2Enabled(account *Account) bool {
 }
 
 func validateCodexIdentityVersionExtra(extra map[string]any) error {
+	if err := ValidateOpenAITurnStateHunterExtra(extra); err != nil {
+		return err
+	}
 	value, provided := extra[codexIdentityVersionExtraKey]
 	if !provided {
 		return validateCodexTurnStateSettingsExtra(extra)
@@ -43,6 +46,9 @@ func validateCodexIdentityVersionTarget(account *Account, extra map[string]any) 
 	if err := validateCodexTurnStateSettingsTarget(account, extra); err != nil {
 		return err
 	}
+	if err := validateOpenAITurnStateHunterTarget(account, extra); err != nil {
+		return err
+	}
 	if _, provided := extra[codexIdentityVersionExtraKey]; !provided {
 		return nil
 	}
@@ -58,6 +64,7 @@ func validateCodexIdentityVersionTarget(account *Account, extra map[string]any) 
 // An omitted field is not a request to migrate an account. This also protects
 // existing v2 accounts edited by older clients that send a full extra object.
 func preserveCodexIdentityVersionForUpdate(account *Account, extra map[string]any) map[string]any {
+	extra = preserveOpenAITurnStateHunterSettingsForUpdate(account, extra)
 	extra = preserveCodexTurnStateSettingsForUpdate(account, extra)
 	if account == nil {
 		return extra

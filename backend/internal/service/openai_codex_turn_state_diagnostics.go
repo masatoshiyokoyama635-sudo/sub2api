@@ -89,7 +89,8 @@ func (s *OpenAIGatewayService) finishCodexTurnStateHTTPRequest(ctx context.Conte
 	snapshot.RequestID = codexTurnStateBoundedLabel(resolveUsageBillingRequestID(ctx, requestID), 128)
 	snapshot.UpstreamResponseModel = codexTurnStateBoundedLabel(observedUpstreamResponseModel(c), openAICodexTurnStateCandidateMaxModelBytes)
 	snapshot.ResponseModelObserved = snapshot.UpstreamResponseModel != ""
-	snapshot.ModelMismatch = snapshot.ResponseModelObserved && !upstreamModelsMatchForAudit(attempt.model, snapshot.UpstreamResponseModel)
+	snapshot.ModelMismatch = observedUpstreamResponseModelConflict(c) || (snapshot.ResponseModelObserved && !upstreamModelsMatchForAudit(attempt.model, snapshot.UpstreamResponseModel))
+	s.finishCodexHunterHTTP(ctx, c, account, result, snapshot)
 	s.openaiCodexTurnStateCandidates.RecordRequest(attempt.scope, attempt.model, snapshot)
 	fields := []zap.Field{
 		zap.Int64("account_id", account.ID),

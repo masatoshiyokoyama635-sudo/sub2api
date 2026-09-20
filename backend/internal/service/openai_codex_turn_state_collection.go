@@ -144,7 +144,7 @@ func (s *OpenAIGatewayService) probeCodexTurnState(ctx context.Context, template
 	probe.Header.Set("Content-Type", "application/json")
 	probe.Header.Set("Accept", "text/event-stream")
 	probe.Header.Set("Accept-Encoding", "identity")
-	probe = probe.WithContext(WithHTTPUpstreamProfile(probe.Context(), HTTPUpstreamProfileOpenAI))
+	probe = probe.WithContext(WithHTTPUpstreamFreshConnection(WithHTTPUpstreamProfile(probe.Context(), HTTPUpstreamProfileOpenAI)))
 	// req.Close is intentional: a rotating endpoint changes its exit on a new
 	// CONNECT/HTTP connection. The plugin transport may pool connections and
 	// ignore this signal, so active collection uses the native transport port.

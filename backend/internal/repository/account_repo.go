@@ -65,9 +65,11 @@ var schedulerNeutralExtraKeyPrefixes = []string{
 }
 
 var schedulerNeutralExtraKeys = map[string]struct{}{
-	"codex_usage_updated_at":     {},
-	"grok_billing_snapshot":      {},
-	"session_window_utilization": {},
+	"openai_turn_state_hunt":           {},
+	"openai_turn_state_recovery_state": {},
+	"codex_usage_updated_at":           {},
+	"grok_billing_snapshot":            {},
+	"session_window_utilization":       {},
 }
 
 const postgresParameterBatchSize = 50000
@@ -647,7 +649,11 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'upstream_billing_probe',
 			extra -> 'ollama_cloud_usage_session',
 			extra -> 'ollama_cloud_usage_auto_refresh',
-			extra -> 'ollama_cloud_usage_snapshot'
+			extra -> 'ollama_cloud_usage_snapshot',
+			jsonb_build_object(
+				'openai_turn_state_hunt', extra -> 'openai_turn_state_hunt',
+				'openai_turn_state_recovery_state', extra -> 'openai_turn_state_recovery_state'
+			)
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
@@ -673,6 +679,7 @@ func lockAndMergeAccountProbeExtra(
 		currentOllamaSession         []byte
 		currentOllamaAutoRefresh     []byte
 		currentOllamaSnapshot        []byte
+		currentTurnStateRuntime      []byte
 	)
 	if err := rows.Scan(
 		&identityUnchanged,
@@ -684,6 +691,7 @@ func lockAndMergeAccountProbeExtra(
 		&currentOllamaSession,
 		&currentOllamaAutoRefresh,
 		&currentOllamaSnapshot,
+		&currentTurnStateRuntime,
 	); err != nil {
 		return nil, err
 	}
@@ -692,6 +700,12 @@ func lockAndMergeAccountProbeExtra(
 	}
 
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
+	// Background updates may have committed after the editor loaded the account.
+	// Preserve the current runtime while holding this same row lock; neither a
+	// stale full extra object nor imported data may resurrect old observations.
+	if err := mergeOpenAITurnStateRuntimeExtra(extra, currentTurnStateRuntime); err != nil {
+		return nil, err
+	}
 	for _, key := range []string{
 		service.UpstreamBillingProbeEnabledExtraKey,
 		service.UpstreamBillingRateSyncEnabledExtraKey,

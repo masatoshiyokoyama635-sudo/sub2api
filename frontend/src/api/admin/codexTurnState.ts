@@ -58,11 +58,59 @@ export interface CodexTurnStateModelSnapshot {
   candidate?: CodexTurnStateCandidate
 }
 
+export interface TurnStateHunterAttempt {
+  at: string
+  model: string
+  proxy_id: number
+  proxy?: string
+  status: number
+  chars: number
+  healthy: boolean
+  latency_ms: number
+  exit?: string
+  error?: string
+  response_model?: string
+}
+
+export interface TurnStateHunterRuntime {
+  next_at: string
+  hour_start: string
+  hour_count: number
+  cursor: number
+  last: TurnStateHunterAttempt[]
+  exits?: Array<{ proxy_id: number; ip: string; at: string; healthy: boolean; response_model?: string }>
+  last_error?: string
+  cap_wait?: boolean
+  gate?: string
+  updated_at: string
+  auth_blocked_credential?: string
+  rate_limit_until?: string
+}
+
+export interface TurnStateRecoveryRuntime {
+  streak?: number
+  fail_streak?: number
+  next_at: string
+  recovered_at?: string
+  cooling_until?: string
+  last?: TurnStateHunterAttempt[]
+  last_error?: string
+  updated_at: string
+  auth_blocked_credential?: string
+  rate_limit_until?: string
+}
+
 export interface CodexTurnStateStatus {
   mode: 'off' | 'observe' | 'reuse'
   identity_version: string
   candidate_lengths: number[]
   active_collection_enabled?: boolean
+  hunter_enabled?: boolean
+  hunter?: TurnStateHunterRuntime
+  hunter_models?: CodexTurnStateModelSnapshot[]
+  hunter_shared_cache?: boolean
+  recovery_enabled?: boolean
+  recovery?: TurnStateRecoveryRuntime
   process_local: boolean
   models: CodexTurnStateModelSnapshot[]
 }

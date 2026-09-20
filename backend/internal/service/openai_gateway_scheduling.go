@@ -397,6 +397,9 @@ func openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx context.Con
 	}
 	if !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 		if account.IsSchedulable() {
+			if codexHunterHeldForRequest(account, requestedModel, time.Now()) {
+				return OpenAITurnStateHoldSelectionReason
+			}
 			return "model_rate_limited"
 		}
 		return "not_schedulable"

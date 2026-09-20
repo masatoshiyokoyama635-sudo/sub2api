@@ -8,6 +8,7 @@ import {
   type CodexTurnStateStatus
 } from '@/api/admin/codexTurnState'
 import { formatDateTime } from '@/utils/format'
+import TurnStateHunterStatus from './TurnStateHunterStatus.vue'
 
 const props = defineProps<{ accountId: number }>()
 const { t } = useI18n()
@@ -88,7 +89,7 @@ onBeforeUnmount(() => { requestVersion++ })
         <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" data-testid="codex-turn-state-refresh" @click="load()">
           {{ t('admin.accounts.codexTurnStateStatus.refresh') }}
         </button>
-        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || !state?.models?.length" data-testid="codex-turn-state-clear" @click="load(true)">
+        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || !(state?.models?.length || state?.hunter_models?.length)" data-testid="codex-turn-state-clear" @click="load(true)">
           {{ t('admin.accounts.codexTurnStateStatus.clear') }}
         </button>
       </div>
@@ -104,6 +105,7 @@ onBeforeUnmount(() => { requestVersion++ })
     <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.accounts.codexTurnStateStatus.localOnly') }}</p>
     <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.accounts.codexTurnStateStatus.attemptsOnly') }}</p>
     <p v-if="errorKey" role="alert" class="text-xs text-red-600 dark:text-red-400">{{ t(`admin.accounts.codexTurnStateStatus.${errorKey}`) }}</p>
+    <TurnStateHunterStatus v-if="state" :state="state" />
     <p v-if="busy && !state" aria-live="polite" class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.accounts.codexTurnStateStatus.loading') }}</p>
     <p v-else-if="state && !state.models?.length" class="text-xs text-gray-500 dark:text-dark-400" data-testid="codex-turn-state-empty">{{ t('admin.accounts.codexTurnStateStatus.empty') }}</p>
     <ul v-if="state?.models?.length" class="max-h-96 space-y-3 overflow-y-auto">

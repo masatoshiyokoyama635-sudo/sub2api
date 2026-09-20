@@ -206,6 +206,9 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	if req != nil {
 		profile = service.HTTPUpstreamProfileFromContext(req.Context())
 	}
+	if req != nil && service.HTTPUpstreamFreshConnection(req.Context()) {
+		return s.doFreshConnection(req, proxyURL, accountConcurrency, profile)
+	}
 
 	// 获取或创建对应的客户端，并标记请求占用
 	entry, err := s.acquireClientWithProfile(proxyURL, accountID, accountConcurrency, profile)
@@ -236,6 +239,28 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
 	})
 
+	return resp, nil
+}
+
+// doFreshConnection owns one transport for exactly one probe. It never closes
+// or evicts generation connections, including in account-only isolation mode.
+func (s *httpUpstreamService) doFreshConnection(req *http.Request, proxyURL string, concurrency int, profile service.HTTPUpstreamProfile) (*http.Response, error) {
+	proxyKey, parsed, err := normalizeProxyURL(proxyURL)
+	if err != nil { return nil, err }
+	settings := s.applyProfilePoolSettings(s.resolvePoolSettings(s.getIsolationMode(), concurrency), profile)
+	transport, err := buildUpstreamTransport(settings, parsed, s.resolveProtocolMode(profile, proxyKey, parsed))
+	if err != nil { return nil, err }
+	transport.DisableKeepAlives = true
+	client := &http.Client{Transport: transport}
+	if s.shouldValidateResolvedIP() { client.CheckRedirect = s.redirectChecker }
+	client = s.httpClientForUpstreamRequest(client, req)
+	resp, err := servertiming.Do(client, req)
+	if err != nil {
+		transport.CloseIdleConnections()
+		return nil, err
+	}
+	decompressResponseBody(resp)
+	resp.Body = wrapTrackedBody(resp.Body, transport.CloseIdleConnections)
 	return resp, nil
 }
 

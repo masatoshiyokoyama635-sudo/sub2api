@@ -64,6 +64,63 @@ describe('CodexTurnStateStatusPanel', () => {
     expect(clearCodexTurnState).not.toHaveBeenCalled()
   })
 
+  it('shows background runs and recovery even without model history and never renders raw proxy errors', async () => {
+    const snapshot = observed()
+    snapshot.models = []
+    snapshot.hunter_enabled = true
+    snapshot.hunter = {
+      next_at: '2026-09-20T12:01:00Z', hour_start: '2026-09-20T12:00:00Z', hour_count: 3, cursor: 1,
+      gate: 'fresh', updated_at: '2026-09-20T12:00:20Z',
+      last_error: 'http://user:private-password@proxy.example failed',
+      last: [{ at: '2026-09-20T12:00:00Z', model: 'gpt-6-astra', proxy_id: 9,
+        proxy: 'http://user:private-password@proxy.example', status: 200, chars: 332, healthy: true, latency_ms: 124,
+        error: 'secret-bearer-token' }]
+    }
+    snapshot.recovery_enabled = true
+    snapshot.recovery = { streak: 4, fail_streak: 0, next_at: '2026-09-20T13:00:00Z', updated_at: '2026-09-20T12:00:00Z' }
+    getCodexTurnState.mockResolvedValueOnce(snapshot)
+    const wrapper = mount(CodexTurnStateStatusPanel, { props: { accountId: 7 } })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="codex-hunter-gate"]').text()).toContain('turnStateHunter.fresh')
+    expect(wrapper.get('[data-testid="codex-hunter-status"]').text()).toContain('2026-09-20T12:01:00Z')
+    const attempts = wrapper.get('[data-testid="codex-hunter-attempts"]')
+    expect(attempts.text()).toContain('332')
+    expect(attempts.text()).toContain('gpt-6-astra')
+    expect(attempts.text()).toContain('turnStateHunter.accepted')
+    expect(wrapper.get('[data-testid="codex-recovery-status"]').text()).toContain('turnStateHunter.streak4')
+    expect(wrapper.html()).not.toContain('private-password')
+    expect(wrapper.html()).not.toContain('secret-bearer-token')
+    expect(wrapper.html()).not.toContain('user:')
+    wrapper.unmount()
+  })
+
+  it('shows shared hunter candidates without passive traffic and enables cache clearing', async () => {
+    const snapshot = observed()
+    const hunterModel = snapshot.models[0]
+    snapshot.models = []
+    snapshot.hunter_enabled = true
+    snapshot.hunter_shared_cache = true
+    snapshot.hunter_models = [hunterModel, { ...hunterModel, model: 'gpt-other', candidate: undefined }]
+    getCodexTurnState.mockResolvedValueOnce(snapshot)
+    const cleared = { ...snapshot, hunter_models: [], models: [] }
+    clearCodexTurnState.mockResolvedValueOnce(cleared)
+    const wrapper = mount(CodexTurnStateStatusPanel, { props: { accountId: 7 } })
+    await flushPromises()
+    const candidates = wrapper.get('[data-testid="codex-hunter-candidates"]')
+    expect(candidates.text()).toContain('gpt-team')
+    expect(candidates.text()).toContain('332')
+    expect(candidates.text()).toContain('2026-09-18T12:55:00Z')
+    expect(candidates.text()).toContain('abcdef012345')
+    expect(candidates.text()).toContain('admin.accounts.codexTurnStateStatus.noCandidate')
+    expect(wrapper.get('[data-testid="codex-hunter-cache-scope"]').text()).toContain('turnStateHunter.sharedCache')
+    expect(wrapper.get<HTMLButtonElement>('[data-testid="codex-turn-state-clear"]').element.disabled).toBe(false)
+    await wrapper.get('[data-testid="codex-turn-state-clear"]').trigger('click')
+    await flushPromises()
+    expect(clearCodexTurnState).toHaveBeenCalledWith(7)
+    expect(wrapper.find('[data-testid="codex-hunter-candidates"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('keeps model totals visible when the current candidate has never been selected', async () => {
     const snapshot = observed()
     snapshot.mode = 'reuse'

@@ -44,7 +44,11 @@ jobs:
 
       - name: Run custom backend regressions
         working-directory: backend
-        run: go test -tags unit ./cmd/server ./internal/service ./internal/handler/admin ./internal/server/routes -run 'TestEmbeddedVersionMatchesRelease|TestUpdateService|TestCompareVersionsHandlesSuffixes|TestContentModerationRuntimeSnapshotRefreshFailureKeepsStaleConfig|TestCodexTeam|TestCodexTurnState|TestCodexIdentityV2'
+        run: go test -tags unit ./cmd/server ./internal/service ./internal/repository ./internal/handler ./internal/handler/admin ./internal/server/routes ./migrations -run 'TestEmbeddedVersionMatchesRelease|TestUpdateService|TestCompareVersionsHandlesSuffixes|TestContentModerationRuntimeSnapshotRefreshFailureKeepsStaleConfig|TestCodexTeam|TestCodexTurnState|TestCodexIdentityV2|TestCodexHunter|TestOpenAITurnState|TestTurnStateProbe|TestAccountRepo.*TurnState'
+
+      - name: Verify hunter holds against PostgreSQL
+        working-directory: backend
+        run: go test -tags integration ./internal/repository -run '^TestCodexHunterHoldSQLPreservesConcurrentProviderLimits$' -count=1 -v
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6

@@ -3321,6 +3321,16 @@
           v-model:active-collection="codexTurnStateActiveCollection"
           id-prefix="create-codex-turn-state"
         />
+        <TurnStateHunterSettings
+          v-if="codexIdentityVersion === 'v2' && oauthFlowRef?.inputMethod !== 'agent_identity'"
+          v-model:hunter="turnStateHunter"
+          v-model:recovery="turnStateRecovery"
+          :proxies="proxies"
+          :lengths="codexTurnStateLengths"
+          :eligible="codexTurnStateMode === 'reuse'"
+          :recovery-eligible="codexTurnStateMode !== 'off'"
+          id-prefix="create-codex-turn-state"
+        />
         <div class="flex items-center justify-between gap-4">
           <div class="min-w-0">
             <label class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
@@ -3944,6 +3954,8 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import CodexTurnStateSettings from '@/components/account/CodexTurnStateSettings.vue'
+import TurnStateHunterSettings from '@/components/account/TurnStateHunterSettings.vue'
+import { emptyTurnStateHunter, emptyTurnStateRecovery, validateTurnStateHunter, writeTurnStateHunterExtra } from '@/utils/turnStateHunter'
 import { DEFAULT_CODEX_TURN_STATE_LENGTHS, parseCodexTurnStateLengths, type CodexTurnStateMode } from '@/utils/codexTurnState'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
@@ -4463,6 +4475,8 @@ const codexIdentityVersion = ref<'v1' | 'v2'>('v1')
 const codexTurnStateMode = ref<CodexTurnStateMode>('off')
 const codexTurnStateLengths = ref(DEFAULT_CODEX_TURN_STATE_LENGTHS)
 const codexTurnStateActiveCollection = ref(false)
+const turnStateHunter = ref(emptyTurnStateHunter())
+const turnStateRecovery = ref(emptyTurnStateRecovery())
 const codexIdentityVersionOptions = computed(() => [
   { value: 'v1', label: t('admin.accounts.openai.codexIdentityV1') },
   { value: 'v2', label: t('admin.accounts.openai.codexIdentityV2') },
@@ -5392,6 +5406,8 @@ const resetForm = () => {
   codexTurnStateMode.value = 'off'
   codexTurnStateLengths.value = DEFAULT_CODEX_TURN_STATE_LENGTHS
   codexTurnStateActiveCollection.value = false
+  turnStateHunter.value = emptyTurnStateHunter()
+  turnStateRecovery.value = emptyTurnStateRecovery()
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
@@ -5513,6 +5529,15 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     delete extra.codex_turn_state_candidate_lengths
     delete extra.codex_turn_state_active_collection
   }
+  const backgroundEligible = accountCategory.value === 'oauth-based' && codexIdentityVersion.value === 'v2' &&
+    oauthFlowRef.value?.inputMethod !== 'agent_identity'
+  const hunterEligible = backgroundEligible && codexTurnStateMode.value === 'reuse'
+  const recoveryEligible = backgroundEligible && codexTurnStateMode.value !== 'off'
+  if (hunterEligible || recoveryEligible) {
+    const error = validateTurnStateHunter({ ...turnStateHunter.value, enabled: hunterEligible && turnStateHunter.value.enabled }, turnStateRecovery.value, parseCodexTurnStateLengths(codexTurnStateLengths.value))
+    if (error) throw new Error(t(`admin.accounts.turnStateHunter.${error}`))
+  }
+  writeTurnStateHunterExtra(extra, turnStateHunter.value, turnStateRecovery.value, hunterEligible, recoveryEligible)
   if (accountCategory.value === 'oauth-based' && codexFingerprintMode.value !== 'off') {
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   } else {
@@ -6497,6 +6522,8 @@ const handleOpenAIImportCodexSession = async (content: string) => {
       delete extra.codex_turn_state_mode
       delete extra.codex_turn_state_candidate_lengths
       delete extra.codex_turn_state_active_collection
+      delete extra.openai_turn_state_hunter
+      delete extra.openai_turn_state_recovery
     }
     const result = await adminAPI.accounts.importCodexSession({
       content: trimmed,

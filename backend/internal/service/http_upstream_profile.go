@@ -16,6 +16,20 @@ const (
 type httpUpstreamProfileContextKey struct{}
 type httpUpstreamDisableRedirectsContextKey struct{}
 type httpUpstreamPublicHostsOnlyContextKey struct{}
+type httpUpstreamFreshConnectionContextKey struct{}
+
+// WithHTTPUpstreamFreshConnection isolates a probe from pooled generation
+// connections. Request.Close alone can still borrow an existing idle tunnel.
+func WithHTTPUpstreamFreshConnection(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, httpUpstreamFreshConnectionContextKey{}, true)
+}
+
+func HTTPUpstreamFreshConnection(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(httpUpstreamFreshConnectionContextKey{}) == true
+}
 
 // WithHTTPUpstreamProfile injects an upstream transport profile into ctx.
 func WithHTTPUpstreamProfile(ctx context.Context, profile HTTPUpstreamProfile) context.Context {

@@ -26,6 +26,20 @@
         <p class="input-hint">{{ t('admin.accounts.notesHint') }}</p>
       </div>
 
+      <div
+        v-if="account.platform === 'openai' && (account.type === 'oauth' || account.type === 'setup-token') && !isSparkShadow && !isAgentIdentity"
+        class="flex items-center justify-between gap-3 rounded-lg border border-primary-200 bg-primary-50 p-3 dark:border-primary-800 dark:bg-primary-900/10"
+        data-testid="edit-hunter-shortcut"
+      >
+        <div>
+          <p class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ t('admin.accounts.turnStateHunter.title') }}</p>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.turnStateHunter.shortcutHint') }}</p>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm flex-shrink-0" data-testid="edit-hunter-configure" @click="focusHunterSettings">
+          {{ t('admin.accounts.turnStateHunter.configure') }}
+        </button>
+      </div>
+
       <!-- API Key fields (only for apikey type) -->
       <div v-if="account.type === 'apikey'" class="space-y-4">
         <div v-if="!isCNApiKeyAccount || editApiProtocol !== 'adaptive'">
@@ -2254,6 +2268,9 @@
       <!-- Codex 身份版本与指纹收敛（OpenAI OAuth / setup-token） -->
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token')"
+        ref="codexIdentitySettingsRef"
+        tabindex="-1"
+        data-testid="edit-codex-identity-settings"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="mb-4 flex items-center justify-between gap-4">
@@ -2275,6 +2292,17 @@
           v-model:mode="codexTurnStateMode"
           v-model:lengths="codexTurnStateLengths"
           v-model:active-collection="codexTurnStateActiveCollection"
+          id-prefix="edit-codex-turn-state"
+        />
+        <TurnStateHunterSettings
+          v-if="!isSparkShadow && !isAgentIdentity && codexIdentityVersion === 'v2'"
+          ref="turnStateHunterSettingsRef"
+          v-model:hunter="turnStateHunter"
+          v-model:recovery="turnStateRecovery"
+          :proxies="proxies"
+          :lengths="codexTurnStateLengths"
+          :eligible="codexTurnStateMode === 'reuse'"
+          :recovery-eligible="codexTurnStateMode !== 'off'"
           id-prefix="edit-codex-turn-state"
         />
         <CodexTurnStateStatusPanel
@@ -3067,6 +3095,8 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import CodexTurnStateSettings from '@/components/account/CodexTurnStateSettings.vue'
+import TurnStateHunterSettings from '@/components/account/TurnStateHunterSettings.vue'
+import { emptyTurnStateHunter, emptyTurnStateRecovery, readTurnStateHunter, readTurnStateRecovery, validateTurnStateHunter, writeTurnStateHunterExtra } from '@/utils/turnStateHunter'
 import CodexTurnStateStatusPanel from '@/components/account/CodexTurnStateStatusPanel.vue'
 import { DEFAULT_CODEX_TURN_STATE_LENGTHS, parseCodexTurnStateLengths, formatCodexTurnStateLengths, readCodexTurnStateMode, type CodexTurnStateMode } from '@/utils/codexTurnState'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
@@ -3561,6 +3591,15 @@ const codexIdentityVersion = ref<'v1' | 'v2'>('v1')
 const codexTurnStateMode = ref<CodexTurnStateMode>('off')
 const codexTurnStateLengths = ref(DEFAULT_CODEX_TURN_STATE_LENGTHS)
 const codexTurnStateActiveCollection = ref(false)
+const turnStateHunter = ref(emptyTurnStateHunter())
+const turnStateRecovery = ref(emptyTurnStateRecovery())
+const codexIdentitySettingsRef = ref<HTMLElement | null>(null)
+const turnStateHunterSettingsRef = ref<InstanceType<typeof TurnStateHunterSettings> | null>(null)
+function focusHunterSettings() {
+  const target = (turnStateHunterSettingsRef.value?.$el as HTMLElement | undefined) ?? codexIdentitySettingsRef.value
+  target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  target?.focus({ preventScroll: true })
+}
 const codexIdentityVersionOptions = computed(() => [
   { value: 'v1', label: t('admin.accounts.openai.codexIdentityV1') },
   { value: 'v2', label: t('admin.accounts.openai.codexIdentityV2') },
@@ -4052,6 +4091,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   codexTurnStateMode.value = 'off'
   codexTurnStateLengths.value = DEFAULT_CODEX_TURN_STATE_LENGTHS
   codexTurnStateActiveCollection.value = false
+  turnStateHunter.value = emptyTurnStateHunter()
+  turnStateRecovery.value = emptyTurnStateRecovery()
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -4109,6 +4150,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       codexTurnStateMode.value = readCodexTurnStateMode(extra?.codex_turn_state_mode)
       codexTurnStateLengths.value = formatCodexTurnStateLengths(extra?.codex_turn_state_candidate_lengths)
       codexTurnStateActiveCollection.value = extra?.codex_turn_state_active_collection === true
+      turnStateHunter.value = readTurnStateHunter(extra?.openai_turn_state_hunter)
+      turnStateRecovery.value = readTurnStateRecovery(extra?.openai_turn_state_recovery)
       // 缺省/非法值按 off 呈现，与后端 GetCodexFingerprintMode 的 opt-in 语义一致（#5610）
       codexFingerprintMode.value = (['off', 'device', 'session', 'full'].includes(fpMode || '')
         ? fpMode as CodexFingerprintMode
@@ -5640,6 +5683,16 @@ const handleSubmit = async () => {
           delete newExtra.codex_cli_only_allow_app_server
         }
       }
+
+      const backgroundEligible = !isSparkShadow.value && !isAgentIdentity.value &&
+        (props.account.type === 'oauth' || props.account.type === 'setup-token') && codexIdentityVersion.value === 'v2'
+      const hunterEligible = backgroundEligible && codexTurnStateMode.value === 'reuse'
+      const recoveryEligible = backgroundEligible && codexTurnStateMode.value !== 'off'
+      if (hunterEligible || recoveryEligible) {
+        const error = validateTurnStateHunter({ ...turnStateHunter.value, enabled: hunterEligible && turnStateHunter.value.enabled }, turnStateRecovery.value, parseCodexTurnStateLengths(codexTurnStateLengths.value))
+        if (error) throw new Error(t(`admin.accounts.turnStateHunter.${error}`))
+      }
+      writeTurnStateHunterExtra(newExtra, turnStateHunter.value, turnStateRecovery.value, hunterEligible, recoveryEligible)
 
       // 指纹收敛模式：默认 off（不写入）；device/session/full 是显式 opt-in，
       // 必须落键，否则管理员的选择会被后端当作"未设置"而回落到 off（#5610）。

@@ -510,6 +510,11 @@ type OpenAIGatewayService struct {
 	openaiCodexTurnStateCollection openAICodexTurnStateCollectionGate
 	openaiCodexTurnStateOrigins    sync.Map
 	openaiCodexTurnStateWrites     atomic.Uint64
+	openaiTurnStateTraffic         sync.Map
+	openaiTurnStateMinted          sync.Map
+	openaiTurnStateTrafficWrites   atomic.Uint64
+	openaiTurnStateHunter          *OpenAITurnStateHunterService
+	codexHunterLocal               codexHunterLocalStore
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

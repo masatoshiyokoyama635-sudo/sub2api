@@ -398,6 +398,64 @@ describe('EditAccountModal', () => {
     wrapper.unmount()
   })
 
+  it.each(['v1', 'v2'])('offers a visible hunter shortcut for %s without changing saved identity', async (version) => {
+    const account = { ...buildOpenAIOAuthParentAccount(), extra: { codex_identity_version: version } }
+    const wrapper = mountModal(account)
+    const target = wrapper.get(version === 'v2' ? '[data-testid="edit-codex-turn-state-hunter-section"]' : '[data-testid="edit-codex-identity-settings"]')
+    if (version === 'v1') expect(target.find('[data-testid="edit-codex-identity-version-select"]').exists()).toBe(true)
+    const scroll = vi.fn()
+    target.element.scrollIntoView = scroll
+    expect(wrapper.find('[data-testid="edit-hunter-shortcut"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="edit-hunter-configure"]').trigger('click')
+    expect(scroll).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+    expect(wrapper.get<HTMLSelectElement>('[data-testid="edit-codex-identity-version-select"]').element.value).toBe(version)
+    wrapper.unmount()
+  })
+
+  it('saves independent hunter proxies while keeping normal request proxy and stripping stale runtime', async () => {
+    const account = { ...buildOpenAIOAuthParentAccount(), proxy_id: 8, extra: {
+      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332],
+      openai_turn_state_hunter: { enabled: true, models: ['gpt-6-astra'], proxy_ids: [9], rotating_proxy_ids: [9], retry_minutes: 17 },
+      openai_turn_state_recovery: { enabled: true, model: 'gpt-6-astra', streak_target: 4 },
+      openai_turn_state_hunt: { hour_count: 1 }, openai_turn_state_recovery_state: { streak: 2 }, custom: true
+    } }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLInputElement>('[data-testid="edit-codex-turn-state-hunter-enabled"]').element.checked).toBe(true)
+    await wrapper.get('[data-testid="edit-codex-turn-state-hunter-max_per_hour"]').setValue('45')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const payload = updateAccountMock.mock.calls[0]?.[1]
+    expect(payload.proxy_id).toBe(8)
+    expect(payload.extra).toMatchObject({
+      custom: true, codex_turn_state_candidate_lengths: [332],
+      openai_turn_state_hunter: { enabled: true, proxy_ids: [9], rotating_proxy_ids: [9], max_per_hour: 45, retry_minutes: 17 },
+      openai_turn_state_recovery: { enabled: true, streak_target: 4 }
+    })
+    expect(payload.extra).not.toHaveProperty('openai_turn_state_hunt')
+    expect(payload.extra).not.toHaveProperty('openai_turn_state_recovery_state')
+    wrapper.unmount()
+  })
+
+  it('turns off saved hunter and recovery when returning to v1', async () => {
+    const account = { ...buildOpenAIOAuthParentAccount(), extra: {
+      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse',
+      openai_turn_state_hunter: { enabled: true, auto_models: true, proxy_ids: [9] },
+      openai_turn_state_recovery: { enabled: true }
+    } }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="edit-codex-identity-version-select"]').setValue('v1')
+    expect(wrapper.find('[data-testid="edit-codex-turn-state-hunter-section"]').exists()).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+      openai_turn_state_hunter: { enabled: false, proxy_ids: [9] }, openai_turn_state_recovery: { enabled: false }
+    })
+    wrapper.unmount()
+  })
+
   it('invalid candidate lengths prevent an account save', async () => {
     const account = { ...buildOpenAIOAuthParentAccount(), extra: { codex_identity_version: 'v2' } }
     updateAccountMock.mockReset().mockResolvedValue(account)
@@ -420,6 +478,7 @@ describe('EditAccountModal', () => {
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
     const wrapper = mountModal(account)
     expect(wrapper.find('[data-testid="edit-codex-turn-state-mode"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="edit-hunter-shortcut"]').exists()).toBe(false)
     expect(wrapper.findComponent({ name: 'CodexTurnStateStatusPanel' }).exists()).toBe(false)
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     expect(updateAccountMock).toHaveBeenCalledOnce()

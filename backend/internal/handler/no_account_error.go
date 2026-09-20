@@ -35,6 +35,7 @@ type noAccountErrorClassification struct {
 }
 
 var selectionModelRateLimitedPattern = regexp.MustCompile(`(?:model_rate_limited|rate_limited)=(\d+)`)
+var selectionTurnStateHoldPattern = regexp.MustCompile(service.OpenAITurnStateHoldSelectionReason + `=([1-9]\d*)`)
 
 // classifySelectionFailureError preserves the scheduler's compact reason when
 // every model-capable account is temporarily rate limited.
@@ -58,6 +59,9 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 	// sites gate markOpsRoutingCapacityLimitedIfNoAvailable on ModelNotFound.
 	if fallback.ModelNotFound {
 		return fallback
+	}
+	if selectionTurnStateHoldPattern.MatchString(strings.ToLower(err.Error())) {
+		return noAccountErrorClassification{Status: http.StatusServiceUnavailable, ErrType: "turn_state_hold", Message: "Available accounts are waiting for usable turn-state candidates; background hunter is collecting."}
 	}
 	match := selectionModelRateLimitedPattern.FindStringSubmatch(strings.ToLower(err.Error()))
 	if len(match) != 2 {
