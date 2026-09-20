@@ -8,6 +8,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	dbaccount "github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +29,7 @@ func TestCodexHunterHoldSQLPreservesConcurrentProviderLimits(t *testing.T) {
 	repo := &accountRepository{client: integrationEntClient, sql: integrationDB}
 	const model = "gpt.literal[1].model"
 	require.NoError(t, repo.SetCodexHunterModelHold(ctx, row.ID, model, until, nil))
-	current, err := repo.GetByID(ctx, row.ID)
+	current, err := tx.Client().Account.Query().Where(dbaccount.IDEQ(row.ID)).Only(ctx)
 	require.NoError(t, err)
 	limits := current.Extra["model_rate_limits"].(map[string]any)
 	require.Equal(t, other, limits["other"])
@@ -42,7 +43,7 @@ func TestCodexHunterHoldSQLPreservesConcurrentProviderLimits(t *testing.T) {
 	require.NoError(t, tx.Client().Account.UpdateOneID(row.ID).SetExtra(current.Extra).Exec(ctx))
 	require.NoError(t, repo.ReleaseCodexHunterModelHold(ctx, row.ID, model, until))
 	require.NoError(t, repo.SetCodexHunterModelHold(ctx, row.ID, model, until.Add(time.Minute), nil))
-	current, err = repo.GetByID(ctx, row.ID)
+	current, err = tx.Client().Account.Query().Where(dbaccount.IDEQ(row.ID)).Only(ctx)
 	require.NoError(t, err)
 	require.Equal(t, other, current.Extra["model_rate_limits"].(map[string]any)[model])
 
@@ -51,11 +52,11 @@ func TestCodexHunterHoldSQLPreservesConcurrentProviderLimits(t *testing.T) {
 	limits[model] = hold
 	require.NoError(t, tx.Client().Account.UpdateOneID(row.ID).SetExtra(current.Extra).Exec(ctx))
 	require.NoError(t, repo.ReleaseCodexHunterModelHold(ctx, row.ID, model, until.Add(-time.Second)))
-	current, err = repo.GetByID(ctx, row.ID)
+	current, err = tx.Client().Account.Query().Where(dbaccount.IDEQ(row.ID)).Only(ctx)
 	require.NoError(t, err)
 	require.Contains(t, current.Extra["model_rate_limits"], model)
 	require.NoError(t, repo.ReleaseCodexHunterModelHold(ctx, row.ID, model, until))
-	current, err = repo.GetByID(ctx, row.ID)
+	current, err = tx.Client().Account.Query().Where(dbaccount.IDEQ(row.ID)).Only(ctx)
 	require.NoError(t, err)
 	require.NotContains(t, current.Extra["model_rate_limits"], model)
 	require.Equal(t, other, current.Extra["model_rate_limits"].(map[string]any)["other"])
