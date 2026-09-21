@@ -335,6 +335,7 @@ func TestOpenAIWSConnPool_AcquireAtCapacityWakesWhenAnotherConnReleases(t *testi
 	req := openAIWSAcquireRequest{Account: account, WSURL: "wss://example.com/v1/responses"}
 	target := newOpenAIWSConn("target", accountID, &openAIWSFakeConn{}, nil)
 	other := newOpenAIWSConn("other", accountID, &openAIWSFakeConn{}, nil)
+	// 本分支的握手兼容键含 wsURL / proxyURL，池内连接必须与 req 同键才算可复用。
 	target.handshakeCompatibility = normalizeOpenAIWSHandshakeCompatibility(req)
 	other.handshakeCompatibility = target.handshakeCompatibility
 	require.True(t, target.tryAcquire())
@@ -397,6 +398,7 @@ func TestOpenAIWSConnPool_AcquireAtCapacityWakesWhenCapacityFreedByEviction(t *t
 	req := openAIWSAcquireRequest{Account: account, WSURL: "wss://example.com/v1/responses"}
 	target := newOpenAIWSConn("target", accountID, &openAIWSFakeConn{}, nil)
 	other := newOpenAIWSConn("other", accountID, &openAIWSFakeConn{}, nil)
+	// 本分支的握手兼容键含 wsURL / proxyURL，池内连接必须与 req 同键才算可复用。
 	target.handshakeCompatibility = normalizeOpenAIWSHandshakeCompatibility(req)
 	other.handshakeCompatibility = target.handshakeCompatibility
 	require.True(t, target.tryAcquire())
@@ -457,6 +459,7 @@ func TestOpenAIWSConnPool_AcquireAtCapacityCanceledWaiterDoesNotTakeReleasedConn
 	pool := newOpenAIWSConnPool(cfg)
 	target := newOpenAIWSConn("target", accountID, &openAIWSFakeConn{}, nil)
 	other := newOpenAIWSConn("other", accountID, &openAIWSFakeConn{}, nil)
+	// 本分支的握手兼容键含 wsURL / proxyURL，池内连接必须与 req 同键才算可复用。
 	target.handshakeCompatibility = normalizeOpenAIWSHandshakeCompatibility(req)
 	other.handshakeCompatibility = target.handshakeCompatibility
 	require.True(t, target.tryAcquire())

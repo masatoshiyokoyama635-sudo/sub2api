@@ -1,7 +1,5 @@
 package service
 
-// Adapted from KlN-4096/sub2api@295f9f3; used exclusively by the opt-in v2 path.
-
 import (
 	"encoding/json"
 	"fmt"
@@ -77,7 +75,7 @@ func rewriteCodexTurnMetadataJSON(raw string, rebuildInvalid bool, updates func(
 // New scalar values follow Codex's ASCII JSON spelling, without HTML escaping.
 // Existing metadata text is deliberately not normalized through this encoder.
 func marshalCodexTurnMetadataValue(value any) (string, error) {
-	raw, err := marshalCodexIdentityJSON(value)
+	raw, err := marshalOpenAIUpstreamJSON(value)
 	if err != nil {
 		return "", err
 	}

@@ -1,158 +1,190 @@
+//go:build unit
+
 package service
 
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-type codexHunterUsageKeyStub struct {
-	key *APIKey
-	err error
+// hunterAPIKeys 是探测记账的 API Key 桩：按 ID 返回带 User 的 key，并记下额度更新。
+type hunterAPIKeys struct {
+	key        *APIKey
+	err        error
+	quotaCalls int
 }
 
-func (s *codexHunterUsageKeyStub) GetByID(context.Context, int64) (*APIKey, error) {
-	return s.key, s.err
+func (k *hunterAPIKeys) GetByID(_ context.Context, id int64) (*APIKey, error) {
+	if k.err != nil {
+		return nil, k.err
+	}
+	if k.key == nil || k.key.ID != id {
+		return nil, errors.New("api key not found")
+	}
+	return k.key, nil
 }
-func (s *codexHunterUsageKeyStub) UpdateQuotaUsed(context.Context, int64, float64) error { return nil }
-func (s *codexHunterUsageKeyStub) UpdateRateLimitUsage(context.Context, int64, float64) error {
+
+func (k *hunterAPIKeys) UpdateQuotaUsed(context.Context, int64, float64) error {
+	k.quotaCalls++
 	return nil
 }
 
-type codexHunterSubscriptionStub struct {
-	subscription *UserSubscription
-	err          error
+func (k *hunterAPIKeys) UpdateRateLimitUsage(context.Context, int64, float64) error { return nil }
+
+type probeUsageCapture struct {
+	inputs []*OpenAIRecordUsageInput
 }
 
-func (s *codexHunterSubscriptionStub) GetActiveSubscription(context.Context, int64, int64) (*UserSubscription, error) {
-	return s.subscription, s.err
+func (p *probeUsageCapture) record(_ context.Context, input *OpenAIRecordUsageInput) error {
+	p.inputs = append(p.inputs, input)
+	return nil
 }
 
-func codexHunterUsageKey() *APIKey {
-	return &APIKey{ID: 20, Status: StatusActive, User: &User{ID: 30, Status: StatusActive}}
+func newProbeUsageHarness(t *testing.T, cfg map[string]any) (*hunterHarness, *probeUsageCapture, *hunterAPIKeys) {
+	t.Helper()
+	h := newHunterHarness(hunterTestAccount(cfg), hunterWebshareProxy)
+	keys := &hunterAPIKeys{key: &APIKey{ID: 77, User: &User{ID: 5}, Group: &Group{ID: 3, RateMultiplier: 1}}}
+	capture := &probeUsageCapture{}
+	h.svc.SetAPIKeys(keys)
+	h.svc.recordUsage = capture.record
+	return h, capture, keys
 }
 
-func TestOpenAITurnStateProbeUsageUsesOnlyObservedTokensAndTypedRecord(t *testing.T) {
-	for _, usage := range []OpenAIUsage{{}, {InputTokens: 40, OutputTokens: 3, CacheReadInputTokens: 7}} {
-		var recorded *OpenAIRecordUsageInput
-		hunter := &OpenAITurnStateHunterService{
-			apiKeys:     &codexHunterUsageKeyStub{key: codexHunterUsageKey()},
-			recordUsage: func(_ context.Context, in *OpenAIRecordUsageInput) error { recorded = in; return nil },
+// TestOpenAITurnStateHunterRecordsProbeUsage 钉住：配置了 usage_api_key_id 的账号，每次 200
+// 探测按标准用量路径落一行——挂在那把 key 下、request_type=probe、输入 token 本地估算
+// （含 base prompt，远不止 "hi" 两个字）、输出 0、上游响应头原样带上（用量表的 Turn-State 列
+// 由此显示 292/312）、请求 ID 用上游 x-request-id。
+func TestOpenAITurnStateHunterRecordsProbeUsage(t *testing.T) {
+	now := time.Now().UTC()
+	h, capture, _ := newProbeUsageHarness(t, hunterConfig(map[string]any{"usage_api_key_id": float64(77), "reasoning_effort": "medium"}))
+	degraded, _ := hunterResp(http.StatusOK, turnStateFernetBlob(now, openAIHealthyTurnStateBlocks+1), "")
+	degraded.Header.Set("X-Request-Id", "req_probe_1")
+	healthy, _ := hunterResp(http.StatusOK, turnStateFernetBlob(now, openAIHealthyTurnStateBlocks), "")
+	h.up.queue = []*http.Response{degraded, healthy}
+
+	h.run(t)
+
+	require.Len(t, h.up.requests, 2)
+	require.Len(t, capture.inputs, 2, "312 与 292 都是 200，都计费")
+	first := capture.inputs[0]
+	require.Equal(t, int64(77), first.APIKey.ID)
+	require.Equal(t, int64(5), first.User.ID)
+	require.Equal(t, h.account.ID, first.Account.ID)
+	require.Equal(t, RequestTypeTurnStateProbe, first.RequestType)
+	require.Equal(t, "req_probe_1", first.Result.RequestID)
+	require.Equal(t, hunterTestModel, first.Result.Model)
+	require.True(t, first.Result.Stream)
+	require.Greater(t, first.Result.Usage.InputTokens, 500, "估算含该模型的 base prompt")
+	require.Zero(t, first.Result.Usage.OutputTokens)
+	require.NotNil(t, first.Result.ReasoningEffort)
+	require.Equal(t, "medium", *first.Result.ReasoningEffort)
+	require.Equal(t, openAIDegradedTurnStateLen, len(first.Result.UpstreamHeaders.Get("x-codex-turn-state")))
+	require.Empty(t, first.TurnStateSource, "探测裸发，不是注入")
+	require.NotNil(t, first.APIKeyService, "额度更新走同一把 key")
+	require.Equal(t, "turn-state-probe", first.InboundEndpoint)
+	require.NotEmpty(t, first.UpstreamEndpoint)
+	require.NotEmpty(t, first.SessionID)
+
+	second := capture.inputs[1]
+	require.Contains(t, second.Result.RequestID, "turn_state_probe:", "上游没给 x-request-id 就自造，计费幂等键不能撞")
+	require.NotEqual(t, first.Result.RequestID, second.Result.RequestID)
+}
+
+// TestOpenAITurnStateHunterProbeUsageSkips 列出不记的情形：没配 key、key 取不到、探测非 200。
+func TestOpenAITurnStateHunterProbeUsageSkips(t *testing.T) {
+	now := time.Now().UTC()
+	t.Run("没配 usage_api_key_id", func(t *testing.T) {
+		h, capture, _ := newProbeUsageHarness(t, hunterConfig(nil))
+		healthy, _ := hunterResp(http.StatusOK, turnStateFernetBlob(now, openAIHealthyTurnStateBlocks), "")
+		h.up.queue = []*http.Response{healthy}
+		h.run(t)
+		require.Len(t, h.up.requests, 1)
+		require.Empty(t, capture.inputs)
+	})
+	t.Run("key 取不到", func(t *testing.T) {
+		h, capture, keys := newProbeUsageHarness(t, hunterConfig(map[string]any{"usage_api_key_id": float64(78)}))
+		keys.err = errors.New("db down")
+		healthy, _ := hunterResp(http.StatusOK, turnStateFernetBlob(now, openAIHealthyTurnStateBlocks), "")
+		h.up.queue = []*http.Response{healthy}
+		h.run(t)
+		require.Len(t, h.up.requests, 1, "记账失败不影响探测本身")
+		require.Empty(t, capture.inputs)
+		require.True(t, h.state().Last[0].Healthy, "票照样入池")
+	})
+	t.Run("探测非 200", func(t *testing.T) {
+		h, capture, _ := newProbeUsageHarness(t, hunterConfig(map[string]any{"usage_api_key_id": float64(77)}))
+		// 429 与别的失败一视同仁地重试，队列要够 strike 次。
+		for range openAITurnStateHuntFailureStrikes {
+			limited, _ := hunterResp(http.StatusTooManyRequests, "", `{"error":{"message":"slow down"}}`)
+			h.up.queue = append(h.up.queue, limited)
 		}
-		result := &OpenAIForwardResult{RequestID: "upstream-id", Model: "gpt-6-astra", Usage: usage, Stream: true, Duration: time.Second}
-		err := hunter.recordCodexHunterUsage(context.Background(), &Account{ID: 4}, openAITurnStateHunterConfig{UsageAPIKeyID: 20, ReasoningEffort: "high"}, result)
-		require.NoError(t, err)
-		require.NotNil(t, recorded)
-		require.Equal(t, usage, recorded.Result.Usage)
-		require.Equal(t, RequestTypeTurnStateProbe, recorded.RequestType)
-		require.Equal(t, "turn-state-probe", recorded.InboundEndpoint)
-		require.Equal(t, "turn_state_probe:upstream-id", recorded.Result.RequestID)
-		require.Equal(t, "upstream-id", result.RequestID, "billing must not mutate probe result")
-		require.True(t, isForcedUsageBillingRequestID(recorded.Result.RequestID))
+		h.run(t)
+		require.Len(t, h.up.requests, openAITurnStateHuntFailureStrikes)
+		require.Empty(t, capture.inputs, "失败请求与人工流量一样不进使用记录")
+	})
+}
+
+type hunterSubscriptions struct {
+	sub   *UserSubscription
+	err   error
+	calls int
+}
+
+func (s *hunterSubscriptions) GetActiveSubscription(context.Context, int64, int64) (*UserSubscription, error) {
+	s.calls++
+	return s.sub, s.err
+}
+
+// TestOpenAITurnStateHunterProbeUsageSubscriptionGroup 钉住订阅型分组：有有效订阅就带上按订阅
+// 计费；没有就不记（RecordUsage 拿不到订阅会退到余额扣费还允许透支）。
+func TestOpenAITurnStateHunterProbeUsageSubscriptionGroup(t *testing.T) {
+	now := time.Now().UTC()
+	mk := func(t *testing.T, subs *hunterSubscriptions) (*hunterHarness, *probeUsageCapture) {
+		t.Helper()
+		h, capture, keys := newProbeUsageHarness(t, hunterConfig(map[string]any{"usage_api_key_id": float64(77)}))
+		keys.key.Group = &Group{ID: 3, RateMultiplier: 1, SubscriptionType: SubscriptionTypeSubscription}
+		if subs != nil {
+			h.svc.SetSubscriptions(subs)
+		}
+		healthy, _ := hunterResp(http.StatusOK, turnStateFernetBlob(now, openAIHealthyTurnStateBlocks), "")
+		h.up.queue = []*http.Response{healthy}
+		return h, capture
 	}
+	t.Run("有有效订阅", func(t *testing.T) {
+		subs := &hunterSubscriptions{sub: &UserSubscription{ID: 9}}
+		h, capture := mk(t, subs)
+		h.run(t)
+		require.Len(t, capture.inputs, 1)
+		require.NotNil(t, capture.inputs[0].Subscription)
+		require.Equal(t, int64(9), capture.inputs[0].Subscription.ID)
+	})
+	t.Run("没有有效订阅", func(t *testing.T) {
+		h, capture := mk(t, &hunterSubscriptions{})
+		h.run(t)
+		require.Empty(t, capture.inputs, "订阅型分组没订阅：不记，别扣到余额上")
+		require.True(t, h.state().Last[0].Healthy, "票照样入池")
+	})
+	t.Run("没装配订阅服务", func(t *testing.T) {
+		h, capture := mk(t, nil)
+		h.run(t)
+		require.Empty(t, capture.inputs)
+	})
 }
 
-func TestOpenAITurnStateProbeUsageDoesNotChargeUnavailableKeyOrSubscription(t *testing.T) {
-	for _, scenario := range []string{"disabled", "missing_key", "inactive_key", "inactive_user", "expired_key", "missing_subscription", "subscription_error"} {
-		t.Run(scenario, func(t *testing.T) {
-			key := codexHunterUsageKey()
-			cfg := openAITurnStateHunterConfig{UsageAPIKeyID: key.ID}
-			calls := 0
-			hunter := &OpenAITurnStateHunterService{recordUsage: func(context.Context, *OpenAIRecordUsageInput) error { calls++; return nil }}
-			switch scenario {
-			case "disabled":
-				cfg.UsageAPIKeyID = 0
-			case "missing_key":
-				key = nil
-			case "inactive_key":
-				key.Status = StatusDisabled
-			case "inactive_user":
-				key.User.Status = StatusDisabled
-			case "expired_key":
-				expired := time.Now().Add(-time.Minute)
-				key.ExpiresAt = &expired
-			case "missing_subscription", "subscription_error":
-				key.Group = &Group{ID: 5, SubscriptionType: "subscription"}
-				if scenario == "subscription_error" {
-					hunter.subscriptions = &codexHunterSubscriptionStub{err: errors.New("unavailable")}
-				}
-			}
-			hunter.apiKeys = &codexHunterUsageKeyStub{key: key}
-			err := hunter.recordCodexHunterUsage(context.Background(), &Account{ID: 4}, cfg, &OpenAIForwardResult{Model: "gpt-6-astra"})
-			if scenario == "disabled" {
-				require.NoError(t, err)
-			} else {
-				require.Error(t, err)
-			}
-			require.Zero(t, calls)
-		})
-	}
+func TestOpenAITurnStateProbeInputTokensCountsBasePrompt(t *testing.T) {
+	n := openAITurnStateProbeInputTokens(hunterTestModel, "high")
+	require.Greater(t, n, 500)
 }
 
-func TestOpenAITurnStateProbeRecordUsagePreservesRealTrafficCooldownAndIdle(t *testing.T) {
-	for _, applied := range []bool{true, false} {
-		counter := &openAI403CounterResetStub{}
-		rateLimit := NewRateLimitService(nil, nil, nil, nil, nil)
-		rateLimit.SetOpenAI403CounterCache(counter)
-		usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
-		billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: applied}}
-		svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
-		svc.rateLimitService = rateLimit
-		err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-			Result: &OpenAIForwardResult{RequestID: "turn_state_probe:test", Model: "gpt-5.1", Stream: true},
-			APIKey: &APIKey{ID: 20, Group: &Group{RateMultiplier: 1}}, User: &User{ID: 30},
-			Account: &Account{ID: 7, Platform: PlatformOpenAI}, RequestType: RequestTypeTurnStateProbe,
-		})
-		require.NoError(t, err)
-		require.Empty(t, counter.resetCalls)
-		_, changed := svc.deferredService.lastUsedUpdates.Load(int64(7))
-		require.False(t, changed)
-		require.Equal(t, RequestTypeTurnStateProbe, usageRepo.lastLog.EffectiveRequestType())
-		require.Zero(t, usageRepo.lastLog.TotalCost)
-		require.Zero(t, usageRepo.lastLog.InputTokens)
-	}
-}
-
-func TestOpenAITurnStateProbeRecordUsageBillsReportedTokens(t *testing.T) {
-	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
-	userRepo := &openAIRecordUsageUserRepoStub{}
-	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
-	usage := OpenAIUsage{InputTokens: 120, OutputTokens: 4, CacheReadInputTokens: 20}
-	require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-		Result: &OpenAIForwardResult{RequestID: "turn_state_probe:reported", Model: "gpt-5.1", Usage: usage, Stream: true},
-		APIKey: &APIKey{ID: 20}, User: &User{ID: 30}, Account: &Account{ID: 7}, RequestType: RequestTypeTurnStateProbe,
-	}))
-	require.Equal(t, 100, usageRepo.lastLog.InputTokens)
-	require.Equal(t, 20, usageRepo.lastLog.CacheReadTokens)
-	require.Equal(t, 4, usageRepo.lastLog.OutputTokens)
-	require.Equal(t, 1, userRepo.deductCalls)
-	expected := expectedOpenAICost(t, svc, "gpt-5.1", usage, 1.1)
-	require.InDelta(t, expected.ActualCost, usageRepo.lastLog.ActualCost, 1e-12)
-}
-
-func TestOpenAITurnStateProbeUsageUsesConfiguredSubscription(t *testing.T) {
-	key := codexHunterUsageKey()
-	key.Group = &Group{ID: 5, SubscriptionType: SubscriptionTypeSubscription}
-	subscription := &UserSubscription{ID: 44}
-	var recorded *OpenAIRecordUsageInput
-	hunter := &OpenAITurnStateHunterService{
-		apiKeys:       &codexHunterUsageKeyStub{key: key},
-		subscriptions: &codexHunterSubscriptionStub{subscription: subscription},
-		recordUsage:   func(_ context.Context, input *OpenAIRecordUsageInput) error { recorded = input; return nil },
-	}
-	require.NoError(t, hunter.recordCodexHunterUsage(context.Background(), &Account{ID: 7}, openAITurnStateHunterConfig{UsageAPIKeyID: key.ID}, &OpenAIForwardResult{Model: "gpt-6-astra"}))
-	require.Same(t, subscription, recorded.Subscription)
-}
-
-func TestOpenAITurnStateProbeRequestTypeRoundTrip(t *testing.T) {
-	kind, err := ParseUsageRequestType("probe")
+func TestRequestTypeProbeRoundTrip(t *testing.T) {
+	parsed, err := ParseUsageRequestType("probe")
 	require.NoError(t, err)
-	require.Equal(t, int16(6), int16(kind))
-	require.Equal(t, "probe", RequestTypeFromInt16(6).String())
-	stream, ws := ApplyLegacyRequestFields(kind, true, false)
-	require.True(t, stream)
-	require.False(t, ws)
+	require.Equal(t, RequestTypeTurnStateProbe, parsed)
+	require.Equal(t, "probe", RequestTypeTurnStateProbe.String())
+	require.True(t, RequestTypeTurnStateProbe.IsValid())
 }

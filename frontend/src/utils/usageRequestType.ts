@@ -24,6 +24,7 @@ export const resolveUsageRequestType = (value: UsageRequestTypeLike): UsageReque
 
 export const requestTypeToLegacyStream = (requestType?: UsageRequestType | null): boolean | null | undefined => {
   // cyber 与 stream 正交（cyber 可发生在 stream 或非 stream 请求），不映射到 legacy stream 维度。
+  // probe（292 猎手探测）同理：它总是流式发出但头到手即断，按 legacy stream 筛没有意义。
   if (!requestType || requestType === 'unknown' || requestType === 'cyber' || requestType === 'live' || requestType === 'probe') {
     return null
   }

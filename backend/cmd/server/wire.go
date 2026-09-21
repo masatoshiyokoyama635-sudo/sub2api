@@ -48,6 +48,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 
 		// Privacy client factory for OpenAI training opt-out
 		providePrivacyClientFactory,
+		provideCodexBackendClientFactory,
 
 		// BuildInfo provider
 		provideServiceBuildInfo,
@@ -417,4 +418,8 @@ func provideCleanup(
 		log.Printf("[Cleanup] All cleanup steps completed")
 		return nil
 	}
+}
+
+func provideCodexBackendClientFactory() service.CodexBackendClientFactory {
+	return repository.CreateCodexBackendReqClient
 }

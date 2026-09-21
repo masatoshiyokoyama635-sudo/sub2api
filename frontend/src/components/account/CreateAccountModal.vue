@@ -3298,39 +3298,11 @@
         </div>
       </div>
 
-      <!-- Codex 身份版本与指纹收敛（OpenAI OAuth / setup-token） -->
+      <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
       <div
         v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
-        <div class="mb-4 flex items-center justify-between gap-4">
-          <div class="min-w-0">
-            <label class="input-label mb-0">{{ t('admin.accounts.openai.codexIdentityVersion') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.codexIdentityVersionDesc') }}
-            </p>
-          </div>
-          <div class="w-52 flex-shrink-0">
-            <Select v-model="codexIdentityVersion" data-testid="create-codex-identity-version-select" :options="codexIdentityVersionOptions" />
-          </div>
-        </div>
-        <CodexTurnStateSettings
-          v-if="codexIdentityVersion === 'v2' && oauthFlowRef?.inputMethod !== 'agent_identity'"
-          v-model:mode="codexTurnStateMode"
-          v-model:lengths="codexTurnStateLengths"
-          v-model:active-collection="codexTurnStateActiveCollection"
-          id-prefix="create-codex-turn-state"
-        />
-        <TurnStateHunterSettings
-          v-if="codexIdentityVersion === 'v2' && oauthFlowRef?.inputMethod !== 'agent_identity'"
-          v-model:hunter="turnStateHunter"
-          v-model:recovery="turnStateRecovery"
-          :proxies="proxies"
-          :lengths="codexTurnStateLengths"
-          :eligible="codexTurnStateMode === 'reuse'"
-          :recovery-eligible="codexTurnStateMode !== 'off'"
-          id-prefix="create-codex-turn-state"
-        />
         <div class="flex items-center justify-between gap-4">
           <div class="min-w-0">
             <label class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
@@ -3342,6 +3314,16 @@
             <Select v-model="codexFingerprintMode" data-testid="create-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
           </div>
         </div>
+      </div>
+
+      <div v-if="form.platform === 'openai' && accountCategory === 'oauth-based'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <label class="flex items-center justify-between gap-4">
+          <span>
+            <span class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintConvergence') }}</span>
+            <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.codexFingerprintConvergenceDesc') }}</span>
+          </span>
+          <input v-model="codexFingerprintConvergence" type="checkbox" class="h-4 w-4 flex-shrink-0 rounded text-primary-600" data-testid="create-codex-fingerprint-convergence" />
+        </label>
       </div>
 
       <!-- OpenAI Compact 能力配置 -->
@@ -3953,10 +3935,6 @@ import type {
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
-import CodexTurnStateSettings from '@/components/account/CodexTurnStateSettings.vue'
-import TurnStateHunterSettings from '@/components/account/TurnStateHunterSettings.vue'
-import { emptyTurnStateHunter, emptyTurnStateRecovery, validateTurnStateHunter, writeTurnStateHunterExtra } from '@/utils/turnStateHunter'
-import { DEFAULT_CODEX_TURN_STATE_LENGTHS, parseCodexTurnStateLengths, type CodexTurnStateMode } from '@/utils/codexTurnState'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
@@ -4471,17 +4449,8 @@ const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OF
 const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
-const codexIdentityVersion = ref<'v1' | 'v2'>('v1')
-const codexTurnStateMode = ref<CodexTurnStateMode>('off')
-const codexTurnStateLengths = ref(DEFAULT_CODEX_TURN_STATE_LENGTHS)
-const codexTurnStateActiveCollection = ref(false)
-const turnStateHunter = ref(emptyTurnStateHunter())
-const turnStateRecovery = ref(emptyTurnStateRecovery())
-const codexIdentityVersionOptions = computed(() => [
-  { value: 'v1', label: t('admin.accounts.openai.codexIdentityV1') },
-  { value: 'v2', label: t('admin.accounts.openai.codexIdentityV2') },
-])
 const codexFingerprintMode = ref<CodexFingerprintMode>('off')
+const codexFingerprintConvergence = ref(false)
 const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
   { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
@@ -5402,12 +5371,7 @@ const resetForm = () => {
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
   codexFingerprintMode.value = 'off'
-  codexIdentityVersion.value = 'v1'
-  codexTurnStateMode.value = 'off'
-  codexTurnStateLengths.value = DEFAULT_CODEX_TURN_STATE_LENGTHS
-  codexTurnStateActiveCollection.value = false
-  turnStateHunter.value = emptyTurnStateHunter()
-  turnStateRecovery.value = emptyTurnStateRecovery()
+  codexFingerprintConvergence.value = false
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
@@ -5509,36 +5473,12 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   }
   // 收敛是显式 opt-in：off 即默认值，不落键；device/session/full 必须显式写入，
   // 否则管理员的选择会被当成默认而丢失（#5610）。
-  if (accountCategory.value === 'oauth-based' && codexIdentityVersion.value === 'v2') {
-    extra.codex_identity_version = 'v2'
+  if (accountCategory.value === 'oauth-based' && codexFingerprintConvergence.value) {
+    extra.codex_experimental_fingerprint_convergence = true
   } else {
-    delete extra.codex_identity_version
+    delete extra.codex_experimental_fingerprint_convergence
   }
-  if (accountCategory.value === 'oauth-based' && codexIdentityVersion.value === 'v2' && oauthFlowRef.value?.inputMethod !== 'agent_identity' && codexTurnStateMode.value !== 'off') {
-    const lengths = parseCodexTurnStateLengths(codexTurnStateLengths.value)
-    if (lengths === null) throw new Error(t('admin.accounts.openai.codexTurnStateLengthsInvalid'))
-    extra.codex_turn_state_mode = codexTurnStateMode.value
-    extra.codex_turn_state_candidate_lengths = lengths
-    if (codexTurnStateMode.value === 'reuse' && codexTurnStateActiveCollection.value) {
-      extra.codex_turn_state_active_collection = true
-    } else {
-      delete extra.codex_turn_state_active_collection
-    }
-  } else {
-    delete extra.codex_turn_state_mode
-    delete extra.codex_turn_state_candidate_lengths
-    delete extra.codex_turn_state_active_collection
-  }
-  const backgroundEligible = accountCategory.value === 'oauth-based' && codexIdentityVersion.value === 'v2' &&
-    oauthFlowRef.value?.inputMethod !== 'agent_identity'
-  const hunterEligible = backgroundEligible && codexTurnStateMode.value === 'reuse'
-  const recoveryEligible = backgroundEligible && codexTurnStateMode.value !== 'off'
-  if (hunterEligible || recoveryEligible) {
-    const error = validateTurnStateHunter({ ...turnStateHunter.value, enabled: hunterEligible && turnStateHunter.value.enabled }, turnStateRecovery.value, parseCodexTurnStateLengths(codexTurnStateLengths.value))
-    if (error) throw new Error(t(`admin.accounts.turnStateHunter.${error}`))
-  }
-  writeTurnStateHunterExtra(extra, turnStateHunter.value, turnStateRecovery.value, hunterEligible, recoveryEligible)
-  if (accountCategory.value === 'oauth-based' && codexFingerprintMode.value !== 'off') {
+  if (codexFingerprintMode.value !== 'off') {
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   } else {
     delete extra.codex_fingerprint_mode
@@ -5695,10 +5635,6 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
 }
 
 const handleSubmit = async () => {
-  if (form.platform === 'openai' && accountCategory.value === 'oauth-based' && codexIdentityVersion.value === 'v2' && oauthFlowRef.value?.inputMethod !== 'agent_identity' && codexTurnStateMode.value !== 'off' && parseCodexTurnStateLengths(codexTurnStateLengths.value) === null) {
-    appStore.showError(t('admin.accounts.openai.codexTurnStateLengthsInvalid'))
-    return
-  }
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
     if (!isGrokSSOInputMethod.value && !form.name.trim()) {
@@ -6518,13 +6454,6 @@ const handleOpenAIImportCodexSession = async (content: string) => {
 
   try {
     const extra = buildOpenAICodexImportExtra()
-    if (extra && isAgentIdentityImportContent(trimmed)) {
-      delete extra.codex_turn_state_mode
-      delete extra.codex_turn_state_candidate_lengths
-      delete extra.codex_turn_state_active_collection
-      delete extra.openai_turn_state_hunter
-      delete extra.openai_turn_state_recovery
-    }
     const result = await adminAPI.accounts.importCodexSession({
       content: trimmed,
       name: form.name,

@@ -58,6 +58,9 @@ type SuccessfulTestRecoveryResult struct {
 // AccountRecoveryOptions 控制账号恢复时的附加行为。
 type AccountRecoveryOptions struct {
 	InvalidateToken bool
+	// CredentialsOnly：这次成功只证明了凭据可用（双开账号的 GET /models 探针），只清 StatusError，
+	// 不动限流/过载/临时下线等窗口——它们按各自的到期时间自然解除，200 证明不了推理配额已恢复。
+	CredentialsOnly bool
 }
 
 type geminiUsageCacheEntry struct {
@@ -2131,13 +2134,14 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 		}
 	}
 
-	if hasRecoverableRuntimeState(account) {
+	if hasRecoverableRuntimeState(account) && !options.CredentialsOnly {
 		if err := s.ClearRateLimit(ctx, accountID); err != nil {
 			return nil, err
 		}
 		result.ClearedRateLimit = true
 	}
-	if result.ClearedError || result.ClearedRateLimit {
+	// 凭据探针不证明推理已恢复：内存冷却、重试窗口和 403 计数同样不能主动清掉。
+	if !options.CredentialsOnly && (result.ClearedError || result.ClearedRateLimit) {
 		s.ResetOpenAI403Counter(ctx, accountID)
 		if result.ClearedError && !result.ClearedRateLimit {
 			s.notifyAccountSchedulingBlockCleared(accountID)
@@ -2148,9 +2152,10 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 }
 
 // RecoverAccountAfterSuccessfulTest 将一次成功测试视为正常请求，
-// 按需恢复 error / rate-limit / overload / temp-unsched / model-rate-limit 等运行时状态。
-func (s *RateLimitService) RecoverAccountAfterSuccessfulTest(ctx context.Context, accountID int64) (*SuccessfulTestRecoveryResult, error) {
-	return s.RecoverAccountState(ctx, accountID, AccountRecoveryOptions{})
+// 按需恢复 error / rate-limit / overload / temp-unsched / model-rate-limit 等运行时状态；
+// credentialsOnly 为真（凭据探针）时只清 error。
+func (s *RateLimitService) RecoverAccountAfterSuccessfulTest(ctx context.Context, accountID int64, credentialsOnly bool) (*SuccessfulTestRecoveryResult, error) {
+	return s.RecoverAccountState(ctx, accountID, AccountRecoveryOptions{CredentialsOnly: credentialsOnly})
 }
 
 func (s *RateLimitService) ClearTempUnschedulable(ctx context.Context, accountID int64) error {
@@ -2180,8 +2185,25 @@ func hasRecoverableRuntimeState(account *Account) bool {
 	if len(account.Extra) == 0 {
 		return false
 	}
-	return hasNonEmptyMapValue(account.Extra, "model_rate_limits") ||
+	return hasActiveModelRateLimit(account) ||
 		hasNonEmptyMapValue(account.Extra, "antigravity_quota_scopes")
+}
+
+// hasActiveModelRateLimit 只认未到期的模型级限流：降智暂停（openai_turn_state_hold.go）放回或到期后
+// 条目会留在 map 里（仓储没有按 scope 删除），不能让曾被停过的账号每次定时测试成功都误判成
+// 「有状态要恢复」而白清一次、白打一行日志。解析不出 map 的形态按原来的非空判定。
+func hasActiveModelRateLimit(account *Account) bool {
+	limits, ok := account.Extra[modelRateLimitsKey].(map[string]any)
+	if !ok {
+		return hasNonEmptyMapValue(account.Extra, modelRateLimitsKey)
+	}
+	now := time.Now()
+	for scope := range limits {
+		if resetAt := account.modelRateLimitResetAt(scope); resetAt != nil && now.Before(*resetAt) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasNonEmptyMapValue(extra map[string]any, key string) bool {

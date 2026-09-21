@@ -31,6 +31,8 @@ type ScheduledTestResult struct {
 	StartedAt    time.Time `json:"started_at"`
 	FinishedAt   time.Time `json:"finished_at"`
 	CreatedAt    time.Time `json:"created_at"`
+	// CredentialsOnly marks a GET /models test; it cannot clear inference cooldowns.
+	CredentialsOnly bool `json:"-"`
 }
 
 // ScheduledTestPlanRepository defines the data access interface for test plans.

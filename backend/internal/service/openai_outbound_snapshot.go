@@ -1,9 +1,8 @@
 package service
 
-// snapshotOpenAIOutboundAccount freezes mutable outbound configuration for
-// delayed WS dials. Scheduling state is read only; no repository account is
-// changed by taking the snapshot. Outbound credential and extra fields are
-// scalars, so copying their maps also isolates in-place configuration updates.
+// Snapshot only mutable outbound configuration; unrelated scheduling state is
+// never changed here. Delayed WS prewarm and quota calls must not retain maps
+// that a token refresh or an administrator update can replace in place.
 func snapshotOpenAIOutboundAccount(account *Account) *Account {
 	snapshot := snapshotOAuthRefreshAccount(account)
 	if snapshot == nil {

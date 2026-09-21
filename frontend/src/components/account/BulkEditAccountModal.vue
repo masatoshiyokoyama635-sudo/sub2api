@@ -973,43 +973,7 @@
         </div>
       </div>
 
-      <!-- Codex identity version: explicit v1 switches existing v2 accounts back. -->
-      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
-        <div class="mb-3 flex items-center justify-between">
-          <label for="bulk-edit-openai-codex-identity-version-enabled" class="input-label mb-0">{{ t('admin.accounts.openai.codexIdentityVersion') }}</label>
-          <input
-            id="bulk-edit-openai-codex-identity-version-enabled"
-            v-model="enableCodexIdentityVersion"
-            type="checkbox"
-            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
-        </div>
-        <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.codexIdentityVersionDesc') }}</p>
-        <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.codexIdentityBulkInherited') }}</p>
-        <Select v-model="codexIdentityVersion" data-testid="bulk-codex-identity-version-select" :disabled="!enableCodexIdentityVersion" :options="codexIdentityVersionOptions" />
-      </div>
-
-      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
-        <div class="flex items-center justify-between">
-          <label for="bulk-edit-codex-turn-state-enabled" class="input-label mb-0">{{ t('admin.accounts.openai.codexTurnStateMode') }}</label>
-          <input
-            id="bulk-edit-codex-turn-state-enabled"
-            v-model="enableCodexTurnState"
-            type="checkbox"
-            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
-        </div>
-        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.codexTurnStateBulkDesc') }}</p>
-        <CodexTurnStateSettings
-          v-model:mode="codexTurnStateMode"
-          v-model:lengths="codexTurnStateLengths"
-          v-model:active-collection="codexTurnStateActiveCollection"
-          id-prefix="bulk-codex-turn-state"
-          :disabled="!enableCodexTurnState"
-        />
-      </div>
-
-      <!-- Codex 指纹收敛模式（OpenAI OAuth / setup-token） -->
+      <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
       <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
           <label class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
@@ -1026,6 +990,17 @@
           </p>
           <Select v-model="codexFingerprintMode" data-testid="bulk-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
         </div>
+      </div>
+
+      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <label class="mb-3 flex items-center justify-between gap-4">
+          <span class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintConvergence') }}</span>
+          <input v-model="enableCodexFingerprintConvergence" type="checkbox" class="rounded text-primary-600" data-testid="bulk-codex-fingerprint-convergence-enabled" />
+        </label>
+        <label class="flex items-start gap-3 text-xs text-gray-500 dark:text-gray-400">
+          <input v-model="codexFingerprintConvergence" :disabled="!enableCodexFingerprintConvergence" type="checkbox" class="mt-0.5 rounded text-primary-600" data-testid="bulk-codex-fingerprint-convergence" />
+          <span>{{ t('admin.accounts.openai.codexFingerprintConvergenceDesc') }}</span>
+        </label>
       </div>
 
       <!-- Upstream billing auto probe (any API-key platform) -->
@@ -1525,8 +1500,6 @@ import type {
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
-import CodexTurnStateSettings from '@/components/account/CodexTurnStateSettings.vue'
-import { DEFAULT_CODEX_TURN_STATE_LENGTHS, parseCodexTurnStateLengths, type CodexTurnStateMode } from '@/utils/codexTurnState'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
@@ -1745,17 +1718,9 @@ const upstreamBillingAutoProbeMode = ref<'enabled' | 'disabled'>('enabled')
 const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
-const enableCodexIdentityVersion = ref(false)
-const enableCodexTurnState = ref(false)
-const codexIdentityVersion = ref<'v1' | 'v2'>('v1')
-const codexTurnStateMode = ref<CodexTurnStateMode>('off')
-const codexTurnStateLengths = ref(DEFAULT_CODEX_TURN_STATE_LENGTHS)
-const codexTurnStateActiveCollection = ref(false)
-const codexIdentityVersionOptions = computed(() => [
-  { value: 'v1', label: t('admin.accounts.openai.codexIdentityV1') },
-  { value: 'v2', label: t('admin.accounts.openai.codexIdentityV2') },
-])
 const enableCodexFingerprintMode = ref(false)
+const enableCodexFingerprintConvergence = ref(false)
+const codexFingerprintConvergence = ref(false)
 const codexFingerprintMode = ref<CodexFingerprintMode>('off')
 const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
@@ -2136,19 +2101,8 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.codex_cli_only_allow_app_server = codexCLIOnlyAppServerEnabled.value
   }
 
-  if (enableCodexIdentityVersion.value && allOpenAIOAuth.value) {
-    const extra = ensureExtra()
-    extra.codex_identity_version = codexIdentityVersion.value
-    if (codexIdentityVersion.value === 'v1') extra.codex_turn_state_active_collection = false
-  }
-
-  if (enableCodexTurnState.value && allOpenAIOAuth.value) {
-    const extra = ensureExtra()
-    extra.codex_turn_state_mode = codexTurnStateMode.value
-    extra.codex_turn_state_active_collection = codexTurnStateMode.value === 'reuse' && codexTurnStateActiveCollection.value
-    if (codexTurnStateMode.value !== 'off') {
-      extra.codex_turn_state_candidate_lengths = parseCodexTurnStateLengths(codexTurnStateLengths.value)
-    }
+  if (enableCodexFingerprintConvergence.value && allOpenAIOAuth.value) {
+    ensureExtra().codex_experimental_fingerprint_convergence = codexFingerprintConvergence.value
   }
 
   if (enableCodexFingerprintMode.value) {
@@ -2257,16 +2211,6 @@ const preCheckMixedChannelRisk = async (built: Record<string, unknown>): Promise
 }
 
 const handleSubmit = async () => {
-  if (enableCodexTurnState.value && allOpenAIOAuth.value && codexTurnStateMode.value !== 'off') {
-    if (enableCodexIdentityVersion.value && codexIdentityVersion.value !== 'v2') {
-      appStore.showError(t('admin.accounts.openai.codexTurnStateRequiresV2'))
-      return
-    }
-    if (parseCodexTurnStateLengths(codexTurnStateLengths.value) === null) {
-      appStore.showError(t('admin.accounts.openai.codexTurnStateLengthsInvalid'))
-      return
-    }
-  }
   if (targetMode.value === 'selected' && props.accountIds.length === 0) {
     appStore.showError(t('admin.accounts.bulkEdit.noSelection'))
     return
@@ -2295,9 +2239,8 @@ const handleSubmit = async () => {
     enableUpstreamBillingAutoProbe.value ||
     enableCodexCLIOnly.value ||
     enableCodexCLIOnlyAppServer.value ||
-    (enableCodexIdentityVersion.value && allOpenAIOAuth.value) ||
-    (enableCodexTurnState.value && allOpenAIOAuth.value) ||
     enableCodexFingerprintMode.value ||
+    (enableCodexFingerprintConvergence.value && allOpenAIOAuth.value) ||
     enableOpenAICompactMode.value ||
     enableOpenAICompactModelMapping.value ||
     enableRpmLimit.value ||
@@ -2448,13 +2391,9 @@ watch(
       enableUpstreamBillingAutoProbe.value = false
       enableCodexCLIOnly.value = false
       enableCodexCLIOnlyAppServer.value = false
-      enableCodexIdentityVersion.value = false
-      enableCodexTurnState.value = false
-      codexIdentityVersion.value = 'v1'
-      codexTurnStateMode.value = 'off'
-      codexTurnStateLengths.value = DEFAULT_CODEX_TURN_STATE_LENGTHS
-      codexTurnStateActiveCollection.value = false
       enableCodexFingerprintMode.value = false
+      enableCodexFingerprintConvergence.value = false
+      codexFingerprintConvergence.value = false
       codexFingerprintMode.value = 'off'
       enableOpenAICompactMode.value = false
       enableOpenAICompactModelMapping.value = false

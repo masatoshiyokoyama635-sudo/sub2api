@@ -28,7 +28,14 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       update: updateAccountMock,
-      checkMixedChannelRisk: checkMixedChannelRiskMock
+      checkMixedChannelRisk: checkMixedChannelRiskMock,
+      getAvailableModels: vi.fn().mockResolvedValue([{ id: 'gpt-5.6-luna' }, { id: 'gpt-6-astra' }])
+    },
+    proxies: {
+      getAll: vi.fn().mockResolvedValue([
+        { id: 20, name: 'Proxy 20', protocol: 'http', host: 'proxy20.test', port: 8080 },
+        { id: 21, name: 'Proxy 21', protocol: 'socks5', host: 'proxy21.test', port: 1080 }
+      ])
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
@@ -314,7 +321,6 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
       stubs: {
         BaseDialog: BaseDialogStub,
         Select: SelectStub,
-        CodexTurnStateStatusPanel: true,
         Icon: true,
         ProxySelector: true,
         GroupSelector: renderGroupSelector ? false : GroupSelectorStub,
@@ -330,196 +336,6 @@ describe('EditAccountModal', () => {
   })
 
   afterEach(() => vi.useRealTimers())
-
-  it.each(['oauth', 'setup-token'])('edits %s Codex identity version and preserves unrelated extra', async (type) => {
-    const account = { ...buildOpenAIOAuthParentAccount(), type, extra: {
-      codex_identity_version: 'v2', codex_fingerprint_mode: 'device',
-      codex_fingerprint_seed: '11111111-1111-4111-8111-111111111111', custom: { retained: true }
-    } }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-    const wrapper = mountModal(account)
-    expect(wrapper.get<HTMLSelectElement>('[data-testid="edit-codex-identity-version-select"]').element.value).toBe('v2')
-    await wrapper.get('[data-testid="edit-codex-identity-version-select"]').setValue('v1')
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
-      ...account.extra, codex_identity_version: 'v1'
-    })
-    wrapper.unmount()
-  })
-
-  it('edits Team state candidates, accepts observation without candidates and preserves unrelated fields', async () => {
-    const account = { ...buildOpenAIOAuthParentAccount(), extra: {
-      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332], codex_turn_state_active_collection: true, custom: true
-    } }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-    const wrapper = mountModal(account)
-    expect(wrapper.get<HTMLSelectElement>('[data-testid="edit-codex-turn-state-mode"]').element.value).toBe('reuse')
-    expect(wrapper.get<HTMLInputElement>('[data-testid="edit-codex-turn-state-lengths"]').element.value).toBe('332')
-    await wrapper.get('[data-testid="edit-codex-turn-state-mode"]').setValue('observe')
-    await wrapper.get('[data-testid="edit-codex-turn-state-lengths"]').setValue('')
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
-      codex_identity_version: 'v2', codex_turn_state_mode: 'observe', codex_turn_state_candidate_lengths: [], codex_turn_state_active_collection: false, custom: true
-    })
-    wrapper.unmount()
-  })
-
-  it('switching back to v1 disables saved capture and hides v2 controls', async () => {
-    const account = { ...buildOpenAIOAuthParentAccount(), extra: {
-      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332], codex_turn_state_active_collection: true
-    } }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-    const wrapper = mountModal(account)
-    await wrapper.get('[data-testid="edit-codex-identity-version-select"]').setValue('v1')
-    expect(wrapper.find('[data-testid="edit-codex-turn-state-mode"]').exists()).toBe(false)
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
-      codex_identity_version: 'v1', codex_turn_state_mode: 'off', codex_turn_state_candidate_lengths: [332], codex_turn_state_active_collection: false
-    })
-    wrapper.unmount()
-  })
-
-  it('loads the saved active collection option and explicitly disables it', async () => {
-    const account = { ...buildOpenAIOAuthParentAccount(), extra: {
-      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_active_collection: true, custom: true
-    } }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-    const wrapper = mountModal(account)
-    expect(wrapper.get<HTMLSelectElement>('[data-testid="edit-codex-turn-state-collection"]').element.value).toBe('active')
-    await wrapper.get('[data-testid="edit-codex-turn-state-collection"]').setValue('passive')
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
-      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_active_collection: false, custom: true
-    })
-    wrapper.unmount()
-  })
-
-  it.each(['v1', 'v2'])('offers a visible hunter shortcut for %s without changing saved identity', async (version) => {
-    const account = { ...buildOpenAIOAuthParentAccount(), extra: { codex_identity_version: version } }
-    const wrapper = mountModal(account)
-    const target = wrapper.get(version === 'v2' ? '[data-testid="edit-codex-turn-state-hunter-section"]' : '[data-testid="edit-codex-identity-settings"]')
-    if (version === 'v1') expect(target.find('[data-testid="edit-codex-identity-version-select"]').exists()).toBe(true)
-    const scroll = vi.fn()
-    target.element.scrollIntoView = scroll
-    expect(wrapper.find('[data-testid="edit-hunter-shortcut"]').exists()).toBe(true)
-    await wrapper.get('[data-testid="edit-hunter-configure"]').trigger('click')
-    expect(scroll).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
-    expect(wrapper.get<HTMLSelectElement>('[data-testid="edit-codex-identity-version-select"]').element.value).toBe(version)
-    wrapper.unmount()
-  })
-
-  it('saves independent hunter proxies while keeping normal request proxy and stripping stale runtime', async () => {
-    const account = { ...buildOpenAIOAuthParentAccount(), proxy_id: 8, extra: {
-      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332],
-      openai_turn_state_hunter: { enabled: true, models: ['gpt-6-astra'], proxy_ids: [9], rotating_proxy_ids: [9], retry_minutes: 17 },
-      openai_turn_state_recovery: { enabled: true, model: 'gpt-6-astra', streak_target: 4 },
-      openai_turn_state_hunt: { hour_count: 1 }, openai_turn_state_recovery_state: { streak: 2 }, custom: true
-    } }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-    const wrapper = mountModal(account)
-    expect(wrapper.get<HTMLInputElement>('[data-testid="edit-codex-turn-state-hunter-enabled"]').element.checked).toBe(true)
-    await wrapper.get('[data-testid="edit-codex-turn-state-hunter-max_per_hour"]').setValue('45')
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-    const payload = updateAccountMock.mock.calls[0]?.[1]
-    expect(payload.proxy_id).toBe(8)
-    expect(payload.extra).toMatchObject({
-      custom: true, codex_turn_state_candidate_lengths: [332],
-      openai_turn_state_hunter: { enabled: true, proxy_ids: [9], rotating_proxy_ids: [9], max_per_hour: 45, retry_minutes: 17 },
-      openai_turn_state_recovery: { enabled: true, streak_target: 4 }
-    })
-    expect(payload.extra).not.toHaveProperty('openai_turn_state_hunt')
-    expect(payload.extra).not.toHaveProperty('openai_turn_state_recovery_state')
-    wrapper.unmount()
-  })
-
-  it('turns off saved hunter and recovery when returning to v1', async () => {
-    const account = { ...buildOpenAIOAuthParentAccount(), extra: {
-      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse',
-      openai_turn_state_hunter: { enabled: true, auto_models: true, proxy_ids: [9] },
-      openai_turn_state_recovery: { enabled: true }
-    } }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-    const wrapper = mountModal(account)
-    await wrapper.get('[data-testid="edit-codex-identity-version-select"]').setValue('v1')
-    expect(wrapper.find('[data-testid="edit-codex-turn-state-hunter-section"]').exists()).toBe(false)
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
-      openai_turn_state_hunter: { enabled: false, proxy_ids: [9] }, openai_turn_state_recovery: { enabled: false }
-    })
-    wrapper.unmount()
-  })
-
-  it('invalid candidate lengths prevent an account save', async () => {
-    const account = { ...buildOpenAIOAuthParentAccount(), extra: { codex_identity_version: 'v2' } }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-    const wrapper = mountModal(account)
-    await wrapper.get('[data-testid="edit-codex-turn-state-mode"]').setValue('reuse')
-    await wrapper.get('[data-testid="edit-codex-turn-state-lengths"]').setValue('332.5')
-    expect(wrapper.get('[role="alert"]').text()).toBe('admin.accounts.openai.codexTurnStateLengthsInvalid')
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-    expect(updateAccountMock).not.toHaveBeenCalled()
-    wrapper.unmount()
-  })
-
-  it('hides turn-state controls and omits their fields for agentIdentity accounts', async () => {
-    const account = { ...buildOpenAIOAuthParentAccount(), credentials: { auth_mode: ' AgentIdentity ' }, extra: {
-      codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332], codex_turn_state_active_collection: true, custom: true
-    } }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-    const wrapper = mountModal(account)
-    expect(wrapper.find('[data-testid="edit-codex-turn-state-mode"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="edit-hunter-shortcut"]').exists()).toBe(false)
-    expect(wrapper.findComponent({ name: 'CodexTurnStateStatusPanel' }).exists()).toBe(false)
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-    expect(updateAccountMock).toHaveBeenCalledOnce()
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_mode')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_active_collection')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_candidate_lengths')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({ codex_identity_version: 'v2', custom: true })
-    wrapper.unmount()
-  })
-
-  it('keeps legacy Codex identity configuration absent on an unrelated edit', async () => {
-    const account = buildOpenAIOAuthParentAccount()
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-    const wrapper = mountModal(account)
-    expect(wrapper.get<HTMLSelectElement>('[data-testid="edit-codex-identity-version-select"]').element.value).toBe('v1')
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_identity_version')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_mode')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_active_collection')
-    wrapper.unmount()
-  })
-
-  it('shadow accounts show inherited Codex identity without submitting a shadow version', async () => {
-    const account = { ...buildOpenAISparkShadowAccount(), extra: { codex_identity_version: 'v2', codex_turn_state_mode: 'reuse', codex_turn_state_candidate_lengths: [332], codex_turn_state_active_collection: true, custom: true } }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-    const wrapper = mountModal(account)
-    expect(wrapper.find('[data-testid="edit-codex-identity-version-select"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="edit-codex-fingerprint-mode-select"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="edit-codex-turn-state-mode"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="edit-codex-identity-inherited"]').text()).toBe('admin.accounts.openai.codexIdentityInherited')
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-    expect(updateAccountMock).toHaveBeenCalledOnce()
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_identity_version')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_mode')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_active_collection')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_turn_state_candidate_lengths')
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra.custom).toBe(true)
-    wrapper.unmount()
-  })
 
   it('sets expiry presets from now instead of extending the saved expiry', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
@@ -1886,6 +1702,346 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     await wrapper.get('[data-testid="auto-reset-credit-enabled"]').trigger('click')
     await wrapper.get('[data-testid="auto-reset-credit-5h-threshold"]').setValue('0')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})
+
+describe('EditAccountModal turn-state 自动接管', () => {
+  const buildCodexAccount = (extra: Record<string, unknown> = {}) =>
+    ({
+      ...buildOpenAIOAuthParentAccount(),
+      extra
+    }) as any
+
+  beforeEach(() => {
+    updateAccountMock.mockReset().mockResolvedValue({})
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+  })
+
+  it('开着开关时手填框置灰并显示「已由自动接管」', async () => {
+    const wrapper = mountModal(buildCodexAccount({ openai_turn_state_auto: true }))
+
+    const textarea = wrapper.get<HTMLTextAreaElement>(
+      'textarea[placeholder="admin.accounts.openai.turnStateOverridePlaceholder"]'
+    )
+    expect(textarea.element.disabled).toBe(true)
+    expect(wrapper.find('[data-testid="edit-openai-turn-state-auto-banner"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('关着开关时手填框可用且无横幅', async () => {
+    const wrapper = mountModal(buildCodexAccount())
+    // 模型下拉是聚焦才拉的（那条接口对 oauth 有置错误的副作用），且是异步的。
+    await wrapper.get('[data-testid="edit-openai-turn-state-model"]').trigger('focus')
+    await flushPromises()
+
+    const textarea = wrapper.get<HTMLTextAreaElement>(
+      'textarea[placeholder="admin.accounts.openai.turnStateOverridePlaceholder"]'
+    )
+    expect(textarea.element.disabled).toBe(false)
+    expect(wrapper.find('[data-testid="edit-openai-turn-state-auto-banner"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  // 候选池由后端在保存时强制还原（admin_account.go 的保留清单），前端只负责别把它弄丢。
+  it('打开开关只写 openai_turn_state_auto，候选池原样带回', async () => {
+    const pool = [{ blob: 'gAAAAAB...', minted_at: '2026-09-17T00:00:00Z' }]
+    const wrapper = mountModal(buildCodexAccount({ openai_turn_state_pool: pool }))
+
+    await wrapper.get('[data-testid="edit-openai-turn-state-auto"]').setValue(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra).toMatchObject({ openai_turn_state_auto: true })
+    expect(extra?.openai_turn_state_pool).toEqual(pool)
+    wrapper.unmount()
+  })
+
+  it('关掉开关时把键删掉而不是写 false', async () => {
+    const wrapper = mountModal(buildCodexAccount({ openai_turn_state_auto: true }))
+
+    await wrapper.get('[data-testid="edit-openai-turn-state-auto"]').setValue(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra).toBeDefined()
+    expect(extra).not.toHaveProperty('openai_turn_state_auto')
+    wrapper.unmount()
+  })
+
+  // 覆写表是 {模型: blob}：turn-state 绑死在铸它的那个模型上，blob 本身是密文，
+  // 系统无从得知它来自哪个模型，只能由管理员在下拉里指定。
+  it('手填覆写按模型写回，切模型互不覆盖', async () => {
+    const wrapper = mountModal(buildCodexAccount())
+    const select = wrapper.get('[data-testid="edit-openai-turn-state-model"]')
+    // 懒加载：下拉要先聚焦才会去拉模型列表。
+    await select.trigger('focus')
+    await flushPromises()
+
+    const textarea = () =>
+      wrapper.get<HTMLTextAreaElement>(
+        'textarea[placeholder="admin.accounts.openai.turnStateOverridePlaceholder"]'
+      )
+
+    await select.setValue('gpt-5.6-luna')
+    await textarea().setValue('gAAAAAB-luna')
+    await select.setValue('gpt-6-astra')
+    // 切过去是空的：另一个模型的票不该串过来。
+    expect(textarea().element.value).toBe('')
+    await textarea().setValue('gAAAAAB-astra')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_turn_state_override).toEqual({
+      'gpt-5.6-luna': 'gAAAAAB-luna',
+      'gpt-6-astra': 'gAAAAAB-astra'
+    })
+    wrapper.unmount()
+  })
+
+  it('清空某个模型的票就从表里删掉该模型，而不是留个空串', async () => {
+    const wrapper = mountModal(
+      buildCodexAccount({
+        openai_turn_state_override: { 'gpt-5.6-luna': 'gAAAAAB-luna', 'gpt-6-astra': 'gAAAAAB-astra' }
+      })
+    )
+    await wrapper.get('[data-testid="edit-openai-turn-state-model"]').trigger('focus')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="edit-openai-turn-state-model"]').setValue('gpt-5.6-luna')
+    await wrapper
+      .get('textarea[placeholder="admin.accounts.openai.turnStateOverridePlaceholder"]')
+      .setValue('')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_turn_state_override).toEqual({
+      'gpt-6-astra': 'gAAAAAB-astra'
+    })
+    wrapper.unmount()
+  })
+})
+
+describe('EditAccountModal 292 猎手', () => {
+  const buildCodexAccount = (extra: Record<string, unknown> = {}) =>
+    ({
+      ...buildOpenAIOAuthParentAccount(),
+      extra
+    }) as any
+
+  beforeEach(() => {
+    updateAccountMock.mockReset().mockResolvedValue({})
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+  })
+
+  // 猎到的票靠自动接管注入：接管关着时开猎手等于白烧额度，开关直接置灰并说明原因。
+  it('自动接管关着时猎手开关置灰并提示', () => {
+    const wrapper = mountModal(buildCodexAccount())
+    const toggle = wrapper.get<HTMLInputElement>('[data-testid="edit-openai-turn-state-hunter"]')
+    expect(toggle.element.disabled).toBe(true)
+    expect(wrapper.find('[data-testid="edit-openai-turn-state-hunter-needs-auto"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('cpr 账号不显示猎手：出口由 codex-proxy-rs 决定', () => {
+    const wrapper = mountModal({ ...buildCodexAccount({ openai_turn_state_auto: true }), type: 'cpr' })
+    expect(wrapper.find('[data-testid="edit-openai-turn-state-hunter-section"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('开猎手、选模型和代理后只写 openai_turn_state_hunter，留空的数值不写', async () => {
+    const wrapper = mountModal({ ...buildCodexAccount({ openai_turn_state_auto: true }), proxy_id: 33 })
+
+    await wrapper.get('[data-testid="edit-openai-turn-state-hunter"]').setValue(true)
+    await flushPromises() // 模型列表与代理列表都是开关打开时才拉的
+    await wrapper.get('[data-testid="edit-openai-turn-state-hunter-models"]').setValue(['gpt-6-astra'])
+    // setValue 按 DOM 的 option.value（字符串）匹配；v-model 再按 :value 绑定回数字。
+    await wrapper.get('[data-testid="edit-openai-turn-state-hunter-proxies"]').setValue(['20'])
+    await wrapper.get('[data-testid="edit-openai-turn-state-hunter-max"]').setValue('40')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra?.openai_turn_state_hunter).toEqual({
+      enabled: true,
+      models: ['gpt-6-astra'],
+      proxy_ids: [20],
+      max_per_hour: 40
+    })
+    expect(updateAccountMock.mock.calls[0]?.[1]?.proxy_id).toBe(33)
+    expect(extra).not.toHaveProperty('openai_turn_state_hunt')
+    wrapper.unmount()
+  })
+
+  // 关掉开关保留已选的模型/代理，再开时不用重选；运行态键由猎手维护，前端原样带回。
+  it('关掉猎手保留选择，运行态原样带回', async () => {
+    const hunt = { hour_count: 3, last: [] }
+    const wrapper = mountModal(
+      buildCodexAccount({
+        openai_turn_state_auto: true,
+        openai_turn_state_hunter: { enabled: true, models: ['gpt-6-astra'], proxy_ids: [20] },
+        openai_turn_state_hunt: hunt
+      })
+    )
+
+    await wrapper.get('[data-testid="edit-openai-turn-state-hunter"]').setValue(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra?.openai_turn_state_hunter).toEqual({ enabled: false, models: ['gpt-6-astra'], proxy_ids: [20] })
+    expect(extra?.openai_turn_state_hunt).toEqual(hunt)
+    wrapper.unmount()
+  })
+
+  // retry_minutes 没有 UI 字段（只经 API 写入），改区块里别的项时整个对象会被替换，它得跟着回去。
+  it('改猎手别的项时 retry_minutes 不丢', async () => {
+    const wrapper = mountModal(
+      buildCodexAccount({
+        openai_turn_state_auto: true,
+        openai_turn_state_hunter: { enabled: true, models: ['gpt-6-astra'], proxy_ids: [20], retry_minutes: 30 }
+      })
+    )
+    await flushPromises()
+    await wrapper.get('[data-testid="edit-openai-turn-state-hunter-max"]').setValue('40')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra?.openai_turn_state_hunter).toEqual({
+      enabled: true,
+      models: ['gpt-6-astra'],
+      proxy_ids: [20],
+      max_per_hour: 40,
+      retry_minutes: 30
+    })
+    wrapper.unmount()
+  })
+
+  // 降智暂停是猎手区块里的一个开关：勾上写 hold_when_degraded: true；没勾不写键（后端零值同义）。
+  it('勾选降智暂停写入 hold_when_degraded，改别的项时不丢', async () => {
+    const wrapper = mountModal(
+      buildCodexAccount({
+        openai_turn_state_auto: true,
+        openai_turn_state_hunter: { enabled: true, models: ['gpt-6-astra'], proxy_ids: [20] }
+      })
+    )
+    await flushPromises()
+    await wrapper.get('[data-testid="edit-openai-turn-state-hunter-hold"]').setValue(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_turn_state_hunter).toEqual({
+      enabled: true,
+      models: ['gpt-6-astra'],
+      proxy_ids: [20],
+      hold_when_degraded: true
+    })
+    wrapper.unmount()
+
+    const kept = mountModal(
+      buildCodexAccount({
+        openai_turn_state_auto: true,
+        openai_turn_state_hunter: { enabled: true, models: ['gpt-6-astra'], proxy_ids: [20], hold_when_degraded: true }
+      })
+    )
+    await flushPromises()
+    expect((kept.get('[data-testid="edit-openai-turn-state-hunter-hold"]').element as HTMLInputElement).checked).toBe(true)
+    await kept.get('[data-testid="edit-openai-turn-state-hunter-max"]').setValue('40')
+    await kept.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.openai_turn_state_hunter).toEqual({
+      enabled: true,
+      models: ['gpt-6-astra'],
+      proxy_ids: [20],
+      max_per_hour: 40,
+      hold_when_degraded: true
+    })
+    kept.unmount()
+  })
+
+  // 轮换标记按已选代理逐个勾；取消勾选代理后它的标记不留残余。
+  it('轮换代理勾选写入 rotating_proxy_ids，且只保留仍在探测列表里的', async () => {
+    const wrapper = mountModal(
+      buildCodexAccount({
+        openai_turn_state_auto: true,
+        openai_turn_state_hunter: { enabled: true, models: ['gpt-6-astra'], proxy_ids: [20, 21], rotating_proxy_ids: [21] }
+      })
+    )
+    await flushPromises()
+    expect((wrapper.get('[data-testid="edit-openai-turn-state-hunter-rotating-21"]').element as HTMLInputElement).checked).toBe(true)
+    await wrapper.get('[data-testid="edit-openai-turn-state-hunter-rotating-20"]').setValue(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_turn_state_hunter).toEqual({
+      enabled: true,
+      models: ['gpt-6-astra'],
+      proxy_ids: [20, 21],
+      rotating_proxy_ids: [21, 20]
+    })
+    wrapper.unmount()
+
+    const pruned = mountModal(
+      buildCodexAccount({
+        openai_turn_state_auto: true,
+        openai_turn_state_hunter: { enabled: true, models: ['gpt-6-astra'], proxy_ids: [20, 21], rotating_proxy_ids: [21] }
+      })
+    )
+    await flushPromises()
+    await pruned.get('[data-testid="edit-openai-turn-state-hunter-proxies"]').setValue(['20'])
+    await pruned.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.openai_turn_state_hunter).toEqual({
+      enabled: true,
+      models: ['gpt-6-astra'],
+      proxy_ids: [20]
+    })
+    pruned.unmount()
+  })
+
+  // 自动定模型：勾上后手选列表置灰、可以为空也能提交，写 auto_models: true。
+  it('按真实请求自动定模型：不选模型也能提交', async () => {
+    const wrapper = mountModal(buildCodexAccount({ openai_turn_state_auto: true }))
+    await wrapper.get('[data-testid="edit-openai-turn-state-hunter"]').setValue(true)
+    await flushPromises()
+    await wrapper.get('[data-testid="edit-openai-turn-state-hunter-auto-models"]').setValue(true)
+    await wrapper.get('[data-testid="edit-openai-turn-state-hunter-proxies"]').setValue(['20'])
+    expect((wrapper.get('[data-testid="edit-openai-turn-state-hunter-models"]').element as HTMLSelectElement).disabled).toBe(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_turn_state_hunter).toEqual({
+      enabled: true,
+      models: [],
+      proxy_ids: [20],
+      auto_models: true
+    })
+    wrapper.unmount()
+  })
+
+  // 记账 key 是数字字段：填了写 usage_api_key_id，清空就不写键（后端 0 同义于不记）。
+  it('记账 API Key ID 往返', async () => {
+    const wrapper = mountModal(
+      buildCodexAccount({
+        openai_turn_state_auto: true,
+        openai_turn_state_hunter: { enabled: true, models: ['gpt-6-astra'], proxy_ids: [20], usage_api_key_id: 7 }
+      })
+    )
+    await flushPromises()
+    const field = wrapper.get('[data-testid="edit-openai-turn-state-hunter-usage-key"]')
+    expect((field.element as HTMLInputElement).value).toBe('7')
+    await field.setValue('12')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_turn_state_hunter).toEqual({
+      enabled: true,
+      models: ['gpt-6-astra'],
+      proxy_ids: [20],
+      usage_api_key_id: 12
+    })
+    wrapper.unmount()
+  })
+
+  // 与后端 ValidateOpenAITurnStateHunterExtra 同口径：开着没选模型/代理直接拦下，不发请求。
+  it('猎手开着但没选模型或代理：不提交', async () => {
+    const wrapper = mountModal(buildCodexAccount({ openai_turn_state_auto: true }))
+    await wrapper.get('[data-testid="edit-openai-turn-state-hunter"]').setValue(true)
+    await flushPromises()
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
     expect(updateAccountMock).not.toHaveBeenCalled()
     wrapper.unmount()
   })

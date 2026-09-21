@@ -473,7 +473,7 @@ export default {
     compactionOnly: 'Compaction Only',
     cyber: 'Cyber',
     live: 'Live',
-    probe: 'Probe',
+    probe: 'Hunter probe',
     unknown: 'Unknown',
     in: 'In',
     out: 'Out',

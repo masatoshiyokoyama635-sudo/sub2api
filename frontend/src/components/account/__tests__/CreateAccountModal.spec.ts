@@ -214,126 +214,19 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
 
   afterEach(() => vi.useRealTimers())
 
-  it('imports an OAuth account with explicit background hunter settings and an independent normal proxy', async () => {
+  it.each([true, false])('new OAuth imports save native fingerprint convergence enabled=%s without a v2 selector', async (enabled) => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
-    wrapper.findComponent('[data-testid="create-codex-identity-version-select"]').vm.$emit('update:modelValue', 'v2')
-    await flushPromises()
-    wrapper.findComponent('[data-testid="create-codex-turn-state-mode"]').vm.$emit('update:modelValue', 'reuse')
-    await flushPromises()
-    await wrapper.setProps({ proxies: [{ id: 9, name: 'Rotation', protocol: 'http', host: 'proxy.example', port: 8080, username: null, status: 'active' }] as any })
-    await wrapper.get('[data-testid="create-codex-turn-state-hunter-enabled"]').setValue(true)
-    await wrapper.get('[data-testid="create-codex-turn-state-hunter-auto-models"]').setValue(true)
-    await wrapper.get('[data-testid="create-codex-turn-state-hunter-proxies"]').setValue(['9'])
-    await wrapper.get('[data-testid="create-codex-turn-state-hunter-rotating-9"]').setValue(true)
-    await wrapper.get('[data-testid="create-codex-turn-state-lengths"]').setValue('332')
-    await wrapper.get('form#create-account-form input[type="text"]').setValue('Background hunter')
+    expect(wrapper.find('[data-testid="create-codex-identity-version-select"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="create-codex-fingerprint-convergence"]').setValue(enabled)
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Native Codex account')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
     await flushPromises()
-    expect(importCodexSessionMock).toHaveBeenCalledOnce()
-    const payload = importCodexSessionMock.mock.calls[0]?.[0]
-    expect(payload.proxy_id).toBeNull()
-    expect(payload.extra).toMatchObject({
-      codex_turn_state_candidate_lengths: [332],
-      openai_turn_state_hunter: { enabled: true, auto_models: true, proxy_ids: [9], rotating_proxy_ids: [9] }
-    })
-    wrapper.unmount()
-  })
-
-  it('new Codex imports keep the identity version absent by default', async () => {
-    const wrapper = await openCodexImportStep()
-    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
-    await flushPromises()
-    expect(importCodexSessionMock).toHaveBeenCalledOnce()
-    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_identity_version')
-    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_turn_state_mode')
-    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_turn_state_active_collection')
-    wrapper.unmount()
-  })
-
-  it('new Codex imports submit an explicitly selected v2 version', async () => {
-    const wrapper = mountModal()
-    await selectButtonByText(wrapper, 'OpenAI')
-    const versionSelect = wrapper.findComponent('[data-testid="create-codex-identity-version-select"]')
-    expect(versionSelect.attributes('modelvalue')).toBe('v1')
-    versionSelect.vm.$emit('update:modelValue', 'v2')
-    await wrapper.get('form#create-account-form input[type="text"]').setValue('Codex v2 import')
-    await wrapper.get('form#create-account-form').trigger('submit.prevent')
-    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
-    await flushPromises()
-    expect(importCodexSessionMock).toHaveBeenCalledOnce()
-    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_identity_version).toBe('v2')
-    wrapper.unmount()
-  })
-
-  it.each(['observe', 'reuse'])('new v2 Codex imports save Team candidate lengths in %s mode', async (mode) => {
-    const wrapper = mountModal()
-    await selectButtonByText(wrapper, 'OpenAI')
-    wrapper.findComponent('[data-testid="create-codex-identity-version-select"]').vm.$emit('update:modelValue', 'v2')
-    await flushPromises()
-    const modeSelect = wrapper.findComponent('[data-testid="create-codex-turn-state-mode"]')
-    expect(modeSelect.attributes('modelvalue')).toBe('off')
-    modeSelect.vm.$emit('update:modelValue', mode)
-    await flushPromises()
-    await wrapper.get('[data-testid="create-codex-turn-state-lengths"]').setValue('332, 332')
-    await wrapper.get('form#create-account-form input[type="text"]').setValue('Team import')
-    await wrapper.get('form#create-account-form').trigger('submit.prevent')
-    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
-    await flushPromises()
-    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).toMatchObject({
-      codex_identity_version: 'v2', codex_turn_state_mode: mode, codex_turn_state_candidate_lengths: [332]
-    })
-    wrapper.unmount()
-  })
-
-  it.each(['reuse', 'observe'])('active collection remains opt-in and is cleared outside %s mode', async (mode) => {
-    const wrapper = mountModal()
-    await selectButtonByText(wrapper, 'OpenAI')
-    wrapper.findComponent('[data-testid="create-codex-identity-version-select"]').vm.$emit('update:modelValue', 'v2')
-    await flushPromises()
-    expect(wrapper.findComponent('[data-testid="create-codex-turn-state-collection"]').attributes('modelvalue')).toBe('passive')
-    expect(wrapper.findComponent('[data-testid="create-codex-turn-state-collection"]').attributes('disabled')).toBeDefined()
-    wrapper.findComponent('[data-testid="create-codex-turn-state-mode"]').vm.$emit('update:modelValue', 'reuse')
-    await flushPromises()
-    wrapper.findComponent('[data-testid="create-codex-turn-state-collection"]').vm.$emit('update:modelValue', 'active')
-    await flushPromises()
-    if (mode === 'observe') {
-      wrapper.findComponent('[data-testid="create-codex-turn-state-mode"]').vm.$emit('update:modelValue', 'observe')
-      await flushPromises()
-      expect(wrapper.findComponent('[data-testid="create-codex-turn-state-collection"]').attributes('modelvalue')).toBe('passive')
-    }
-    await wrapper.get('form#create-account-form input[type="text"]').setValue('Active collection import')
-    await wrapper.get('form#create-account-form').trigger('submit.prevent')
-    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
-    await flushPromises()
-    expect(importCodexSessionMock).toHaveBeenCalledOnce()
-    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_turn_state_mode).toBe(mode)
-    if (mode === 'reuse') {
-      expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_turn_state_active_collection).toBe(true)
-    } else {
-      expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_turn_state_active_collection')
-    }
-    wrapper.unmount()
-  })
-
-  it('does not attach turn-state capture settings to an agentIdentity import', async () => {
-    const wrapper = mountModal()
-    await selectButtonByText(wrapper, 'OpenAI')
-    wrapper.findComponent('[data-testid="create-codex-identity-version-select"]').vm.$emit('update:modelValue', 'v2')
-    await flushPromises()
-    wrapper.findComponent('[data-testid="create-codex-turn-state-mode"]').vm.$emit('update:modelValue', 'reuse')
-    await flushPromises()
-    wrapper.findComponent('[data-testid="create-codex-turn-state-collection"]').vm.$emit('update:modelValue', 'active')
-    await wrapper.get('form#create-account-form input[type="text"]').setValue('Agent identity import')
-    await wrapper.get('form#create-account-form').trigger('submit.prevent')
-    wrapper.findComponent(OAuthAuthorizationFlowStub).vm.$emit('import-codex-session', JSON.stringify({ auth_mode: 'agentIdentity' }))
-    await flushPromises()
-    expect(importCodexSessionMock).toHaveBeenCalledOnce()
-    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).toMatchObject({ codex_identity_version: 'v2' })
-    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_turn_state_mode')
-    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_turn_state_active_collection')
-    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_turn_state_candidate_lengths')
+    const extra = importCodexSessionMock.mock.calls[0]?.[0]?.extra
+    if (enabled) expect(extra.codex_experimental_fingerprint_convergence).toBe(true)
+    else expect(extra).not.toHaveProperty('codex_experimental_fingerprint_convergence')
+    expect(extra).not.toHaveProperty('codex_identity_version')
     wrapper.unmount()
   })
 

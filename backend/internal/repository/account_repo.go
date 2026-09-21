@@ -65,11 +65,21 @@ var schedulerNeutralExtraKeyPrefixes = []string{
 }
 
 var schedulerNeutralExtraKeys = map[string]struct{}{
-	"openai_turn_state_hunt":           {},
+	"codex_usage_updated_at":     {},
+	"grok_billing_snapshot":      {},
+	"session_window_utilization": {},
+	// turn-state 自动接管的候选池是运行态数据，上游每铸出一条健康 blob 就写一次，
+	// 不参与调度决策——不放进来的话每次响应都要重建一次调度快照。
+	"openai_turn_state_pool": {},
+	// 每个模型最近一次观测到的 turn-state 形态，所有 Codex 账号的响应路径上都会写
+	// （带节流），纯展示不参与调度。
+	"openai_turn_state_observed": {},
+	// turn-state 猎手的运行态（下次窗口 / 本小时次数 / 最近 10 次），每次探测写一次，
+	// 纯展示不参与调度。配置键 openai_turn_state_hunter 由管理员写，不在此列。
+	"openai_turn_state_hunt": {},
+	// 降智恢复探测的运行态（连胜 / 下次窗口 / 已恢复时刻），每次探测写一次，纯展示不参与调度。
+	// 配置键 openai_turn_state_recovery 由管理员写，不在此列。
 	"openai_turn_state_recovery_state": {},
-	"codex_usage_updated_at":           {},
-	"grok_billing_snapshot":            {},
-	"session_window_utilization":       {},
 }
 
 const postgresParameterBatchSize = 50000
@@ -83,7 +93,7 @@ func codexFingerprintSeedValidSQL(extraExpr string) string {
 }
 
 func ensureCodexFingerprintSeedSQL(extraExpr string) string {
-	return "CASE WHEN platform = 'openai' AND type IN ('oauth', 'setup-token') THEN " +
+	return "CASE WHEN platform = 'openai' AND type = 'oauth' THEN " +
 		"jsonb_set(" + extraExpr + ", '{codex_fingerprint_seed}', " +
 		"CASE WHEN " + codexFingerprintSeedValidSQL("extra") +
 		" THEN to_jsonb(extra ->> 'codex_fingerprint_seed') ELSE to_jsonb(gen_random_uuid()::text) END, true) " +
@@ -649,11 +659,7 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'upstream_billing_probe',
 			extra -> 'ollama_cloud_usage_session',
 			extra -> 'ollama_cloud_usage_auto_refresh',
-			extra -> 'ollama_cloud_usage_snapshot',
-			jsonb_build_object(
-				'openai_turn_state_hunt', extra -> 'openai_turn_state_hunt',
-				'openai_turn_state_recovery_state', extra -> 'openai_turn_state_recovery_state'
-			)
+			extra -> 'ollama_cloud_usage_snapshot'
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
@@ -679,7 +685,6 @@ func lockAndMergeAccountProbeExtra(
 		currentOllamaSession         []byte
 		currentOllamaAutoRefresh     []byte
 		currentOllamaSnapshot        []byte
-		currentTurnStateRuntime      []byte
 	)
 	if err := rows.Scan(
 		&identityUnchanged,
@@ -691,7 +696,6 @@ func lockAndMergeAccountProbeExtra(
 		&currentOllamaSession,
 		&currentOllamaAutoRefresh,
 		&currentOllamaSnapshot,
-		&currentTurnStateRuntime,
 	); err != nil {
 		return nil, err
 	}
@@ -700,12 +704,6 @@ func lockAndMergeAccountProbeExtra(
 	}
 
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
-	// Background updates may have committed after the editor loaded the account.
-	// Preserve the current runtime while holding this same row lock; neither a
-	// stale full extra object nor imported data may resurrect old observations.
-	if err := mergeOpenAITurnStateRuntimeExtra(extra, currentTurnStateRuntime); err != nil {
-		return nil, err
-	}
 	for _, key := range []string{
 		service.UpstreamBillingProbeEnabledExtraKey,
 		service.UpstreamBillingRateSyncEnabledExtraKey,
@@ -1203,7 +1201,7 @@ func (r *accountRepository) ListByGroup(ctx context.Context, groupID int64) ([]s
 func (r *accountRepository) ListActive(ctx context.Context) ([]service.Account, error) {
 	accounts, err := r.client.Account.Query().
 		Where(dbaccount.StatusEQ(service.StatusActive)).
-		Order(dbent.Asc(dbaccount.FieldPriority)).
+		Order(dbent.Asc(dbaccount.FieldPriority), dbent.Asc(dbaccount.FieldID)).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -1313,7 +1311,7 @@ func (r *accountRepository) ListByPlatform(ctx context.Context, platform string)
 			dbaccount.PlatformEQ(platform),
 			dbaccount.StatusEQ(service.StatusActive),
 		).
-		Order(dbent.Asc(dbaccount.FieldPriority)).
+		Order(dbent.Asc(dbaccount.FieldPriority), dbent.Asc(dbaccount.FieldID)).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -2055,7 +2053,7 @@ func (r *accountRepository) ListSchedulableByPlatform(ctx context.Context, platf
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
 		).
-		Order(dbent.Asc(dbaccount.FieldPriority)).
+		Order(dbent.Asc(dbaccount.FieldPriority), dbent.Asc(dbaccount.FieldID)).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -2089,7 +2087,7 @@ func (r *accountRepository) ListSchedulableByPlatforms(ctx context.Context, plat
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
 		).
-		Order(dbent.Asc(dbaccount.FieldPriority)).
+		Order(dbent.Asc(dbaccount.FieldPriority), dbent.Asc(dbaccount.FieldID)).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -2110,7 +2108,7 @@ func (r *accountRepository) ListSchedulableUngroupedByPlatform(ctx context.Conte
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
 		).
-		Order(dbent.Asc(dbaccount.FieldPriority)).
+		Order(dbent.Asc(dbaccount.FieldPriority), dbent.Asc(dbaccount.FieldID)).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -2134,7 +2132,7 @@ func (r *accountRepository) ListSchedulableUngroupedByPlatforms(ctx context.Cont
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
 		).
-		Order(dbent.Asc(dbaccount.FieldPriority)).
+		Order(dbent.Asc(dbaccount.FieldPriority), dbent.Asc(dbaccount.FieldID)).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -2186,7 +2184,7 @@ func (r *accountRepository) ListModelAvailabilityCandidates(
 	}
 	accounts, err := r.client.Account.Query().
 		Where(preds...).
-		Order(dbent.Asc(dbaccount.FieldPriority)).
+		Order(dbent.Asc(dbaccount.FieldPriority), dbent.Asc(dbaccount.FieldID)).
 		All(ctx)
 	if err != nil {
 		return nil, err

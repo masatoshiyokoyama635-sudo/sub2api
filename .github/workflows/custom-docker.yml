@@ -3,7 +3,7 @@ name: Custom Docker Image
 on:
   push:
     branches:
-      - codex/improve-v2-team-turn-state
+      - codex/adopt-klno-codex-scheme
   workflow_dispatch:
 
 concurrency:
@@ -17,7 +17,7 @@ permissions:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
-  STABLE_TAG: codex-identity-v2-team
+  STABLE_TAG: codex-klno
 
 jobs:
   test:
@@ -44,11 +44,11 @@ jobs:
 
       - name: Run custom backend regressions
         working-directory: backend
-        run: go test -tags unit ./cmd/server ./internal/service ./internal/repository ./internal/handler ./internal/handler/admin ./internal/server/routes ./migrations -run 'TestEmbeddedVersionMatchesRelease|TestUpdateService|TestCompareVersionsHandlesSuffixes|TestContentModerationRuntimeSnapshotRefreshFailureKeepsStaleConfig|TestCodexTeam|TestCodexTurnState|TestCodexIdentityV2|TestCodexHunter|TestOpenAITurnState|TestTurnStateProbe|TestAccountRepo.*TurnState'
+        run: go test -tags unit ./cmd/server ./internal/service ./internal/repository ./internal/handler ./internal/handler/admin ./internal/server/routes ./migrations -run 'TestEmbeddedVersionMatchesRelease|TestUpdateService|TestCompareVersionsHandlesSuffixes|TestContentModerationRuntimeSnapshotRefreshFailureKeepsStaleConfig|Codex|TurnState|OpenAIQuota|TestPrepareUsageLogInsert|TestUsageLogStaticInsertShape|TestAppendTurnState|TestUpstreamCompat|TestRateLimitService.*CredentialsOnly'
 
-      - name: Verify hunter holds against PostgreSQL
+      - name: Verify upstream settings migration against PostgreSQL
         working-directory: backend
-        run: go test -tags integration ./internal/repository -run '^TestCodexHunterHoldSQLPreservesConcurrentProviderLimits$' -count=1 -v
+        run: go test -tags integration ./internal/repository -run '^TestKlnoSettingsMigrationPreservesExplicitSettingsAndRollback$' -count=1 -v
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
@@ -75,7 +75,7 @@ jobs:
           pnpm run build
 
   build:
-    if: github.ref == 'refs/heads/codex/improve-v2-team-turn-state'
+    if: github.ref == 'refs/heads/codex/adopt-klno-codex-scheme'
     needs: test
     permissions:
       contents: read
@@ -137,7 +137,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            VERSION=${{ steps.meta.outputs.version }}-zz-identity-v2-team
+            VERSION=${{ steps.meta.outputs.version }}-zz-klno
             BUILD_TYPE=custom
             COMMIT=${{ github.sha }}
             DATE=${{ steps.meta.outputs.build_date }}
@@ -148,7 +148,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.meta.outputs.version }}-zz-identity-v2-team
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}-zz-klno
             org.opencontainers.image.created=${{ steps.meta.outputs.build_date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

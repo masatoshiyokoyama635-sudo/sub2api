@@ -152,8 +152,6 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"codex_7d_reset_after_seconds":         {},
 	"codex_7d_window_minutes":              {},
 	"codex_7d_reset_at":                    {},
-	openAITurnStateHuntExtraKey:            {},
-	openAITurnStateRecoveryStateExtraKey:   {},
 }
 
 func duplicateAccountExtra(value map[string]any) (map[string]any, error) {
@@ -413,9 +411,6 @@ func normalizeOpenAILongContextBillingUpdateExtra(account *Account, input *Updat
 // Grok media eligibility helpers live in account_grok_media_eligibility.go.
 
 func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]any) (*Account, error) {
-	if err := validateCodexIdentityVersionTarget(&Account{Platform: input.Platform, Type: input.Type, Credentials: input.Credentials}, accountExtra); err != nil {
-		return nil, err
-	}
 	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingRateSyncEnabledExtraKey)
@@ -492,6 +487,15 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		return nil, err
 	}
 	if err := ValidateUpstreamRequestIDHeaderExtra(accountExtra); err != nil {
+		return nil, err
+	}
+	if err := ValidateOpenAITurnStateOverrideExtra(accountExtra); err != nil {
+		return nil, err
+	}
+	if err := ValidateOpenAITurnStateAutoExtra(accountExtra); err != nil {
+		return nil, err
+	}
+	if err := ValidateOpenAITurnStateHunterExtra(accountExtra); err != nil {
 		return nil, err
 	}
 
@@ -593,19 +597,20 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if input.Type != "" {
 			effectiveType = input.Type
 		}
-		identityTarget := *account
-		identityTarget.Type = effectiveType
-		if len(input.Credentials) > 0 && !account.IsCredentialShadow() {
-			identityTarget.Credentials = MergePreservingSensitiveCreds(account.Credentials, input.Credentials)
-		}
-		if err := validateCodexIdentityVersionTarget(&identityTarget, input.Extra); err != nil {
-			return nil, err
-		}
 		normalizedExtra, err = normalizeOpenAIAutoResetCreditExtra(account.Platform, effectiveType, account.IsShadow(), normalizedExtra)
 		if err != nil {
 			return nil, err
 		}
 		if err := ValidateUpstreamRequestIDHeaderExtra(normalizedExtra); err != nil {
+			return nil, err
+		}
+		if err := ValidateOpenAITurnStateOverrideExtra(normalizedExtra); err != nil {
+			return nil, err
+		}
+		if err := ValidateOpenAITurnStateAutoExtra(normalizedExtra); err != nil {
+			return nil, err
+		}
+		if err := ValidateOpenAITurnStateHunterExtra(normalizedExtra); err != nil {
 			return nil, err
 		}
 	}
@@ -687,6 +692,13 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, OllamaCloudUsageSessionExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSnapshotExtraKey)
+		// turn-state 候选池由网关在响应路径上维护（含 Failed 标记）。管理端提交的
+		// extra 是打开弹窗那一刻的快照，不剔掉就会把失效候选复活、甚至整池清空。
+		delete(normalizedExtra, openAITurnStatePoolExtraKey)
+		// 猎手运行态同理：小时计数、退避、出口冷却都在网关侧维护，快照回写会把它们全部倒回。
+		delete(normalizedExtra, openAITurnStateHuntExtraKey)
+		// 形态观测也是网关写的运行态：快照回写会把「最近铸出」倒回打开弹窗那一刻。
+		delete(normalizedExtra, openAITurnStateObservedExtraKey)
 		// 保留配额用量和专用服务受管字段，防止普通账号编辑意外覆盖。
 		for _, key := range []string{
 			"quota_used",
@@ -702,12 +714,14 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			OllamaCloudUsageAutoRefreshExtraKey,
 			OllamaCloudUsageSnapshotExtraKey,
 			OpenAIAutoResetCreditStateExtraKey,
+			openAITurnStatePoolExtraKey,
+			openAITurnStateHuntExtraKey,
+			openAITurnStateObservedExtraKey,
 		} {
 			if v, ok := account.Extra[key]; ok {
 				normalizedExtra[key] = v
 			}
 		}
-		normalizedExtra = preserveCodexIdentityVersionForUpdate(account, normalizedExtra)
 		normalizedExtra = prepareCodexFingerprintExtraForUpdate(account, normalizedExtra)
 		account.Extra = normalizedExtra
 		if account.Platform == PlatformAntigravity && wasOveragesEnabled && !account.IsOveragesEnabled() {
@@ -916,18 +930,6 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 // UpdateAccountExtra 仅对 Extra JSONB 做 key 级合并，避免覆盖其它运行态键
 // （如 model_rate_limits / passive_usage_* 等）。
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
-	if err := ValidateOpenAITurnStateHunterExtra(updates); err != nil {
-		return err
-	}
-	if _, provided := updates[codexIdentityVersionExtraKey]; provided || hasCodexTurnStateSettingsExtra(updates) || hasOpenAITurnStateHunterSettingsExtra(updates) {
-		account, err := s.accountRepo.GetByID(ctx, id)
-		if err != nil {
-			return err
-		}
-		if err := validateCodexIdentityVersionTarget(account, updates); err != nil {
-			return err
-		}
-	}
 	updates = sanitizedCodexFingerprintExtraUpdates(updates)
 	updates = stripOpenAIAutoResetCreditManagedExtra(updates, true)
 	delete(updates, UpstreamBillingProbeEnabledExtraKey)
@@ -936,6 +938,11 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OllamaCloudUsageSessionExtraKey)
 	delete(updates, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
+	// turn-state 运行态只由网关/猎手维护，与 UpdateAccount 同一份剔除名单：
+	// 不剔的话一次重授权就能把别的账号的候选池写进来（跨凭证域回放）。
+	delete(updates, openAITurnStatePoolExtraKey)
+	delete(updates, openAITurnStateHuntExtraKey)
+	delete(updates, openAITurnStateObservedExtraKey)
 	if _, exists := updates[openAILongContextBillingEnabledKey]; exists {
 		account, err := s.accountRepo.GetByID(ctx, id)
 		if err != nil {
@@ -951,14 +958,32 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	return s.accountRepo.UpdateExtra(ctx, id, updates)
 }
 
+// ClearOpenAITurnStateRuntimeExtra 清掉 turn-state 的三个运行态键（写成 jsonb null，读侧按空处理）。
+// 重授权换了 ChatGPT 账号时用：旧账号铸的票对新凭据是跨凭证域回放，注进去只会换回 400，
+// 把候选池耗尽后还会把账号停掉。
+func (s *adminServiceImpl) ClearOpenAITurnStateRuntimeExtra(ctx context.Context, id int64) error {
+	return s.accountRepo.UpdateExtra(ctx, id, map[string]any{
+		openAITurnStatePoolExtraKey:     nil,
+		openAITurnStateHuntExtraKey:     nil,
+		openAITurnStateObservedExtraKey: nil,
+	})
+}
+
+// OpenAITurnStateIdentityChanged 报告重授权是否换了 ChatGPT 账号：按 credentials 里的
+// chatgpt_account_id 比，旧值缺失也算换了（看不出是谁就宁可清池）。非 Codex 上游不关心。
+func OpenAITurnStateIdentityChanged(existing *Account, credentials map[string]any) bool {
+	if existing == nil || !existing.TargetsChatGPTCodexUpstream() {
+		return false
+	}
+	old, _ := existing.Credentials["chatgpt_account_id"].(string)
+	next, _ := credentials["chatgpt_account_id"].(string)
+	old, next = strings.TrimSpace(old), strings.TrimSpace(next)
+	return old == "" || old != next
+}
+
 // BulkUpdateAccounts updates multiple accounts in one request.
 // It merges credentials/extra keys instead of overwriting the whole object.
 func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error) {
-	if err := validateCodexIdentityVersionExtra(input.Extra); err != nil {
-		return nil, err
-	}
-	_, updatesCodexIdentityVersion := input.Extra[codexIdentityVersionExtraKey]
-	updatesCodexIdentityVersion = updatesCodexIdentityVersion || hasCodexTurnStateSettingsExtra(input.Extra) || hasOpenAITurnStateHunterSettingsExtra(input.Extra)
 	// Managed probe/session state may only enter through dedicated typed endpoints.
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
 	input.Extra = stripOpenAIAutoResetCreditManagedExtra(input.Extra, true)
@@ -968,6 +993,10 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
 	delete(input.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)
+	// 批量最狠：payload 里混进一份候选池会被写进每一个目标账号。
+	delete(input.Extra, openAITurnStatePoolExtraKey)
+	delete(input.Extra, openAITurnStateHuntExtraKey)
+	delete(input.Extra, openAITurnStateObservedExtraKey)
 
 	if len(input.AccountIDs) == 0 && input.Filters != nil {
 		accountIDs, err := s.resolveBulkUpdateTargetIDs(ctx, input.Filters)
@@ -1003,7 +1032,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil || updatesCodexIdentityVersion {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -1014,24 +1043,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	for _, account := range cachedTargets {
 		if account != nil {
 			targetsByID[account.ID] = account
-		}
-	}
-	if updatesCodexIdentityVersion {
-		for _, accountID := range input.AccountIDs {
-			account := targetsByID[accountID]
-			if account == nil {
-				return nil, ErrAccountNotFound
-			}
-			identityTarget := *account
-			if len(input.Credentials) > 0 {
-				// Bulk credential writes merge keys, unlike a single-account edit.
-				identityTarget.Credentials = make(map[string]any, len(account.Credentials)+len(input.Credentials))
-				maps.Copy(identityTarget.Credentials, account.Credentials)
-				maps.Copy(identityTarget.Credentials, input.Credentials)
-			}
-			if err := validateCodexIdentityVersionTarget(&identityTarget, input.Extra); err != nil {
-				return nil, err
-			}
 		}
 	}
 	if openAISettings.any() {
