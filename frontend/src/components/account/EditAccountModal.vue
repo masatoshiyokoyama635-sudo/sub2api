@@ -2565,7 +2565,7 @@
                 <input v-model.number="openAITurnStateRecovery.max_minutes" type="number" min="1" max="1440" placeholder="90" class="input text-xs" />
               </div>
               <div>
-                <label class="input-label text-xs">{{ t('admin.accounts.openai.turnStateHunterUsageKey') }}</label>
+                <label class="input-label text-xs">{{ t('admin.accounts.openai.turnStateRecoveryUsageKey') }}</label>
                 <input
                   v-model.number="openAITurnStateRecovery.usage_api_key_id"
                   type="number"
@@ -2573,7 +2573,7 @@
                   step="1"
                   class="input text-xs"
                   data-testid="edit-openai-turn-state-recovery-usage-key"
-                  :title="t('admin.accounts.openai.turnStateHunterUsageKeyDesc')"
+                  :title="t('admin.accounts.openai.turnStateRecoveryUsageKeyDesc')"
                 />
               </div>
               <div>
