@@ -2,12 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"strings"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
@@ -61,64 +55,4 @@ type GrokBillingSnapshotCAS interface {
 		GrokBillingProbeIdentity,
 		*xai.BillingSummary,
 	) (bool, error)
-}
-
-func buildGrokBillingIdentity(account *Account, token string) (GrokBillingIdentity, error) {
-	if account == nil {
-		return GrokBillingIdentity{}, errors.New("account is nil")
-	}
-	credentialsJSON, err := json.Marshal(account.Credentials)
-	if err != nil {
-		return GrokBillingIdentity{}, fmt.Errorf("marshal Grok billing credentials: %w", err)
-	}
-
-	proxyID := cloneGrokProxyID(account.ProxyID)
-	subject := strings.TrimSpace(account.GetCredential("sub"))
-	baseURL := strings.TrimRight(strings.TrimSpace(account.GetGrokBaseURL()), "/")
-	accessToken := strings.TrimSpace(token)
-	if accessToken == "" {
-		accessToken = strings.TrimSpace(account.GetGrokAccessToken())
-	}
-	headerOverridesJSON, err := json.Marshal(account.GetHeaderOverrides())
-	if err != nil {
-		return GrokBillingIdentity{}, fmt.Errorf("marshal Grok billing header overrides: %w", err)
-	}
-
-	identity := GrokBillingIdentity{
-		Platform:                  account.Platform,
-		Type:                      account.Type,
-		CredentialsJSON:           string(credentialsJSON),
-		ProxyID:                   proxyID,
-		OAuthSubject:              subject,
-		NormalizedBaseURL:         baseURL,
-		TokenHash:                 sha256Hex(accessToken),
-		HeaderOverrideFingerprint: sha256Hex(string(headerOverridesJSON)),
-	}
-	identity.Fingerprint = sha256Hex(strings.Join([]string{
-		identity.Platform,
-		identity.Type,
-		identity.CredentialsJSON,
-		int64PointerString(identity.ProxyID),
-		identity.OAuthSubject,
-		identity.NormalizedBaseURL,
-		identity.TokenHash,
-		identity.HeaderOverrideFingerprint,
-	}, "\x00"))
-	return identity, nil
-}
-
-func grokBillingIdentityEqual(left, right GrokBillingProbeIdentity) bool {
-	return left.Fingerprint == right.Fingerprint && left.Fingerprint != ""
-}
-
-func sha256Hex(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
-}
-
-func int64PointerString(value *int64) string {
-	if value == nil {
-		return ""
-	}
-	return fmt.Sprintf("%d", *value)
 }
