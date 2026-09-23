@@ -74,10 +74,6 @@ func cyberSessionExplicitBlockKeyForIdentity(apiKeyID int64, identity openAIClie
 	return hex.EncodeToString(sum[:])
 }
 
-func cyberSessionExplicitBlockLookupKeys(apiKeyID int64, c *gin.Context, body []byte) []string {
-	return ResolveCyberSessionIdentity(apiKeyID, c, body).LookupKeys
-}
-
 func cyberSessionExplicitBlockLookupKeysForIdentity(apiKeyID int64, identity openAIClientSessionIdentity) []string {
 	if apiKeyID <= 0 || identity.value == "" {
 		return nil
