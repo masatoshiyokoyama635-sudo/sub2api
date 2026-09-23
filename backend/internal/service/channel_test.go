@@ -193,17 +193,18 @@ func TestChannelClone_Nil(t *testing.T) {
 
 func TestChannelModelPricingClone(t *testing.T) {
 	original := ChannelModelPricing{
-		Models:            []string{"a", "b"},
-		InputPrice:        testPtrFloat64(1),
-		OutputPrice:       testPtrFloat64(2),
-		CacheWritePrice:   testPtrFloat64(3),
-		CacheWrite1hPrice: testPtrFloat64(4),
-		CacheReadPrice:    testPtrFloat64(5),
-		FastMultiplier:    testPtrFloat64(6),
-		FlexMultiplier:    testPtrFloat64(7),
-		ImageInputPrice:   testPtrFloat64(8),
-		ImageOutputPrice:  testPtrFloat64(9),
-		PerRequestPrice:   testPtrFloat64(10),
+		ReasoningEffortMultipliers: map[string]float64{"high": 1.5},
+		Models:                     []string{"a", "b"},
+		InputPrice:                 testPtrFloat64(1),
+		OutputPrice:                testPtrFloat64(2),
+		CacheWritePrice:            testPtrFloat64(3),
+		CacheWrite1hPrice:          testPtrFloat64(4),
+		CacheReadPrice:             testPtrFloat64(5),
+		FastMultiplier:             testPtrFloat64(6),
+		FlexMultiplier:             testPtrFloat64(7),
+		ImageInputPrice:            testPtrFloat64(8),
+		ImageOutputPrice:           testPtrFloat64(9),
+		PerRequestPrice:            testPtrFloat64(10),
 		Intervals: []PricingInterval{
 			{
 				MinTokens:            0,
@@ -233,6 +234,8 @@ func TestChannelModelPricingClone(t *testing.T) {
 	}
 
 	cloned := original.Clone()
+	cloned.ReasoningEffortMultipliers["high"] = 2
+	require.Equal(t, 1.5, original.ReasoningEffortMultipliers["high"])
 
 	// Modify clone slices — original unchanged
 	cloned.Models[0] = "hacked"
