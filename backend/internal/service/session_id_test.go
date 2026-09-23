@@ -240,3 +240,101 @@ func TestExtractOpenAIClientSessionID(t *testing.T) {
 		})
 	}
 }
+
+func TestInspectOpenAIClientSessionIdentity(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers map[string]string
+		body    string
+		want    OpenAIClientSessionIdentityMetadata
+	}{
+		{
+			name: "missing",
+			body: `{}`,
+			want: OpenAIClientSessionIdentityMetadata{
+				Status: OpenAIClientSessionIdentityMissing,
+				Source: OpenAIClientSessionIdentitySourceNone,
+			},
+		},
+		{
+			name:    "resolved header",
+			headers: map[string]string{"session_id": "session-a"},
+			body:    `{}`,
+			want: OpenAIClientSessionIdentityMetadata{
+				Status: OpenAIClientSessionIdentityResolved,
+				Kind:   openAIClientSessionKindSession,
+				Source: OpenAIClientSessionIdentitySourceHeader,
+			},
+		},
+		{
+			name: "resolved body",
+			body: `{"client_metadata":{"thread_id":"thread-a"}}`,
+			want: OpenAIClientSessionIdentityMetadata{
+				Status: OpenAIClientSessionIdentityResolved,
+				Kind:   openAIClientSessionKindThread,
+				Source: OpenAIClientSessionIdentitySourceBody,
+			},
+		},
+		{
+			name:    "resolved matching header and body",
+			headers: map[string]string{"thread_id": "thread-a"},
+			body:    `{"client_metadata":{"thread_id":"thread-a"}}`,
+			want: OpenAIClientSessionIdentityMetadata{
+				Status: OpenAIClientSessionIdentityResolved,
+				Kind:   openAIClientSessionKindThread,
+				Source: OpenAIClientSessionIdentitySourceHeaderBody,
+			},
+		},
+		{
+			name: "invalid body",
+			body: `{"client_metadata":{"session_id":123}}`,
+			want: OpenAIClientSessionIdentityMetadata{
+				Status: OpenAIClientSessionIdentityInvalid,
+				Kind:   openAIClientSessionKindSession,
+				Source: OpenAIClientSessionIdentitySourceBody,
+			},
+		},
+		{
+			name: "invalid header",
+			headers: map[string]string{
+				"session_id": "session-a\ninvalid",
+			},
+			body: `{}`,
+			want: OpenAIClientSessionIdentityMetadata{
+				Status: OpenAIClientSessionIdentityInvalid,
+				Kind:   openAIClientSessionKindSession,
+				Source: OpenAIClientSessionIdentitySourceHeader,
+			},
+		},
+		{
+			name: "conflicting headers",
+			headers: map[string]string{
+				"session_id": "session-a",
+				"session-id": "session-b",
+			},
+			body: `{}`,
+			want: OpenAIClientSessionIdentityMetadata{
+				Status: OpenAIClientSessionIdentityConflict,
+				Kind:   openAIClientSessionKindSession,
+				Source: OpenAIClientSessionIdentitySourceHeader,
+			},
+		},
+		{
+			name:    "conflicting header and body",
+			headers: map[string]string{"conversation_id": "thread-a"},
+			body:    `{"client_metadata":{"thread_id":"thread-b"}}`,
+			want: OpenAIClientSessionIdentityMetadata{
+				Status: OpenAIClientSessionIdentityConflict,
+				Kind:   openAIClientSessionKindThread,
+				Source: OpenAIClientSessionIdentitySourceHeaderBody,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newSessionHeaderContext(t, tc.headers)
+			require.Equal(t, tc.want, InspectOpenAIClientSessionIdentity(c, []byte(tc.body)))
+		})
+	}
+}

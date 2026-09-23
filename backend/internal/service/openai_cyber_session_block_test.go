@@ -208,6 +208,21 @@ func TestCyberSessionBlock_RoundTrip(t *testing.T) {
 	require.Equal(t, explicitKey, svc.FindCyberSessionBlockedForRequest(ctx, 1, c, body, "203.0.113.1", "client/1.0"))
 }
 
+func TestCyberSessionIdentityStrictEnabledDefaultsOffAndReadsSetting(t *testing.T) {
+	t.Run("missing setting", func(t *testing.T) {
+		svc := &OpenAIGatewayService{settingService: &SettingService{settingRepo: &fakeSettingRepo{vals: map[string]string{}}}}
+		require.False(t, svc.CyberSessionIdentityStrictEnabled(context.Background()))
+	})
+
+	t.Run("explicitly enabled", func(t *testing.T) {
+		svc := &OpenAIGatewayService{settingService: &SettingService{settingRepo: &fakeSettingRepo{vals: map[string]string{
+			SettingKeyCyberSessionBlockEnabled:          "true",
+			SettingKeyCyberSessionIdentityStrictEnabled: "true",
+		}}}}
+		require.True(t, svc.CyberSessionIdentityStrictEnabled(context.Background()))
+	})
+}
+
 func TestCyberSessionExplicitBlockKeyUsesTypedExplicitIdentity(t *testing.T) {
 	var threadKey string
 	for _, header := range []string{"conversation_id", "thread_id", "thread-id", "X-Conversation-ID"} {
@@ -251,6 +266,35 @@ func TestCyberSessionExplicitBlockKeyUsesTypedExplicitIdentity(t *testing.T) {
 	}
 	require.Empty(t, CyberSessionExplicitBlockKey(7, nil, nil))
 	require.Empty(t, CyberSessionExplicitBlockKey(7, &gin.Context{}, nil))
+}
+
+func TestResolveCyberSessionIdentityExposesOnlyHashedIdentity(t *testing.T) {
+	c, body := newCyberBlockTestCtx(nil, `{"client_metadata":{"thread_id":"private-thread-value"}}`)
+	resolution := ResolveCyberSessionIdentity(7, c, body)
+
+	require.True(t, resolution.Resolved())
+	require.Equal(t, OpenAIClientSessionIdentityMetadata{
+		Status: OpenAIClientSessionIdentityResolved,
+		Kind:   openAIClientSessionKindThread,
+		Source: OpenAIClientSessionIdentitySourceBody,
+	}, resolution.Metadata)
+	require.NotEmpty(t, resolution.BlockKey)
+	require.NotContains(t, resolution.BlockKey, "private-thread-value")
+	require.Len(t, resolution.LookupKeys, 2)
+
+	inherited := InheritCyberSessionIdentity(resolution)
+	require.True(t, inherited.Resolved())
+	require.True(t, inherited.Inherited)
+	require.Equal(t, OpenAIClientSessionIdentitySourceConnection, inherited.Metadata.Source)
+	require.Equal(t, resolution.BlockKey, inherited.BlockKey)
+	require.Equal(t, resolution.LookupKeys, inherited.LookupKeys)
+
+	missingCtx, missingBody := newCyberBlockTestCtx(nil, `{}`)
+	missing := ResolveCyberSessionIdentity(7, missingCtx, missingBody)
+	require.False(t, missing.Resolved())
+	require.Equal(t, OpenAIClientSessionIdentityMissing, missing.Metadata.Status)
+	require.Empty(t, missing.BlockKey)
+	require.Empty(t, missing.LookupKeys)
 }
 
 func TestCyberSessionBlockReadsLegacyV2ExplicitKey(t *testing.T) {
