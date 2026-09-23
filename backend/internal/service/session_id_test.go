@@ -153,3 +153,76 @@ func TestExtractClientSessionID_InjectionHeaderDropped(t *testing.T) {
 	c.Request.Header.Set("session_id", "abc\r\nX-Injected: 1")
 	require.Equal(t, "", ExtractClientSessionID(c))
 }
+
+func TestExtractOpenAIClientSessionID(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+		body    string
+		want    string
+	}{
+		{
+			name: "body thread without cache key",
+			body: `{"client_metadata":{"thread_id":"thread-body"}}`,
+			want: "thread-body",
+		},
+		{
+			name: "body session without cache key",
+			body: `{"client_metadata":{"session_id":"session-body"}}`,
+			want: "session-body",
+		},
+		{
+			name: "thread identity precedes session identity",
+			body: `{"client_metadata":{"thread_id":"thread-body","session_id":"session-body"}}`,
+			want: "thread-body",
+		},
+		{
+			name:    "thread header precedes body thread when equal",
+			headers: map[string]string{"conversation_id": "thread-shared"},
+			body:    `{"client_metadata":{"thread_id":"thread-shared","session_id":"session-body"}}`,
+			want:    "thread-shared",
+		},
+		{
+			name:    "session header matches body session",
+			headers: map[string]string{"X-Session-Id": "session-shared"},
+			body:    `{"client_metadata":{"session_id":"session-shared"}}`,
+			want:    "session-shared",
+		},
+		{
+			name: "websocket response envelope",
+			body: `{"type":"response.create","response":{"client_metadata":{"thread_id":"thread-ws"}}}`,
+			want: "thread-ws",
+		},
+		{
+			name:    "conflicting thread header and body rejected",
+			headers: map[string]string{"thread_id": "thread-header"},
+			body:    `{"client_metadata":{"thread_id":"thread-body"}}`,
+		},
+		{
+			name:    "conflicting session header and body rejected",
+			headers: map[string]string{"session_id": "session-header"},
+			body:    `{"client_metadata":{"session_id":"session-body"}}`,
+		},
+		{
+			name: "conflicting thread headers rejected",
+			headers: map[string]string{
+				"conversation_id": "thread-a",
+				"thread_id":       "thread-b",
+			},
+		},
+		{
+			name:    "cache and affinity hints are not identities",
+			headers: map[string]string{"X-Session-Affinity": "affinity-only"},
+			body:    `{"prompt_cache_key":"cache-only"}`,
+		},
+		{
+			name: "non-string metadata rejected",
+			body: `{"client_metadata":{"thread_id":123}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newSessionHeaderContext(t, tc.headers)
+			require.Equal(t, tc.want, ExtractOpenAIClientSessionID(c, []byte(tc.body)))
+		})
+	}
+}

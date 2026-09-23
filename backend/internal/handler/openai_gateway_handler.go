@@ -808,7 +808,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, res)
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
-			sessionID := service.ExtractClientSessionID(c)
+			sessionID := service.ExtractOpenAIClientSessionID(c, sessionHashBody)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
@@ -1393,7 +1393,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, res)
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
-			sessionID := service.ExtractClientSessionID(c)
+			sessionID := service.ExtractOpenAIClientSessionID(c, body)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
@@ -3011,7 +3011,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, result)
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
-				sessionID := service.ExtractClientSessionID(c)
+				sessionID := service.ExtractOpenAIClientSessionID(c, cyberBlockBody)
 				turnRecordPricingAt := turnPricing.currentOr(turnStart)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
@@ -4227,7 +4227,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		clientIPStr = strings.TrimSpace(ip.GetClientIP(c))
 	}
 	// 提前拍成标量，避免在下方 goroutine 内访问 gin.Context。
-	sessionID := service.ExtractClientSessionID(c)
+	sessionID := service.ExtractOpenAIClientSessionID(c, cyberBlockBody)
 	nativeCompactionV2 := service.IsOpenAINativeCompactionV2(c)
 	apiKeyPrefix := ""
 	if apiKey != nil {

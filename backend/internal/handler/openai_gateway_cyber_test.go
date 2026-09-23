@@ -211,6 +211,14 @@ func TestBuildCyberSessionBlockWritePlanUsesOnlyExplicitIdentity(t *testing.T) {
 
 	c.Request.Header.Del("session_id")
 	require.Empty(t, buildCyberSessionBlockWritePlan(7, c, []byte(`{"prompt_cache_key":"shared-cache"}`)).keys)
+
+	bodyIdentity := []byte(`{"client_metadata":{"thread_id":"thread-body"}}`)
+	plan = buildCyberSessionBlockWritePlan(7, c, bodyIdentity)
+	require.Equal(t, []string{service.CyberSessionExplicitBlockKey(7, c, bodyIdentity)}, plan.keys)
+
+	conflictingIdentity := []byte(`{"client_metadata":{"thread_id":"thread-body"}}`)
+	c.Request.Header.Set("conversation_id", "thread-header")
+	require.Empty(t, buildCyberSessionBlockWritePlan(7, c, conflictingIdentity).keys)
 }
 
 // TestRecordCyberPolicyIfMarked_BlockKeyPlumbed verifies the 6th param is

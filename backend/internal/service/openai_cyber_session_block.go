@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -21,27 +20,41 @@ type CyberSessionBlockStore interface {
 	FindCyberSessionBlocked(ctx context.Context, keys []string) (string, error)
 }
 
-// CyberSessionExplicitBlockKey accepts conversation-scoped headers only.
-// Cache/affinity hints and transcript similarity are not session identities.
-// API keys define the authenticated namespace; relays sharing a key must supply
-// a distinct session ID for each downstream conversation.
-func CyberSessionExplicitBlockKey(apiKeyID int64, c *gin.Context, _ []byte) string {
+// CyberSessionExplicitBlockKey accepts explicit conversation-scoped headers or
+// client_metadata only. Cache/affinity hints and transcript similarity are not
+// session identities. API keys define the authenticated namespace; relays
+// sharing a key must supply a distinct thread/session ID for each downstream
+// conversation.
+func CyberSessionExplicitBlockKey(apiKeyID int64, c *gin.Context, body []byte) string {
 	if apiKeyID <= 0 || c == nil || c.Request == nil {
 		return ""
 	}
-	for _, header := range []string{
-		"session-id", "session_id", "conversation_id",
-		openCodeSessionIDHeader, openCodeNativeSessionHeader, codeBuddyConversationHeader,
-	} {
-		if sessionID := strings.TrimSpace(c.GetHeader(header)); sessionID != "" {
-			// A separate namespace avoids interpreting legacy prompt_cache_key
-			// blocks as explicit session blocks during a rolling upgrade.
-			raw := "cyber-explicit-session:v2|api_key=" + strconv.FormatInt(apiKeyID, 10) + "|session=" + sessionID
-			sum := sha256.Sum256([]byte(raw))
-			return hex.EncodeToString(sum[:])
-		}
+	identity, ok := resolveOpenAIClientSessionIdentity(c, body)
+	if !ok {
+		return ""
 	}
-	return ""
+	return cyberSessionExplicitBlockKeyForIdentity(apiKeyID, identity)
+}
+
+func cyberSessionExplicitBlockKeyForIdentity(apiKeyID int64, identity openAIClientSessionIdentity) string {
+	raw := "cyber-explicit-session:v3|api_key=" + strconv.FormatInt(apiKeyID, 10) + "|kind=" + identity.kind + "|id=" + identity.value
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+func cyberSessionExplicitBlockLookupKeys(apiKeyID int64, c *gin.Context, body []byte) []string {
+	identity, ok := resolveOpenAIClientSessionIdentity(c, body)
+	if !ok {
+		return nil
+	}
+	key := cyberSessionExplicitBlockKeyForIdentity(apiKeyID, identity)
+
+	// Read the former untyped v2 key until its configured TTL naturally
+	// expires. New writes use only v3 so thread and session namespaces cannot
+	// collide after this version.
+	legacyRaw := "cyber-explicit-session:v2|api_key=" + strconv.FormatInt(apiKeyID, 10) + "|session=" + identity.value
+	legacySum := sha256.Sum256([]byte(legacyRaw))
+	return []string{key, hex.EncodeToString(legacySum[:])}
 }
 
 // cyberSessionBlockStore 探测 cache 是否具备屏蔽存储能力。
@@ -97,15 +110,15 @@ func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Con
 	if !enabled {
 		return ""
 	}
-	key := CyberSessionExplicitBlockKey(apiKeyID, c, body)
-	if key == "" {
+	keys := cyberSessionExplicitBlockLookupKeys(apiKeyID, c, body)
+	if len(keys) == 0 {
 		return ""
 	}
 	store := s.cyberSessionBlockStore()
 	if store == nil {
 		return ""
 	}
-	matched, err := store.FindCyberSessionBlocked(ctx, []string{key})
+	matched, err := store.FindCyberSessionBlocked(ctx, keys)
 	if err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "cyber explicit session read failed: err=%v", err)
 		return ""
