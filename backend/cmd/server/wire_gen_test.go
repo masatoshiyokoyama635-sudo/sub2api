@@ -25,7 +25,7 @@ import (
 )
 
 func TestEmbeddedVersionMatchesRelease(t *testing.T) {
-	require.Equal(t, "0.2.5", strings.TrimSpace(embeddedVersion))
+	require.Equal(t, "0.2.7", strings.TrimSpace(embeddedVersion))
 }
 
 func TestProvideServiceBuildInfo(t *testing.T) {
@@ -66,7 +66,6 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 	)
 	accountExpirySvc := service.NewAccountExpiryService(nil, time.Second)
 	codexVersionSyncSvc := service.NewOpenAICodexVersionSyncService(nil, nil, nil, time.Second)
-	claudeCodeVersionSyncSvc := service.NewClaudeCodeVersionSyncService(nil, nil, nil, time.Second)
 	proxyExpirySvc := service.NewProxyExpiryService(nil, time.Second)
 	subscriptionExpirySvc := service.NewSubscriptionExpiryService(nil, time.Second)
 	pricingSvc := service.NewPricingService(cfg, nil)
@@ -120,7 +119,6 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // quotaFlusher
 		nil, // upstreamBillingProbe
 		nil, // ollamaCloudUsage
-		nil, // opencodeGoUsage
 		nil, // auditLog
 		nil, // openAIAutoReset
 		nil, // promptAudit
@@ -200,6 +198,7 @@ func newCleanupWithInfrastructure(
 		service.NewAccountExpiryService(nil, time.Second),
 		nil, // cnProviderBalanceCheck
 		service.NewOpenAICodexVersionSyncService(nil, nil, nil, time.Second),
+		service.NewClaudeCodeVersionSyncService(nil, nil, nil, time.Second),
 		service.NewProxyExpiryService(nil, time.Second),
 		service.NewSubscriptionExpiryService(nil, time.Second),
 		&service.UsageCleanupService{},
