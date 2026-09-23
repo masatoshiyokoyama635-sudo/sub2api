@@ -338,13 +338,16 @@ func (s *GrokQuotaService) probeBilling(ctx context.Context, accountID int64) (*
 	billing.MonthlyStatusCode = monthly.status
 	billing = xai.StampBillingSummary(billing, statusCode, "billing_probe")
 	now := time.Now().UTC()
+	localUsage24h, localUsage7d, localUsageMonthly := grokLocalUsageForQuota(ctx, s.usageLogRepo, account.ID, billing, now)
 	result := &GrokQuotaProbeResult{
 		Source:            "billing_probe",
 		Billing:           billing,
+		LocalUsage24h:     localUsage24h,
+		LocalUsage7d:      localUsage7d,
+		LocalUsageMonthly: localUsageMonthly,
 		StatusCode:        statusCode,
 		FetchedAt:         now.Unix(),
 	}
-	result.LocalUsage24h, result.LocalUsage7d, result.LocalUsageMonthly = grokLocalUsageForQuota(ctx, s.usageLogRepo, account.ID, billing, now)
 	persisted, persistErr := s.persistGrokBillingSnapshot(ctx, accountID, token, identity, billing)
 	if persistErr != nil {
 		return result, persistErr
@@ -552,7 +555,7 @@ func (s *GrokQuotaService) prepareProbe(ctx context.Context, accountID int64) (*
 	if err != nil {
 		return nil, "", "", err
 	}
-	proxyURL := s.resolveProxyURL(ctx, account)
+	s.resolveProxyURL(ctx, account)
 
 	// Quota diagnostics must remain available while scheduling is paused (for
 	// example after a 402). Use the same credential checks and refresh protocol
@@ -577,7 +580,7 @@ func (s *GrokQuotaService) prepareProbe(ctx context.Context, accountID int64) (*
 		return nil, "", "", ErrGrokBillingProbeIdentityChanged
 	}
 	account = latestAccount
-	proxyURL = s.resolveProxyURL(ctx, account)
+	proxyURL := s.resolveProxyURL(ctx, account)
 
 	return account, token, proxyURL, nil
 }
