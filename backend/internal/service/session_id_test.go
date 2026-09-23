@@ -189,6 +189,12 @@ func TestExtractOpenAIClientSessionID(t *testing.T) {
 			want:    "session-shared",
 		},
 		{
+			name:    "legacy Claude Code header remains a usage identity",
+			headers: map[string]string{claudeCodeSessionHeader: "claude-session"},
+			body:    `{}`,
+			want:    "claude-session",
+		},
+		{
 			name: "websocket response envelope",
 			body: `{"type":"response.create","response":{"client_metadata":{"thread_id":"thread-ws"}}}`,
 			want: "thread-ws",
@@ -197,6 +203,14 @@ func TestExtractOpenAIClientSessionID(t *testing.T) {
 			name:    "conflicting thread header and body rejected",
 			headers: map[string]string{"thread_id": "thread-header"},
 			body:    `{"client_metadata":{"thread_id":"thread-body"}}`,
+		},
+		{
+			name: "Claude Code header does not bypass an OpenAI identity conflict",
+			headers: map[string]string{
+				claudeCodeSessionHeader: "claude-session",
+				"thread_id":             "thread-header",
+			},
+			body: `{"client_metadata":{"thread_id":"thread-body"}}`,
 		},
 		{
 			name:    "conflicting session header and body rejected",

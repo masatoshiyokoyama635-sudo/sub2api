@@ -87,20 +87,25 @@ func ExtractClientSessionID(c *gin.Context) string {
 // precedence over session identities. A conflicting header/body value of the
 // same kind is rejected instead of silently choosing one, so usage correlation
 // and Cyber blocking cannot disagree about which conversation was identified.
+// When no OpenAI identity is present, the legacy Claude Code session header is
+// retained for usage correlation. It is not used by Cyber block-key derivation.
 //
 // prompt_cache_key and X-Session-Affinity are intentionally excluded: they are
 // scheduling/cache hints, not reliable conversation identities.
 func ExtractOpenAIClientSessionID(c *gin.Context, body []byte) string {
-	identity, ok := resolveOpenAIClientSessionIdentity(c, body)
+	identity, ok, rejected := resolveOpenAIClientSessionIdentity(c, body)
 	if !ok {
+		if !rejected {
+			return ClaudeCodeSessionIDFromHeader(c)
+		}
 		return ""
 	}
 	return identity.value
 }
 
-func resolveOpenAIClientSessionIdentity(c *gin.Context, body []byte) (openAIClientSessionIdentity, bool) {
+func resolveOpenAIClientSessionIdentity(c *gin.Context, body []byte) (openAIClientSessionIdentity, bool, bool) {
 	if c == nil || c.Request == nil {
-		return openAIClientSessionIdentity{}, false
+		return openAIClientSessionIdentity{}, false, false
 	}
 
 	view := openAIRequestPayloadView(body)
@@ -109,26 +114,26 @@ func resolveOpenAIClientSessionIdentity(c *gin.Context, body []byte) (openAIClie
 
 	headerThread, conflictingThreadHeaders := openAIIdentityHeader(c, openAIThreadIdentityHeaders)
 	if conflictingThreadHeaders || invalidBodyThread || openAIIdentityValuesConflict(headerThread, bodyThread) {
-		return openAIClientSessionIdentity{}, false
+		return openAIClientSessionIdentity{}, false, true
 	}
 	if headerThread != "" {
-		return openAIClientSessionIdentity{kind: openAIClientSessionKindThread, value: headerThread}, true
+		return openAIClientSessionIdentity{kind: openAIClientSessionKindThread, value: headerThread}, true, false
 	}
 	if bodyThread != "" {
-		return openAIClientSessionIdentity{kind: openAIClientSessionKindThread, value: bodyThread}, true
+		return openAIClientSessionIdentity{kind: openAIClientSessionKindThread, value: bodyThread}, true, false
 	}
 
 	headerSession, conflictingSessionHeaders := openAIIdentityHeader(c, openAISessionIdentityHeaders)
 	if conflictingSessionHeaders || invalidBodySession || openAIIdentityValuesConflict(headerSession, bodySession) {
-		return openAIClientSessionIdentity{}, false
+		return openAIClientSessionIdentity{}, false, true
 	}
 	if headerSession != "" {
-		return openAIClientSessionIdentity{kind: openAIClientSessionKindSession, value: headerSession}, true
+		return openAIClientSessionIdentity{kind: openAIClientSessionKindSession, value: headerSession}, true, false
 	}
 	if bodySession != "" {
-		return openAIClientSessionIdentity{kind: openAIClientSessionKindSession, value: bodySession}, true
+		return openAIClientSessionIdentity{kind: openAIClientSessionKindSession, value: bodySession}, true, false
 	}
-	return openAIClientSessionIdentity{}, false
+	return openAIClientSessionIdentity{}, false, false
 }
 
 func openAIIdentityHeader(c *gin.Context, headers []string) (string, bool) {

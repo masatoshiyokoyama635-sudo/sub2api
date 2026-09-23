@@ -29,7 +29,7 @@ func CyberSessionExplicitBlockKey(apiKeyID int64, c *gin.Context, body []byte) s
 	if apiKeyID <= 0 || c == nil || c.Request == nil {
 		return ""
 	}
-	identity, ok := resolveOpenAIClientSessionIdentity(c, body)
+	identity, ok, _ := resolveOpenAIClientSessionIdentity(c, body)
 	if !ok {
 		return ""
 	}
@@ -43,7 +43,7 @@ func cyberSessionExplicitBlockKeyForIdentity(apiKeyID int64, identity openAIClie
 }
 
 func cyberSessionExplicitBlockLookupKeys(apiKeyID int64, c *gin.Context, body []byte) []string {
-	identity, ok := resolveOpenAIClientSessionIdentity(c, body)
+	identity, ok, _ := resolveOpenAIClientSessionIdentity(c, body)
 	if !ok {
 		return nil
 	}
