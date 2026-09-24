@@ -2947,33 +2947,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if cyberBlockedThisConn {
 					return newOpenAIWSLocalAdmissionCloseError(cyberSessionBlockedClientMsg)
 				}
-				// MapRequestModel 已在当前 turn 的 payload 解析阶段完成。这里
-				// 再用最终出站模型做一次权威资格终检，确保账号被禁用、移组、
-				// 到期或该模型票据失效后，不会先抢槽再把请求交给旧账号。
-				// 底层 WS/bridge 发送前仍保留同一检查，防止检查与网络写入之间
-				// 出现竞态；本处只是把失败尽量提前到 turn 边界。
-				if turn > 1 {
-					outboundModel := ""
-					if snapshot := turnChannelMapping.Load(); snapshot != nil && snapshot.turn == turn {
-						outboundModel = strings.TrimSpace(snapshot.mapping.MappedModel)
-					}
-					if outboundModel == "" {
-						outboundModel = strings.TrimSpace(wsForwardModel)
-					}
-					if _, admissionErr := h.gatewayService.AdmitOpenAITurn(ctx, c, account, outboundModel); admissionErr != nil {
-						reqLog.Info("openai.websocket_turn_admission_rejected",
-							zap.Int("turn", turn),
-							zap.Int64("account_id", account.ID),
-							zap.String("outbound_model", outboundModel),
-							zap.Error(admissionErr),
-						)
-						return service.NewOpenAIWSClientCloseError(
-							coderws.StatusTryAgainLater,
-							"account eligibility changed; reconnect with complete context",
-							admissionErr,
-						)
-					}
-				}
 				if turn == 1 {
 					setCyberTurnBody(turn, payload, firstIdentityDecision.effective)
 					return nil
