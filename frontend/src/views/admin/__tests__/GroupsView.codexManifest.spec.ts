@@ -12,14 +12,12 @@ const {
   getUsageSummary,
   getCapacitySummary,
   getLiveCapability,
-  authState,
 } = vi.hoisted(() => ({
   listGroups: vi.fn(),
   getModelAllowlistCandidates: vi.fn(),
   getUsageSummary: vi.fn(),
   getCapacitySummary: vi.fn(),
   getLiveCapability: vi.fn(),
-  authState: { isSimpleMode: false },
 }));
 
 vi.mock("@/api/admin", () => ({
@@ -49,10 +47,6 @@ vi.mock("@/stores/app", () => ({
     showError: vi.fn(),
     showSuccess: vi.fn(),
   }),
-}));
-
-vi.mock("@/stores/auth", () => ({
-  useAuthStore: () => authState,
 }));
 
 vi.mock("@/stores/onboarding", () => ({
@@ -129,7 +123,7 @@ const sourceGroup = {
   account_count: 1,
   active_account_count: 1,
   rate_limited_account_count: 0,
-  model_allowlist: undefined,
+  models_list_config: undefined,
   codex_models_manifest_config: {
     enabled: false,
     account_ids: [],

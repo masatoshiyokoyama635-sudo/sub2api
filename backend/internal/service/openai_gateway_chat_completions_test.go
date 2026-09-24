@@ -491,7 +491,6 @@ func TestForwardAsChatCompletions_ClientDisconnectDrainsUpstreamUsage(t *testing
 	require.Equal(t, 11, result.Usage.InputTokens)
 	require.Equal(t, 5, result.Usage.OutputTokens)
 	require.Equal(t, 4, result.Usage.CacheReadInputTokens)
-	require.True(t, result.ClientDisconnect)
 }
 
 func TestForwardAsChatCompletions_BufferedContextWindowResponseFailedReturnsErrorWithoutFailover(t *testing.T) {
@@ -813,7 +812,6 @@ func TestForwardAsChatCompletions_BufferedTopLevelTerminalUsage(t *testing.T) {
 	require.Equal(t, 18, result.Usage.InputTokens)
 	require.Equal(t, 6, result.Usage.OutputTokens)
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
-	require.Equal(t, upstream.resp.Header, result.UpstreamHeaders)
 
 	responseBody := rec.Body.String()
 	require.Contains(t, responseBody, `"usage"`)

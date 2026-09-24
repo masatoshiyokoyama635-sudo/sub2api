@@ -142,7 +142,6 @@ const iconClass = computed(() => platformIconClass(platform.value))
 const btnClass = computed(() => platformButtonClass(platform.value))
 const discountClass = computed(() => platformDiscountClass(platform.value))
 const pLabel = computed(() => platformLabel(platform.value))
-const planCurrencySymbol = computed(() => currencySymbol(props.plan.currency))
 
 const discountText = computed(() => {
   if (!props.plan.original_price || props.plan.original_price <= 0) return ''
@@ -156,6 +155,7 @@ const rateDisplay = computed(() => {
 })
 
 const appStore = useAppStore()
+const planCurrencySymbol = computed(() => currencySymbol(props.plan.currency || 'USD'))
 
 const hasPeakRate = computed(() => groupHasPeakRate(props.plan))
 

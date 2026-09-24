@@ -1721,6 +1721,18 @@
             />
           </div>
         </div>
+        <div>
+          <label class="input-label">{{ t('admin.accounts.groupBillingRateMultiplier') }}</label>
+          <input
+            v-model.number="form.group_rate_multiplier"
+            type="number"
+            min="0"
+            step="0.01"
+            class="input"
+            data-testid="account-group-rate-multiplier"
+          />
+          <p class="input-hint">{{ t('admin.accounts.groupBillingRateMultiplierHint') }}</p>
+        </div>
       </div>
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <label class="input-label">{{ t('admin.accounts.expiresAt') }}</label>
@@ -1737,6 +1749,14 @@
           {{ t('admin.accounts.expiresAtHint') }}
           {{ t('admin.accounts.expiresAtTimezoneHint', { timezone: browserTimeZone }) }}
         </p>
+      </div>
+
+      <div v-if="account?.platform === 'openai' && account?.type === 'apikey'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <label class="flex items-center gap-2">
+          <input v-model="copilotSDKEnabled" type="checkbox" data-testid="copilot-sdk-toggle" />
+          <span>Copilot SDK</span>
+        </label>
+        <p class="input-hint">{{ t('admin.accounts.openai.copilotSDKDesc') }}</p>
       </div>
 
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
@@ -2333,6 +2353,35 @@
               ]"
             />
           </button>
+        </div>
+      </div>
+
+      <!-- Codex 292 门票状态（仅 OpenAI OAuth） -->
+      <div
+        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token') && codexTurnTickets.length"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <label class="input-label mb-0">{{ t('admin.accounts.openai.codexTurnTicket') }}</label>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.openai.codexTurnTicketDesc') }}
+        </p>
+        <div class="mt-3 space-y-1.5">
+          <div v-for="ticket in codexTurnTickets" :key="ticket.model" class="flex items-center justify-between text-sm">
+            <span class="font-medium">{{ ticket.model }}</span>
+            <span v-if="ticket.ready" class="text-emerald-600 dark:text-emerald-400">
+              {{ t('admin.accounts.openai.codexTurnTicketReady', { time: formatCodexTicketRemaining(ticket.remaining_seconds) }) }}
+            </span>
+            <span v-else-if="ticket.blocked" class="text-amber-600 dark:text-amber-400">
+              {{ t('admin.accounts.openai.codexTurnTicketPaused') }}
+            </span>
+            <span v-else class="text-gray-500">{{ t('admin.accounts.openai.codexTurnTicketMissing') }}</span>
+            <div v-if="ticket.probe" class="ml-2 text-xs text-gray-500">
+              {{ t('admin.accounts.openai.ticketProbe.' + ticket.probe.result) }} · HTTP {{ ticket.probe.http_status || '—' }}
+              <div>{{ new Date(ticket.probe.checked_at).toLocaleString() }}</div>
+              <div v-if="ticket.probe.next_probe_at">{{ t('admin.accounts.openai.ticketProbeNext') }} {{ new Date(ticket.probe.next_probe_at).toLocaleString() }}</div>
+              <div v-if="ticket.standby_expires_at">{{ t('admin.accounts.openai.ticketStandbyExpires') }} {{ new Date(ticket.standby_expires_at).toLocaleString() }}</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -3050,6 +3099,13 @@
         data-tour="account-form-groups"
       />
 
+      <AccountGroupModelLimits
+        v-model="groupAllowedModels"
+        :groups="groupsForModelLimits"
+        :platform="account?.platform"
+        :account-id="account?.id"
+      />
+
     </form>
 
     <template #footer>
@@ -3136,6 +3192,12 @@ import ProxySelector from '@/components/common/ProxySelector.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
+import AccountGroupModelLimits from '@/components/account/AccountGroupModelLimits.vue'
+import {
+  buildGroupAllowedModelsPayload,
+  groupAllowedModelsFromAccount,
+  type GroupAllowedModels
+} from '@/components/account/groupAllowedModels'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import CnBaseUrlPresets from '@/components/account/CnBaseUrlPresets.vue'
@@ -3229,9 +3291,28 @@ const selectableGroups = computed(() => {
   return Array.from(groups.values())
 })
 
+// 各分组内的可用模型限制，按当前勾选的分组顺序展示
+const groupAllowedModels = ref<GroupAllowedModels>({})
+const groupsForModelLimits = computed(() => {
+  const byId = new Map(selectableGroups.value.map(group => [group.id, group]))
+  return form.group_ids.flatMap(id => {
+    const group = byId.get(id)
+    return group ? [{ id: group.id, name: group.name }] : []
+  })
+})
+
 // Spark 影子账号(parent_account_id 非空):代理恒继承母账号,不可独立编辑(外审 B/P1),
 // 故隐藏代理选择器。
 const isSparkShadow = computed(() => props.account?.parent_account_id != null)
+
+const codexTurnTickets = computed(() => props.account?.codex_turn_tickets ?? [])
+
+function formatCodexTicketRemaining(seconds: number) {
+  const total = Math.max(0, Math.floor(seconds || 0))
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}m${String(s).padStart(2, '0')}s`
+}
 
 const hideAccountLongContextBilling = computed(() => {
   return allSelectedGroupsEnableLongContextPricing(form.group_ids, props.groups)
@@ -3681,6 +3762,7 @@ const customBaseUrlEnabled = ref(false)
 const customBaseUrl = ref('')
 
 // OpenAI 自动透传开关（OAuth/API Key）
+const copilotSDKEnabled = ref(false)
 const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
@@ -3922,7 +4004,7 @@ const normalizeOpenAIResponsesMode = (mode: unknown): OpenAIResponsesMode => {
   return 'auto'
 }
 const isOpenAIModelRestrictionDisabled = computed(() =>
-  props.account?.platform === 'openai' && openaiPassthroughEnabled.value
+  props.account?.platform === 'openai' && (openaiPassthroughEnabled.value || copilotSDKEnabled.value)
 )
 const openAIResponsesStatusKey = computed(() => {
   if (openAIResponsesMode.value === 'force_responses') {
@@ -4019,6 +4101,7 @@ const form = reactive({
   load_factor: null as number | null,
   priority: 1,
   rate_multiplier: 1,
+  group_rate_multiplier: 1,
   status: 'active' as 'active' | 'inactive' | 'error',
   group_ids: [] as number[],
   expires_at: null as number | null
@@ -4085,7 +4168,7 @@ const buildModelRestrictionMapping = () =>
   buildModelMappingObject('combined', allowedModels.value, modelMappings.value)
 
 const applyOpenAIModelMappingCredentials = (credentials: Record<string, unknown>) => {
-  const shouldApplyModelMapping = !openaiPassthroughEnabled.value
+  const shouldApplyModelMapping = !(openaiPassthroughEnabled.value || copilotSDKEnabled.value)
 
   if (shouldApplyModelMapping) {
     const modelMapping = buildModelRestrictionMapping()
@@ -4127,10 +4210,12 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.load_factor = newAccount.load_factor ?? null
   form.priority = newAccount.priority
   form.rate_multiplier = newAccount.rate_multiplier ?? 1
+  form.group_rate_multiplier = newAccount.group_rate_multiplier ?? 1
   form.status = (newAccount.status === 'active' || newAccount.status === 'inactive' || newAccount.status === 'error')
     ? newAccount.status
     : 'active'
   form.group_ids = newAccount.group_ids || []
+  groupAllowedModels.value = groupAllowedModelsFromAccount(newAccount)
   form.expires_at = newAccount.expires_at ?? null
 
   // Load intercept warmup requests setting (applies to all account types)
@@ -4169,6 +4254,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
+  copilotSDKEnabled.value = false
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
   openAILongContextBillingEnabled.value = false
@@ -4187,6 +4273,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
+    copilotSDKEnabled.value = newAccount.type === 'apikey' && extra?.openai_copilot_sdk === true
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
     openaiFlattenNamespacesEnabled.value =
       newAccount.type === 'oauth' && extra?.openai_responses_flatten_namespaces === true
@@ -5155,6 +5242,8 @@ const handleSubmit = async () => {
       updatePayload.load_factor = 0
     }
     updatePayload.auto_pause_on_expired = autoPauseOnExpired.value
+    // 整体覆盖：只带仍勾选的分组，没有列出的分组由后端恢复为不限制
+    updatePayload.group_allowed_models = buildGroupAllowedModelsPayload(form.group_ids, groupAllowedModels.value)
     if (props.account.type === 'apikey') {
       updatePayload.upstream_billing_probe_enabled = upstreamBillingAutoProbeEnabled.value
       updatePayload.upstream_billing_rate_sync_enabled = upstreamBillingRateSyncEnabled.value
@@ -5167,7 +5256,7 @@ const handleSubmit = async () => {
     if (props.account.type === 'apikey') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
       const newBaseUrl = editBaseUrl.value.trim() || defaultBaseUrl.value
-      const shouldApplyModelMapping = !(props.account.platform === 'openai' && openaiPassthroughEnabled.value)
+      const shouldApplyModelMapping = !(props.account.platform === 'openai' && (openaiPassthroughEnabled.value || copilotSDKEnabled.value))
 
       // Always update credentials for apikey type to handle model mapping changes
       const newCredentials: Record<string, unknown> = {
@@ -5671,6 +5760,11 @@ const handleSubmit = async () => {
       }
       delete newExtra.responses_websockets_v2_enabled
       delete newExtra.openai_ws_enabled
+      if (props.account.type === 'apikey' && copilotSDKEnabled.value) {
+        newExtra.openai_copilot_sdk = true
+      } else {
+        delete newExtra.openai_copilot_sdk
+      }
       if (openaiPassthroughEnabled.value) {
         newExtra.openai_passthrough = true
       } else {

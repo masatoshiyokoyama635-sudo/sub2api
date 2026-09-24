@@ -109,72 +109,40 @@
             </span>
           </div>
 
-          <template v-for="item in personalNavItems" :key="item.path">
-            <a
-              v-if="item.externalUrl"
-              :href="item.externalUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              referrerpolicy="no-referrer"
-              class="sidebar-link mb-1"
-              :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
-              :title="sidebarCollapsed ? item.label : undefined"
-              @click="handleMenuItemClick(item.path)"
-            >
-              <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-              <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            </a>
-            <router-link
-              v-else
-              :to="item.path"
-              class="sidebar-link mb-1"
-              :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
-              :title="sidebarCollapsed ? item.label : undefined"
-              :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
-              @click="handleMenuItemClick(item.path)"
-            >
-              <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-              <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            </router-link>
-          </template>
+          <router-link
+            v-for="item in personalNavItems"
+            :key="item.path"
+            :to="item.path"
+            class="sidebar-link mb-1"
+            :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
+            :title="sidebarCollapsed ? item.label : undefined"
+            :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
+            @click="handleMenuItemClick(item.path)"
+          >
+            <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
+            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
+            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+          </router-link>
         </div>
       </template>
 
       <!-- Regular User View -->
       <template v-else-if="!appStore.backendModeEnabled">
         <div class="sidebar-section">
-          <template v-for="item in userNavItems" :key="item.path">
-            <a
-              v-if="item.externalUrl"
-              :href="item.externalUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              referrerpolicy="no-referrer"
-              class="sidebar-link mb-1"
-              :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
-              :title="sidebarCollapsed ? item.label : undefined"
-              @click="handleMenuItemClick(item.path)"
-            >
-              <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-              <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            </a>
-            <router-link
-              v-else
-              :to="item.path"
-              class="sidebar-link mb-1"
-              :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
-              :title="sidebarCollapsed ? item.label : undefined"
-              :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
-              @click="handleMenuItemClick(item.path)"
-            >
-              <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-              <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            </router-link>
-          </template>
+          <router-link
+            v-for="item in userNavItems"
+            :key="item.path"
+            :to="item.path"
+            class="sidebar-link mb-1"
+            :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
+            :title="sidebarCollapsed ? item.label : undefined"
+            :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
+            @click="handleMenuItemClick(item.path)"
+          >
+            <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
+            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
+            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+          </router-link>
         </div>
       </template>
     </nav>
@@ -236,7 +204,6 @@ interface NavItem {
   path: string
   label: string
   icon: unknown
-  externalUrl?: string
   iconSvg?: string
   hideInSimpleMode?: boolean
   children?: NavItem[]
@@ -268,8 +235,6 @@ function applyFeatureFlags(items: NavItem[]): NavItem[] {
   }
   return out
 }
-
-const CANVAS_URL = 'https://canvas.zh-zh.top'
 
 const { t } = useI18n()
 
@@ -312,36 +277,6 @@ const DashboardIcon = {
           'stroke-linecap': 'round',
           'stroke-linejoin': 'round',
           d: 'M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z'
-        })
-      ]
-    )
-}
-
-const AiChatIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm3.75 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm3.75 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z'
-        })
-      ]
-    )
-}
-
-const AiImageIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z'
         })
       ]
     )
@@ -527,6 +462,10 @@ const GlobeIcon = {
     )
 }
 
+const FlowIcon = {
+  render: () => h(Icon, { name: 'swap' })
+}
+
 const ServerIcon = {
   render: () =>
     h(
@@ -701,6 +640,22 @@ const SignalIcon = {
     )
 }
 
+// 鹈鹕测智展示：画廊（heroicons photo）
+const GalleryIcon = {
+  render: () =>
+    h(
+      'svg',
+      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          d: 'm2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z'
+        })
+      ]
+    )
+}
+
 const ShieldIcon = {
   render: () =>
     h(
@@ -757,6 +712,7 @@ const ChevronDownIcon = {
 const flagChannelMonitor = makeSidebarFlag(FeatureFlags.channelMonitor)
 const flagPayment = makeSidebarFlag(FeatureFlags.payment)
 const flagAvailableChannels = makeSidebarFlag(FeatureFlags.availableChannels)
+const flagPelicanShowcase = makeSidebarFlag(FeatureFlags.pelicanShowcase)
 const flagSubscription = makeSidebarFlag(FeatureFlags.subscription)
 
 // 购买入口文案随站点计费模式切换：仅充值 → 「充值」，仅订阅 → 「订阅」，否则「充值/订阅」。
@@ -780,7 +736,7 @@ const flagBatchImageAccess = () => canUseBatchImage.value
 // buildSelfNavItems 构造用户自己的导航项（用户端主菜单和管理员的"我的账户"子菜单共享这组声明）。
 // withDashboard=true 时包含仪表盘（用户端），false 时不含（管理员的个人区已经有独立仪表盘入口）。
 //
-// 条目顺序：AI 工具 → 密钥 → 用量 → 可用渠道 → 渠道状态 → 订阅/支付 → 兑换/资料。
+// 条目顺序：密钥 → 用量 → 可用渠道 → 渠道状态 → 鹈鹕测智 → 订阅/支付 → 兑换/资料。
 // 可用渠道紧挨渠道状态之上，让用户"先看自己能用什么、再看对应状态"。
 function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   const items: NavItem[] = []
@@ -788,13 +744,12 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     items.push({ path: '/dashboard', label: t('nav.dashboard'), icon: DashboardIcon })
   }
   items.push(
-    { path: '/ai/chat', label: t('nav.aiChat'), icon: AiChatIcon },
-    { path: CANVAS_URL, externalUrl: CANVAS_URL, label: t('nav.infiniteCanvas'), icon: AiImageIcon },
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
     { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
+    { path: '/pelican-showcase', label: t('nav.pelicanShowcase'), icon: GalleryIcon, featureFlag: flagPelicanShowcase },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagSubscription },
     { path: '/purchase', label: purchaseNavLabel.value, icon: RechargeSubscriptionIcon, hideInSimpleMode: true, featureFlag: flagPayment },
     { path: '/orders', label: t('nav.myOrders'), icon: OrderListIcon, hideInSimpleMode: true, featureFlag: flagPayment },
@@ -860,6 +815,11 @@ const adminNavItems = computed((): NavItem[] => {
     // 「仅充值」站点连管理端的「订阅管理」入口也一并收起（路由本身不拦截）。
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagSubscription },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
+    { path: '/admin/smart-ops', label: t('accountOps.smartTitle'), icon: ChartIcon, expandOnly: true, children: [
+      { path: '/admin/account-quality', label: t('qualityOps.title'), icon: ChartIcon },
+      { path: '/admin/account-ops', label: t('accountOps.title'), icon: BellIcon },
+    ] },
+    { path: '/admin/harvest-flow', label: t('nav.harvestFlow'), icon: FlowIcon },
     { path: '/admin/plugins', label: t('nav.plugins'), icon: PluginIcon, featureFlag: flagPluginManagement },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },

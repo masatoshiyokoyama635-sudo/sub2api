@@ -12,8 +12,7 @@ import (
 )
 
 var (
-	ErrNoPromptText               = errors.New("prompt audit request contains no user text")
-	ErrPromptAuditPayloadTooLarge = errors.New("prompt audit payload too large")
+	ErrNoPromptText = errors.New("prompt audit request contains no user text")
 
 	bearerPattern = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+\-/]+=*`)
 	apiKeyPattern = regexp.MustCompile(`(?i)\b(sk|rk|pk|api[_-]?key|token|secret|password)[-_:=\s]+[A-Za-z0-9._~+\-/]{8,}`)
@@ -22,15 +21,7 @@ var (
 	phonePattern  = regexp.MustCompile(`(?:\+?\d[\d\s().-]{8,}\d)`)
 )
 
-const (
-	promptAuditPrioritySeparator = "\x00SUB2API_PROMPT_AUDIT_PRIORITY_END\x00"
-
-	// MaxPromptAuditPayloadBytes independently caps the complete extracted scan
-	// payload before it may be scanned, copied for async work, or persisted to
-	// Redis. This is intentionally independent of per-fragment input_limit.
-	MaxPromptAuditPayloadBytes     = 1 << 20
-	MaxPromptAuditRequestBodyBytes = 2 << 20
-)
+const promptAuditPrioritySeparator = "\x00SUB2API_PROMPT_AUDIT_PRIORITY_END\x00"
 
 type promptSegment struct {
 	text string
@@ -50,9 +41,6 @@ func ExtractBlockingPromptSnapshot(req Request, latestTurnOnly bool) (PromptSnap
 }
 
 func extractPromptSnapshot(req Request, latestTurnOnly bool) (PromptSnapshot, error) {
-	if len(req.Body) > MaxPromptAuditRequestBodyBytes {
-		return PromptSnapshot{}, newPromptAuditPayloadTooLargeError()
-	}
 	var document any
 	if err := json.Unmarshal(req.Body, &document); err != nil {
 		return PromptSnapshot{}, errors.New("prompt audit request JSON is invalid")
@@ -65,23 +53,17 @@ func extractPromptSnapshot(req Request, latestTurnOnly bool) (PromptSnapshot, er
 	if len(segments) == 0 {
 		return PromptSnapshot{}, ErrNoPromptText
 	}
-	scanText, metadataText, err := buildPrioritizedScanText(segments)
-	if err != nil {
-		return PromptSnapshot{}, err
-	}
+	scanText, metadataText := buildPrioritizedScanText(segments)
 	digest := sha256.Sum256([]byte(metadataText))
 	stage := strings.TrimSpace(req.Stage)
 	if stage == "" {
 		stage = "http"
 	}
 	return PromptSnapshot{
-		RequestID: LimitRunes(strings.TrimSpace(req.RequestID), 128), UserID: req.UserID,
-		UsernameSnapshot:  LimitRunes(strings.TrimSpace(req.Username), 255),
-		UserEmailSnapshot: LimitRunes(strings.TrimSpace(req.UserEmail), 320), APIKeyID: req.APIKeyID,
-		APIKeyNameSnapshot: LimitRunes(strings.TrimSpace(req.APIKeyName), 255),
-		GroupID:            cloneInt64Ptr(req.GroupID), GroupName: LimitRunes(strings.TrimSpace(req.GroupName), 255),
-		Provider: LimitRunes(strings.TrimSpace(req.Provider), 64), Endpoint: LimitRunes(strings.TrimSpace(req.Endpoint), 128),
-		Protocol: LimitRunes(strings.TrimSpace(req.Protocol), 64), Model: LimitRunes(strings.TrimSpace(req.Model), 255),
+		RequestID: req.RequestID, UserID: req.UserID, UsernameSnapshot: req.Username,
+		UserEmailSnapshot: req.UserEmail, APIKeyID: req.APIKeyID, APIKeyNameSnapshot: req.APIKeyName,
+		GroupID: cloneInt64Ptr(req.GroupID), GroupName: req.GroupName, Provider: req.Provider,
+		Endpoint: req.Endpoint, Protocol: req.Protocol, Model: req.Model,
 		PromptHash: hex.EncodeToString(digest[:]), RedactedPreview: BuildPromptPreview(metadataText, DefaultPromptPreviewMaxRunes),
 		FullPrompt:   BuildFullPrompt(metadataText, DefaultFullPromptMaxRunes),
 		PromptLength: utf8.RuneCountInString(metadataText), MessageCount: len(segments), Stage: stage,
@@ -554,39 +536,12 @@ func promptSegmentTexts(values []promptSegment) []string {
 	return result
 }
 
-func buildPrioritizedScanText(segments []string) (scanText string, metadataText string, err error) {
-	if promptAuditPayloadBytes(segments) > MaxPromptAuditPayloadBytes {
-		return "", "", newPromptAuditPayloadTooLargeError()
-	}
+func buildPrioritizedScanText(segments []string) (scanText string, metadataText string) {
 	metadataText = strings.Join(segments, "\n\n")
 	if len(segments) <= 1 {
-		return metadataText, metadataText, nil
+		return metadataText, metadataText
 	}
-	return segments[0] + promptAuditPrioritySeparator + strings.Join(segments[1:], "\n\n"), metadataText, nil
-}
-
-func promptAuditPayloadBytes(segments []string) int64 {
-	if len(segments) == 0 {
-		return 0
-	}
-	total := int64(len(segments[0]))
-	if len(segments) > 1 {
-		total += int64(len(promptAuditPrioritySeparator))
-		for index, segment := range segments[1:] {
-			if index > 0 {
-				total += int64(len("\n\n"))
-			}
-			total += int64(len(segment))
-			if total > MaxPromptAuditPayloadBytes {
-				return total
-			}
-		}
-	}
-	return total
-}
-
-func newPromptAuditPayloadTooLargeError() error {
-	return &GuardError{Code: ErrorCodeInvalidResponse, Cause: ErrPromptAuditPayloadTooLarge}
+	return segments[0] + promptAuditPrioritySeparator + strings.Join(segments[1:], "\n\n"), metadataText
 }
 
 func promptSegmentsForRole(texts []string, role string) []promptSegment {
@@ -688,17 +643,6 @@ func TrimRunes(value string, limit int) string {
 		return value
 	}
 	return string(runes[:limit]) + "…"
-}
-
-func LimitRunes(value string, limit int) string {
-	if limit <= 0 {
-		return ""
-	}
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit])
 }
 
 func stringValue(value any) string {

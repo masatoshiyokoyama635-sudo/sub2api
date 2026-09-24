@@ -209,29 +209,17 @@ func (p *ChannelModelPricing) GetTierByLabel(label string) *PricingInterval {
 	return nil
 }
 
-// Clone returns a deep copy safe for mutable cache and request boundaries.
+// Clone 返回 ChannelModelPricing 的拷贝（切片和映射独立，价格指针字段共享，调用方只读安全）
 func (p ChannelModelPricing) Clone() ChannelModelPricing {
 	cp := p
 	cp.ReasoningEffortMultipliers = maps.Clone(p.ReasoningEffortMultipliers)
-	cp.InputPrice = clonePricingPointer(p.InputPrice)
-	cp.OutputPrice = clonePricingPointer(p.OutputPrice)
-	cp.CacheWritePrice = clonePricingPointer(p.CacheWritePrice)
-	cp.CacheWrite1hPrice = clonePricingPointer(p.CacheWrite1hPrice)
-	cp.CacheReadPrice = clonePricingPointer(p.CacheReadPrice)
-	cp.FastMultiplier = clonePricingPointer(p.FastMultiplier)
-	cp.FlexMultiplier = clonePricingPointer(p.FlexMultiplier)
-	cp.ImageInputPrice = clonePricingPointer(p.ImageInputPrice)
-	cp.ImageOutputPrice = clonePricingPointer(p.ImageOutputPrice)
-	cp.PerRequestPrice = clonePricingPointer(p.PerRequestPrice)
 	if p.Models != nil {
 		cp.Models = make([]string, len(p.Models))
 		copy(cp.Models, p.Models)
 	}
 	if p.Intervals != nil {
 		cp.Intervals = make([]PricingInterval, len(p.Intervals))
-		for i := range p.Intervals {
-			cp.Intervals[i] = p.Intervals[i].clone()
-		}
+		copy(cp.Intervals, p.Intervals)
 	}
 	if p.TimePricing != nil {
 		cp.TimePricing = &ChannelTimePricing{
@@ -243,41 +231,6 @@ func (p ChannelModelPricing) Clone() ChannelModelPricing {
 		}
 	}
 	return cp
-}
-
-func (p PricingInterval) clone() PricingInterval {
-	cp := p
-	cp.MaxTokens = clonePricingPointer(p.MaxTokens)
-	cp.InputPrice = clonePricingPointer(p.InputPrice)
-	cp.OutputPrice = clonePricingPointer(p.OutputPrice)
-	cp.CacheWritePrice = clonePricingPointer(p.CacheWritePrice)
-	cp.CacheWrite1hPrice = clonePricingPointer(p.CacheWrite1hPrice)
-	cp.CacheReadPrice = clonePricingPointer(p.CacheReadPrice)
-	cp.InputMultiplier = clonePricingPointer(p.InputMultiplier)
-	cp.OutputMultiplier = clonePricingPointer(p.OutputMultiplier)
-	cp.CacheWriteMultiplier = clonePricingPointer(p.CacheWriteMultiplier)
-	cp.CacheReadMultiplier = clonePricingPointer(p.CacheReadMultiplier)
-	cp.PerRequestPrice = clonePricingPointer(p.PerRequestPrice)
-	return cp
-}
-
-func clonePricingPointer[T any](value *T) *T {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
-}
-
-func cloneChannelModelPricingList(pricing []ChannelModelPricing) []ChannelModelPricing {
-	if pricing == nil {
-		return nil
-	}
-	cloned := make([]ChannelModelPricing, len(pricing))
-	for i := range pricing {
-		cloned[i] = pricing[i].Clone()
-	}
-	return cloned
 }
 
 // Clone 返回 Channel 的深拷贝

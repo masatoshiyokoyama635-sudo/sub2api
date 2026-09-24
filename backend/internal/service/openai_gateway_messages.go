@@ -33,6 +33,16 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	latest, admissionErr := s.admitOpenAITurn(
+		context.WithoutCancel(ctx),
+		c,
+		account,
+		gjson.GetBytes(body, "model").String(),
+	)
+	if admissionErr != nil {
+		return nil, admissionErr
+	}
+	account = latest
 	// 工具 Schema 清洗必须先于所有分流：下游每条路径（原生 Anthropic 直通、
 	// Chat Completions 转换、Responses 转换）都会把 tools 原样带给上游，而
 	// xAI / Moonshot 等严格校验方会因 input_schema 里的 required:null 或
@@ -257,7 +267,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
 		}
-		applyCodexAccountIdentityClientMetadataMap(reqBody, codexAccountIdentitySource(c, account), apiKeyID)
+		s.applyCodexAccountIdentityOrHarvestPinMap(ctx, account, codexAccountIdentitySource(c, account), apiKeyID, upstreamModel, reqBody)
 		delete(reqBody, "prompt_cache_key")
 		if shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
 			compatTurnState = s.getOpenAICompatSessionTurnState(ctx, c, account, promptCacheKey)
@@ -369,10 +379,15 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// Override session_id with a deterministic UUID derived from the isolated
 	// session key, ensuring different API keys produce different upstream sessions.
 	if account.Platform != PlatformGrok && promptCacheKey != "" {
-		isolatedSessionID := generateSessionUUID(isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey))
-		upstreamReq.Header.Set("session_id", isolatedSessionID)
-		if upstreamReq.Header.Get("conversation_id") != "" {
-			upstreamReq.Header.Set("conversation_id", isolatedSessionID)
+		if session := s.harvestPinnedSessionForModel(ctx, account, upstreamModel); session != "" {
+			upstreamReq.Header.Set("session_id", session)
+			upstreamReq.Header.Del("conversation_id")
+		} else {
+			isolatedSessionID := generateSessionUUID(isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey))
+			upstreamReq.Header.Set("session_id", isolatedSessionID)
+			if upstreamReq.Header.Get("conversation_id") != "" {
+				upstreamReq.Header.Set("conversation_id", isolatedSessionID)
+			}
 		}
 	}
 	if account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok {
@@ -393,6 +408,10 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	if compatTurnState != "" && upstreamReq.Header.Get("x-codex-turn-state") == "" {
 		upstreamReq.Header.Set("x-codex-turn-state", compatTurnState)
 	}
+	if err := s.applyOpenAICodexTicket(ctx, account, upstreamModel, upstreamReq.Header); err != nil {
+		return nil, err
+	}
+	s.pinBoundCodexTicketHarvestIdentity(upstreamReq, account)
 
 	// 7. Send request
 	proxyURL := ""
@@ -515,29 +534,22 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		result, handleErr = s.handleAnthropicBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
 	}
 
-	// cyber_policy：标记已设、error 已按 Anthropic 格式发给客户端。可信的
-	// partial result 交给 handler 走正常 RecordUsage；没有计量观测时才由 handler
-	// 写 CyberPolicyUsageLog fallback。
-	cyberPolicyMarked := GetOpsCyberPolicy(c) != nil
-	if cyberPolicyMarked {
+	// cyber_policy：标记已设、error 已按 Anthropic 格式发给客户端。丢弃 result、返回哨兵，
+	// 使 handler 落入 tokens=0 免费用量行（对齐 /v1/responses），不计费、不 failover。
+	if GetOpsCyberPolicy(c) != nil {
 		if handleErr == nil {
 			handleErr = errOpenAICyberPolicyForwarded
 		}
-	}
-	if handleErr != nil && !shouldReturnOpenAICompatResult(result, handleErr, cyberPolicyMarked) {
 		return nil, handleErr
 	}
 
-	// Propagate billing metadata to successful or billable partial results.
-	if result != nil {
-		// Continuation state is only valid after a fully successful response.
-		if handleErr == nil {
-			if compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
-				s.bindOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey, result.ResponseID)
-			}
-			if promptCacheKey != "" && anthropicDigestChain != "" {
-				s.bindOpenAICompatAnthropicDigestPromptCacheKey(account, apiKeyID, anthropicDigestChain, promptCacheKey, anthropicMatchedDigestChain)
-			}
+	// Propagate ServiceTier and ReasoningEffort to result for billing
+	if handleErr == nil && result != nil {
+		if compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
+			s.bindOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey, result.ResponseID)
+		}
+		if promptCacheKey != "" && anthropicDigestChain != "" {
+			s.bindOpenAICompatAnthropicDigestPromptCacheKey(account, apiKeyID, anthropicDigestChain, promptCacheKey, anthropicMatchedDigestChain)
 		}
 		// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
 		// fast policy filter/force 之后）里的 tier。
@@ -624,32 +636,6 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 	}
 	observer.Observe(finalResponse.Model, true)
 	observer.ObserveServiceTier(finalResponse.ServiceTier, true)
-	result := &OpenAIForwardResult{
-		RequestID:                     requestID,
-		UpstreamHeaders:               resp.Header,
-		ResponseID:                    finalResponse.ID,
-		Usage:                         usage,
-		Model:                         originalModel,
-		BillingModel:                  billingModel,
-		UpstreamModel:                 upstreamModel,
-		UpstreamResponseModel:         observedUpstreamResponseModel(c),
-		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
-		UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
-		Stream:                        false,
-		Duration:                      time.Since(startTime),
-	}
-	// Grok /v1/messages uses Responses upstream; count native search for surcharge.
-	if account != nil && account.IsGrok() && finalResponse != nil {
-		if body, marshalErr := json.Marshal(finalResponse); marshalErr == nil {
-			result.SearchCount = countGrokNativeSearchCallsFromJSONBytes(body)
-		}
-	}
-	returnPartial := func(responseErr error) (*OpenAIForwardResult, error) {
-		if shouldReturnOpenAIPartialResult(&result.Usage, result.ImageCount, result.SearchCount, responseErr) {
-			return result, responseErr
-		}
-		return nil, responseErr
-	}
 
 	if strings.TrimSpace(finalResponse.Status) == "failed" {
 		payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": finalResponse})
@@ -667,8 +653,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 				clientMsg = "Request blocked by upstream cyber-security policy"
 			}
 			writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", clientMsg)
-			cyberErr := fmt.Errorf("openai cyber_policy: %s", msg)
-			return returnPartial(cyberErr)
+			return nil, fmt.Errorf("openai cyber_policy: %s", msg)
 		}
 		message := openAICompatFailedResponseMessage(finalResponse)
 		if openAIStreamFailedEventShouldFailover(payload, message) {
@@ -685,10 +670,10 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 			}
 			MarkResponseCommitted(c)
 			writeAnthropicError(c, status, errType, errMsg)
-			return returnPartial(fmt.Errorf("upstream response failed (passthrough): %s", errMsg))
+			return nil, fmt.Errorf("upstream response failed (passthrough): %s", errMsg)
 		}
 		writeAnthropicError(c, http.StatusBadGateway, "api_error", message)
-		return returnPartial(fmt.Errorf("upstream response failed: %s", message))
+		return nil, fmt.Errorf("upstream response failed: %s", message)
 	}
 	if strings.TrimSpace(finalResponse.Status) == "completed" {
 		logOpenAISuccessMissingUsage(c.Request.Context(), c, account, resp, &usage, "response.completed", false)
@@ -706,6 +691,28 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 	c.Header("Content-Type", "application/json; charset=utf-8")
 	c.JSON(http.StatusOK, anthropicResp)
 
+	result := &OpenAIForwardResult{
+		RequestID:                     requestID,
+		UpstreamHeaders:               resp.Header,
+		ResponseID:                    finalResponse.ID,
+		Usage:                         usage,
+		Model:                         originalModel,
+		BillingModel:                  billingModel,
+		UpstreamModel:                 upstreamModel,
+		UpstreamResponseModel:         observedUpstreamResponseModel(c),
+		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+		UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
+		Stream:                        false,
+		Duration:                      time.Since(startTime),
+	}
+	// Grok /v1/messages uses Responses upstream; count native search for surcharge.
+	if account != nil && account.IsGrok() && finalResponse != nil {
+		if body, err := json.Marshal(finalResponse); err == nil {
+			if n := countGrokNativeSearchCallsFromJSONBytes(body); n > 0 {
+				result.SearchCount = n
+			}
+		}
+	}
 	return result, nil
 }
 

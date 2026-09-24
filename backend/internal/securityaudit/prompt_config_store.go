@@ -35,16 +35,12 @@ type ConfigManager struct {
 	// undecryptable after the next restart, so Save rejects them (issue #4887).
 	encryptionKeyConfigured bool
 
-	snapshot       atomic.Pointer[activeConfigSnapshot]
-	expected       atomic.Int64
-	reloadSequence atomic.Uint64
-	installMu      sync.Mutex
+	snapshot atomic.Pointer[activeConfigSnapshot]
+	expected atomic.Int64
 	// expectedBlocking records the last storage intent that could be decoded,
 	// independently of whether endpoint credentials or the full config could be
 	// activated. A config version alone cannot distinguish async from blocking.
-	expectedBlocking    atomic.Bool
-	expectedRiskControl atomic.Bool
-	riskControlKnown    atomic.Bool
+	expectedBlocking atomic.Bool
 	// configUntrusted is set when a load/reload fails before a trustworthy
 	// snapshot is installed. Combined with expectedBlocking, EffectiveMode
 	// fails closed so a persisted blocking policy cannot be silently skipped
@@ -57,13 +53,9 @@ type ConfigManager struct {
 	lastLoadError string
 	lastErrorAt   *time.Time
 
-	lifecycleMu  sync.Mutex
-	state        promptLifecycleState
-	cancel       context.CancelFunc
-	startupDone  chan struct{}
-	shutdownDone chan struct{}
-	shutdownErr  error
-	wg           sync.WaitGroup
+	lifecycleMu sync.Mutex
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 }
 
 func NewConfigManager(db *sql.DB, settings service.SettingRepository, redisClient *redis.Client, encryptor service.SecretEncryptor, cfg *config.Config) *ConfigManager {
@@ -78,23 +70,13 @@ func (m *ConfigManager) Start(ctx context.Context) error {
 		return errors.New("prompt audit config manager unavailable")
 	}
 	m.lifecycleMu.Lock()
-	switch m.state {
-	case promptLifecycleStarting, promptLifecycleRunning:
+	if m.cancel != nil {
 		m.lifecycleMu.Unlock()
 		return nil
-	case promptLifecycleStopping, promptLifecycleStopped:
-		m.lifecycleMu.Unlock()
-		return ErrPromptAuditNotRestartable
 	}
 	runCtx, cancel := context.WithCancel(ctx)
-	startupDone := make(chan struct{})
-	m.state = promptLifecycleStarting
 	m.cancel = cancel
-	m.startupDone = startupDone
-	m.shutdownDone = nil
-	m.shutdownErr = nil
 	m.lifecycleMu.Unlock()
-
 	loadErr := m.Reload(runCtx)
 	if loadErr != nil {
 		m.markConfigUntrusted()
@@ -105,71 +87,22 @@ func (m *ConfigManager) Start(ctx context.Context) error {
 		m.wg.Add(1)
 		go m.subscribeLoop(runCtx)
 	}
-
-	m.lifecycleMu.Lock()
-	if m.state == promptLifecycleStarting {
-		// Initial load failures are recoverable degraded startup: refresh and
-		// invalidation loops remain alive so a later valid config can activate.
-		m.state = promptLifecycleRunning
-	}
-	m.lifecycleMu.Unlock()
-	close(startupDone)
 	return loadErr
 }
 
-func (m *ConfigManager) Shutdown(ctx context.Context) error {
+func (m *ConfigManager) Shutdown(_ context.Context) error {
 	if m == nil {
 		return nil
 	}
 	m.lifecycleMu.Lock()
-	switch m.state {
-	case promptLifecycleNew:
-		m.lifecycleMu.Unlock()
-		return nil
-	case promptLifecycleStopped:
-		shutdownErr := m.shutdownErr
-		m.lifecycleMu.Unlock()
-		return shutdownErr
-	case promptLifecycleStopping:
-		shutdownDone := m.shutdownDone
-		m.lifecycleMu.Unlock()
-		return m.waitForShutdown(ctx, shutdownDone)
-	case promptLifecycleStarting, promptLifecycleRunning:
-		m.state = promptLifecycleStopping
-		cancel := m.cancel
-		startupDone := m.startupDone
-		shutdownDone := make(chan struct{})
-		m.shutdownDone = shutdownDone
-		m.lifecycleMu.Unlock()
-		if cancel != nil {
-			cancel()
-		}
-		go m.finishShutdown(startupDone, shutdownDone)
-		return m.waitForShutdown(ctx, shutdownDone)
-	default:
-		m.lifecycleMu.Unlock()
-		return nil
-	}
-}
-
-func (m *ConfigManager) waitForShutdown(ctx context.Context, done <-chan struct{}) error {
-	return waitPromptLifecycle(ctx, done, func() error {
-		m.lifecycleMu.Lock()
-		defer m.lifecycleMu.Unlock()
-		return m.shutdownErr
-	})
-}
-
-func (m *ConfigManager) finishShutdown(startupDone, shutdownDone chan struct{}) {
-	if startupDone != nil {
-		<-startupDone
+	cancel := m.cancel
+	m.cancel = nil
+	m.lifecycleMu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 	m.wg.Wait()
-	m.lifecycleMu.Lock()
-	m.cancel = nil
-	m.state = promptLifecycleStopped
-	m.lifecycleMu.Unlock()
-	close(shutdownDone)
+	return nil
 }
 
 func (m *ConfigManager) Reload(ctx context.Context) error {
@@ -177,90 +110,31 @@ func (m *ConfigManager) Reload(ctx context.Context) error {
 		m.markUntrustedIfNoActiveSnapshot()
 		return errors.New("prompt audit setting repository unavailable")
 	}
-	// Sequence allocation is serialized with snapshot/state installation. A
-	// Save that commits while this reload is reading can advance the fence, and
-	// this reload must then be rejected before it changes any runtime state.
-	m.installMu.Lock()
-	sequence := m.reloadSequence.Add(1)
-	m.installMu.Unlock()
 	values, err := m.settings.GetMultiple(ctx, []string{SettingKeyPromptAuditConfig, SettingKeyRiskControl})
 	if err != nil {
-		m.applyReloadFailure(sequence, func() {
-			m.riskControlKnown.Store(false)
-			m.recordLoadError(err)
-			m.markConfigUntrustedLocked()
-		})
+		m.recordLoadError(err)
+		m.markUntrustedIfNoActiveSnapshot()
 		return err
 	}
-	riskControlEnabled, err := parseStoredRiskControl(values[SettingKeyRiskControl])
-	if err != nil {
-		m.applyReloadFailure(sequence, func() {
-			m.riskControlKnown.Store(false)
-			m.recordLoadError(err)
-			m.markConfigUntrustedLocked()
-		})
-		return err
-	}
+	m.observeExpectedState(values[SettingKeyPromptAuditConfig], values[SettingKeyRiskControl] == "true")
 	storage, err := ParseStorageConfig(values[SettingKeyPromptAuditConfig])
 	if err != nil {
-		m.applyReloadFailure(sequence, func() {
-			m.observeExpectedStateLocked(values[SettingKeyPromptAuditConfig], riskControlEnabled)
-			m.recordLoadError(err)
-			m.markConfigUntrustedLocked()
-		})
+		m.recordLoadError(err)
+		m.markUntrustedIfNoActiveSnapshot()
 		return err
 	}
-	active, err := ActiveFromStorage(storage, riskControlEnabled, m.encryptor)
-	if err != nil {
-		m.applyReloadFailure(sequence, func() {
-			m.riskControlKnown.Store(true)
-			m.expectedRiskControl.Store(riskControlEnabled)
-			m.expected.Store(storage.ConfigVersion)
-			m.expectedBlocking.Store(riskControlEnabled && storage.Enabled && storage.BlockingEnabled)
-			m.recordLoadError(err)
-			// A newer configuration that cannot be activated must not leave an
-			// older allow-capable snapshot trusted under risk control.
-			m.markUntrustedIfNoActiveOrNewerSnapshotLocked(storage.ConfigVersion)
-		})
-		return err
-	}
-	m.installMu.Lock()
-	defer m.installMu.Unlock()
-	if sequence != m.reloadSequence.Load() {
-		return nil
-	}
-	m.installActiveSnapshotLocked(storage, active, riskControlEnabled)
-	return nil
-}
-
-// applyReloadFailure serializes the failure state of a reload with every
-// snapshot installation and reload-fence advance. Checking the sequence and
-// updating state must be one critical section; otherwise an older reload can
-// pass the check, pause, and overwrite a newer Save's fail-closed metadata.
-func (m *ConfigManager) applyReloadFailure(sequence uint64, apply func()) {
-	m.installMu.Lock()
-	defer m.installMu.Unlock()
-	if sequence != m.reloadSequence.Load() {
-		return
-	}
-	apply()
-}
-
-func (m *ConfigManager) installActiveSnapshotLocked(storage storageConfig, active ActiveConfig, riskControlEnabled bool) {
-	current := m.snapshot.Load()
-	if current != nil && current.active.ConfigVersion > active.ConfigVersion {
-		return
-	}
-	previous := current
 	m.expected.Store(storage.ConfigVersion)
-	m.riskControlKnown.Store(true)
-	m.expectedRiskControl.Store(riskControlEnabled)
-	m.expectedBlocking.Store(riskControlEnabled && storage.Enabled && storage.BlockingEnabled)
-	m.snapshot.Store(&activeConfigSnapshot{
-		storage:  cloneStorageConfig(storage),
-		active:   cloneActiveConfig(active),
-		loadedAt: m.clock.Now(),
-	})
+	m.expectedBlocking.Store(values[SettingKeyRiskControl] == "true" && storage.Enabled && storage.BlockingEnabled)
+	active, err := ActiveFromStorage(storage, values[SettingKeyRiskControl] == "true", m.encryptor)
+	if err != nil {
+		m.recordLoadError(err)
+		// expectedBlocking may already require fail-closed via BlockingActivationDegraded.
+		m.markUntrustedIfNoActiveSnapshot()
+		return err
+	}
+	now := m.clock.Now()
+	previous := m.snapshot.Load()
+	m.snapshot.Store(&activeConfigSnapshot{storage: cloneStorageConfig(storage), active: cloneActiveConfig(active), loadedAt: now})
 	m.configUntrusted.Store(false)
 	recovered := m.clearLoadError()
 	m.logInvalidTokenEndpoints(previous, active)
@@ -271,6 +145,7 @@ func (m *ConfigManager) installActiveSnapshotLocked(storage storageConfig, activ
 			"config_version": storage.ConfigVersion, "status": "loaded",
 		})
 	}
+	return nil
 }
 
 // shouldLogConfigLoaded reports whether a successful reload carries news: the
@@ -327,7 +202,8 @@ func (m *ConfigManager) BlockingActivationDegraded() bool {
 		return false
 	}
 	// Fail closed only when storage intent requires blocking. Untrusted config
-	// without blocking intent must not upgrade the whole gateway to ModeBlocking.
+	// without blocking intent must remain ModeOff so administrators can still
+	// operate the gateway and turn Prompt Audit off after a failed reload.
 	if !m.expectedBlocking.Load() {
 		return false
 	}
@@ -358,38 +234,15 @@ func (m *ConfigManager) markConfigUntrusted() {
 	if m == nil {
 		return
 	}
-	m.installMu.Lock()
-	m.markConfigUntrustedLocked()
-	m.installMu.Unlock()
-}
-
-func (m *ConfigManager) markConfigUntrustedLocked() {
-	if m == nil {
-		return
-	}
 	m.configUntrusted.Store(true)
 }
 
 func (m *ConfigManager) markUntrustedIfNoActiveSnapshot() {
-	m.markUntrustedIfNoActiveOrNewerSnapshot(0)
-}
-
-func (m *ConfigManager) markUntrustedIfNoActiveOrNewerSnapshot(expectedVersion int64) {
 	if m == nil {
 		return
 	}
-	m.installMu.Lock()
-	m.markUntrustedIfNoActiveOrNewerSnapshotLocked(expectedVersion)
-	m.installMu.Unlock()
-}
-
-func (m *ConfigManager) markUntrustedIfNoActiveOrNewerSnapshotLocked(expectedVersion int64) {
-	if m == nil {
-		return
-	}
-	active, ok := m.Active()
-	if !ok || (expectedVersion > 0 && expectedVersion > active.ConfigVersion) {
-		m.markConfigUntrustedLocked()
+	if _, ok := m.Active(); !ok {
+		m.markConfigUntrusted()
 	}
 }
 
@@ -452,70 +305,28 @@ func (m *ConfigManager) Save(ctx context.Context, req UpdateConfigRequest, actor
 		SettingKeyPromptAuditConfig, string(rawNext)); err != nil {
 		return PublicConfig{}, err
 	}
-
-	// Hold the same linearization lock across the durable commit and fence
-	// publication. A Reload may already have read the old row, but it cannot
-	// install that result after this commit because its final sequence check is
-	// serialized below.
-	m.installMu.Lock()
 	if err := tx.Commit(); err != nil {
-		m.installMu.Unlock()
 		return PublicConfig{}, err
 	}
-	// A committed row is now the newest durable policy even though the global
-	// risk-control gate and endpoint secrets still need to be read/activated.
-	// Advance the reload fence before any post-commit I/O so an older Reload
-	// cannot install a stale allow-capable snapshot after this Save returns.
-	activationSequence := m.reloadSequence.Add(1)
-	m.expected.Store(next.ConfigVersion)
-	m.expectedBlocking.Store(m.expectedRiskControl.Load() && next.Enabled && next.BlockingEnabled)
-	m.markConfigUntrustedLocked()
-	m.installMu.Unlock()
-
-	// Install the snapshot only when the current global gate is readable and
-	// canonical. Treat an unavailable or malformed value as unknown instead of
-	// converting it into a trusted ModeOff snapshot after the config commit.
-	values, getErr := m.settings.GetMultiple(ctx, []string{SettingKeyRiskControl})
-	if getErr != nil {
-		m.installMu.Lock()
-		if activationSequence == m.reloadSequence.Load() {
-			m.riskControlKnown.Store(false)
-			m.recordLoadError(getErr)
-			m.markConfigUntrustedLocked()
-		}
-		m.installMu.Unlock()
-		return PublicConfig{}, getErr
-	}
-	riskControlEnabled, parseErr := parseStoredRiskControl(values[SettingKeyRiskControl])
-	if parseErr != nil {
-		m.installMu.Lock()
-		if activationSequence == m.reloadSequence.Load() {
-			m.riskControlKnown.Store(false)
-			m.recordLoadError(parseErr)
-			m.markConfigUntrustedLocked()
-		}
-		m.installMu.Unlock()
-		return PublicConfig{}, parseErr
+	// Install the snapshot with the current global gate, not merely the value
+	// cached when this process last reloaded Prompt Audit configuration.
+	riskControlEnabled := m.currentRiskControlEnabled()
+	if values, getErr := m.settings.GetMultiple(ctx, []string{SettingKeyRiskControl}); getErr == nil {
+		riskControlEnabled = values[SettingKeyRiskControl] == "true"
 	}
 	active, err := ActiveFromStorage(next, riskControlEnabled, m.encryptor)
 	if err != nil {
-		m.installMu.Lock()
-		if activationSequence == m.reloadSequence.Load() {
-			m.riskControlKnown.Store(true)
-			m.expectedRiskControl.Store(riskControlEnabled)
-			m.expected.Store(next.ConfigVersion)
-			m.expectedBlocking.Store(riskControlEnabled && next.Enabled && next.BlockingEnabled)
-			m.recordLoadError(err)
-			m.markUntrustedIfNoActiveOrNewerSnapshotLocked(next.ConfigVersion)
-		}
-		m.installMu.Unlock()
 		return PublicConfig{}, err
 	}
-	m.installMu.Lock()
-	if activationSequence == m.reloadSequence.Load() {
-		m.installActiveSnapshotLocked(next, active, riskControlEnabled)
-	}
-	m.installMu.Unlock()
+	m.expected.Store(next.ConfigVersion)
+	m.expectedBlocking.Store(active.RiskControlEnabled && next.Enabled && next.BlockingEnabled)
+	previous := m.snapshot.Load()
+	m.snapshot.Store(&activeConfigSnapshot{storage: cloneStorageConfig(next), active: cloneActiveConfig(active), loadedAt: m.clock.Now()})
+	// A successful admin save installs a trustworthy snapshot; clear any prior
+	// fail-closed degradation so disabling audit actually takes effect.
+	m.configUntrusted.Store(false)
+	m.clearLoadError()
+	m.logInvalidTokenEndpoints(previous, active)
 	LogInfo(EventConfigUpdated, map[string]any{
 		"config_version": next.ConfigVersion, "status": "updated",
 	})
@@ -570,25 +381,11 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 			}
 			stored.TokenCiphertext = ciphertext
 		case hadOld:
-			if old.TokenCiphertext != "" {
-				oldBaseURL, err := NormalizeBaseURL(old.BaseURL)
-				if err != nil {
-					return storageConfig{}, err
-				}
-				if oldBaseURL != stored.BaseURL {
-					return storageConfig{}, infraerrors.BadRequest(
-						"prompt_audit_token_required_for_base_url_change",
-						"更改审计节点地址时必须提供新令牌或明确清除旧令牌",
-					)
-				}
-			}
 			stored.TokenCiphertext = old.TokenCiphertext
 		}
 		next.Endpoints = append(next.Endpoints, stored)
 	}
-	if err := normalizeStorageConfig(&next); err != nil {
-		return storageConfig{}, err
-	}
+	normalizeStorageConfig(&next)
 	if err := validateStorageConfig(next); err != nil {
 		return storageConfig{}, err
 	}
@@ -617,32 +414,17 @@ func (m *ConfigManager) RuntimeState() (expected int64, active int64, loadedAt *
 func (m *ConfigManager) Encrypt(value string) (string, error) { return m.encryptor.Encrypt(value) }
 func (m *ConfigManager) Decrypt(value string) (string, error) { return m.encryptor.Decrypt(value) }
 
-func parseStoredRiskControl(raw string) (bool, error) {
-	switch strings.TrimSpace(raw) {
-	case "", "false":
-		return false, nil
-	case "true":
-		return true, nil
-	default:
-		return false, errors.New("invalid risk control setting")
+func (m *ConfigManager) currentRiskControlEnabled() bool {
+	if snapshot := m.snapshot.Load(); snapshot != nil {
+		return snapshot.active.RiskControlEnabled
 	}
+	return false
 }
 
 func (m *ConfigManager) observeExpectedState(raw string, riskControlEnabled bool) {
 	if m == nil {
 		return
 	}
-	m.installMu.Lock()
-	m.observeExpectedStateLocked(raw, riskControlEnabled)
-	m.installMu.Unlock()
-}
-
-func (m *ConfigManager) observeExpectedStateLocked(raw string, riskControlEnabled bool) {
-	if m == nil {
-		return
-	}
-	m.riskControlKnown.Store(true)
-	m.expectedRiskControl.Store(riskControlEnabled)
 	if strings.TrimSpace(raw) == "" {
 		m.expected.Store(1)
 		m.expectedBlocking.Store(false)
@@ -653,9 +435,6 @@ func (m *ConfigManager) observeExpectedStateLocked(raw string, riskControlEnable
 		BlockingEnabled bool  `json:"blocking_enabled"`
 		ConfigVersion   int64 `json:"config_version"`
 	}
-	// Best-effort field extraction deliberately remains separate from strict
-	// config activation. Even an unknown/newer schema can reveal its version, but
-	// it must not become a trusted active snapshot.
 	if err := json.Unmarshal([]byte(raw), &intent); err != nil {
 		return
 	}
@@ -703,11 +482,9 @@ func (m *ConfigManager) subscribeLoop(ctx context.Context) {
 			if err := m.Reload(ctx); err != nil {
 				// A newer published version failed to activate. Until reload
 				// succeeds, do not keep serving a potentially stale weaker mode.
-				m.installMu.Lock()
 				if active, ok := m.Active(); !ok || active.ConfigVersion < version {
-					m.markConfigUntrustedLocked()
+					m.markConfigUntrusted()
 				}
-				m.installMu.Unlock()
 				LogWarn(EventConfigReloadDegraded, map[string]any{
 					"config_version": version, "status": "degraded", "error_code": "config_invalidation_reload_failed",
 				})

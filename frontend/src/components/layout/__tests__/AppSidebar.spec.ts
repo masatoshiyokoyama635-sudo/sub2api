@@ -63,18 +63,6 @@ describe('AppSidebar header styles', () => {
   })
 })
 
-describe('AppSidebar canvas entry', () => {
-  it('opens Infinite Canvas as a parameter-free external link', () => {
-    expect(componentSource).toContain("const CANVAS_URL = 'https://canvas.zh-zh.top'")
-    expect(componentSource).toContain("label: t('nav.infiniteCanvas')")
-    expect(componentSource).toContain(':href="item.externalUrl"')
-    expect(componentSource).toContain('target="_blank"')
-    expect(componentSource).toContain('rel="noopener noreferrer"')
-    expect(componentSource).toContain('referrerpolicy="no-referrer"')
-    expect(componentSource).not.toContain("label: t('nav.aiImages'), icon: AiImageIcon")
-  })
-})
-
 describe('AppSidebar subscription feature flag', () => {
   it('gates the My Subscriptions entry behind the subscription public-settings flag', () => {
     expect(componentSource).toContain('const flagSubscription = makeSidebarFlag(FeatureFlags.subscription)')

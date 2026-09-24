@@ -3,14 +3,12 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
@@ -67,9 +65,8 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	if clientStream {
 		chatReq.StreamOptions = &apicompat.ChatStreamOptions{IncludeUsage: true}
 	}
-	if c != nil && containsBetaToken(c.GetHeader("anthropic-beta"), claude.BetaFastMode) {
-		chatReq.ServiceTier = OpenAIFastTierPriority
-	}
+
+	serviceTier := extractOpenAIServiceTierFromBody(body)
 
 	chatBody, err := json.Marshal(chatReq)
 	if err != nil {
@@ -91,21 +88,14 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 			chatBody = policyBody
 		}
 	}
-	policyBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, chatBody)
-	if policyErr != nil {
-		var blocked *OpenAIFastBlockedError
-		if errors.As(policyErr, &blocked) {
-			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
-			writeAnthropicError(c, http.StatusForbidden, "forbidden_error", blocked.Message)
-		}
-		return nil, policyErr
-	}
-	chatBody = policyBody
 	// Provider normalization and policy caps can both change the converted effort.
 	// Use the final outbound value for usage logs and billing.
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(chatBody, upstreamModel, billingModel, originalModel)
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, chatBody, upstreamModel)
-	serviceTier := extractOpenAIServiceTierFromBody(chatBody)
+	// Unlike forwardResponsesViaRawChatCompletions, applyOpenAIFastPolicyToBody
+	// is intentionally skipped: Anthropic Messages bodies carry no service_tier,
+	// so the converted Chat Completions body never contains one and the policy
+	// would always be a no-op on this path.
 
 	logger.L().Debug("openai messages: forwarding via raw chat completions",
 		zap.Int64("account_id", account.ID),

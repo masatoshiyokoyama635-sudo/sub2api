@@ -18,7 +18,7 @@ export interface VersionInfo {
   release_info?: ReleaseInfo
   cached: boolean
   warning?: string
-  build_type: string // "source", official "release", or protected "custom" build
+  build_type: string // "source" for manual builds, "release" for CI builds
 }
 
 /**
@@ -65,9 +65,9 @@ export async function getRollbackVersions(): Promise<{ versions: RollbackVersion
  * In-place update/rollback downloads a full release binary from GitHub, which
  * can take several minutes on slow links. The global 30s axios timeout would
  * abort the request mid-download (#4504), so these calls wait as long as the
- * backend allows (15 minutes server-side), plus one minute for network and response handling.
+ * backend allows (15 minutes server-side).
  */
-const UPDATE_REQUEST_TIMEOUT_MS = 16 * 60 * 1000
+const UPDATE_REQUEST_TIMEOUT_MS = 15 * 60 * 1000
 
 /**
  * Perform system update

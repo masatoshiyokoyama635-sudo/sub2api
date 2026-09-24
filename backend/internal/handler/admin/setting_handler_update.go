@@ -20,10 +20,12 @@ import (
 	"github.com/gin-gonic/gin/binding"
 )
 
-var errSettingsAuthorizationResponseWritten = errors.New("settings authorization response written")
-
 // UpdateSettingsRequest 更新设置请求
 type UpdateSettingsRequest struct {
+	OpenAICodexTicketHarvestScope   *service.CodexTicketHarvestScope `json:"openai_codex_ticket_harvest_scope"`
+	OpenAICodexTicketStrictResponse *bool                            `json:"openai_codex_ticket_strict_response"`
+	OpenAICodexTicketFailClosed     *bool                            `json:"openai_codex_ticket_fail_closed"`
+	OpenAICodexTicketStrategy       *string                          `json:"openai_codex_ticket_strategy"`
 	// 注册设置
 	RegistrationEnabled                 bool                         `json:"registration_enabled"`
 	EmailVerifyEnabled                  bool                         `json:"email_verify_enabled"`
@@ -245,22 +247,26 @@ type UpdateSettingsRequest struct {
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
 
 	// Gateway forwarding behavior
-	OpenAITTFTMode                         *string `json:"openai_ttft_mode"`
-	EnableFingerprintUnification           *bool   `json:"enable_fingerprint_unification"`
-	EnableMetadataPassthrough              *bool   `json:"enable_metadata_passthrough"`
-	EnableCCHSigning                       *bool   `json:"enable_cch_signing"`
-	EnableClaudeOAuthSystemPromptInjection *bool   `json:"enable_claude_oauth_system_prompt_injection"`
-	ClaudeOAuthSystemPrompt                *string `json:"claude_oauth_system_prompt"`
-	ClaudeOAuthSystemPromptBlocks          *string `json:"claude_oauth_system_prompt_blocks"`
-	EnableAnthropicCacheTTL1hInjection     *bool   `json:"enable_anthropic_cache_ttl_1h_injection"`
-	RewriteMessageCacheControl             *bool   `json:"rewrite_message_cache_control"`
-	EnableClientDatelineNormalization      *bool   `json:"enable_client_dateline_normalization"`
-	AntigravityUserAgentVersion            *string `json:"antigravity_user_agent_version"`
-	OpenAICodexUserAgent                   *string `json:"openai_codex_user_agent"`
-	OpenAICodexClientVersion               *string `json:"openai_codex_client_version"`
-	OpenAICodexVersionAutoSyncEnabled      *bool   `json:"openai_codex_version_auto_sync_enabled"`
-	ClaudeCodeClientVersion                *string `json:"claude_code_client_version"`
-	ClaudeCodeVersionAutoSyncEnabled       *bool   `json:"claude_code_version_auto_sync_enabled"`
+	OpenAITTFTMode                         *string   `json:"openai_ttft_mode"`
+	EnableFingerprintUnification           *bool     `json:"enable_fingerprint_unification"`
+	EnableMetadataPassthrough              *bool     `json:"enable_metadata_passthrough"`
+	EnableCCHSigning                       *bool     `json:"enable_cch_signing"`
+	EnableClaudeOAuthSystemPromptInjection *bool     `json:"enable_claude_oauth_system_prompt_injection"`
+	ClaudeOAuthSystemPrompt                *string   `json:"claude_oauth_system_prompt"`
+	ClaudeOAuthSystemPromptBlocks          *string   `json:"claude_oauth_system_prompt_blocks"`
+	EnableAnthropicCacheTTL1hInjection     *bool     `json:"enable_anthropic_cache_ttl_1h_injection"`
+	RewriteMessageCacheControl             *bool     `json:"rewrite_message_cache_control"`
+	EnableClientDatelineNormalization      *bool     `json:"enable_client_dateline_normalization"`
+	AntigravityUserAgentVersion            *string   `json:"antigravity_user_agent_version"`
+	OpenAICodexUserAgent                   *string   `json:"openai_codex_user_agent"`
+	OpenAICodexClientVersion               *string   `json:"openai_codex_client_version"`
+	OpenAICodexVersionAutoSyncEnabled      *bool     `json:"openai_codex_version_auto_sync_enabled"`
+	OpenAICodexTicketEnabled               *bool     `json:"openai_codex_ticket_enabled"`
+	OpenAICodexTicketHarvestProxyURL       string    `json:"openai_codex_ticket_harvest_proxy_url"`
+	OpenAICodexTicketUseSavedStaticProxy   bool      `json:"openai_codex_ticket_use_saved_static_proxy"`
+	OpenAICodexTicketModels                *[]string `json:"openai_codex_ticket_models"`
+	ClaudeCodeClientVersion                *string   `json:"claude_code_client_version"`
+	ClaudeCodeVersionAutoSyncEnabled       *bool     `json:"claude_code_version_auto_sync_enabled"`
 
 	// codex_cli_only 加固（global-only）
 	MinCodexVersion                      string `json:"min_codex_version"`
@@ -348,6 +354,10 @@ type UpdateSettingsRequest struct {
 	// Available Channels feature switch (user-facing)
 	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
 
+	// Pelican showcase switch + gallery limits (user-facing)
+	PelicanShowcaseEnabled *bool                          `json:"pelican_showcase_enabled"`
+	PelicanShowcase        *service.PelicanShowcaseConfig `json:"pelican_showcase_config"`
+
 	// Subscription feature switch (user-facing subscription surface; see SettingKeySubscriptionEnabled)
 	SubscriptionEnabled *bool `json:"subscription_enabled"`
 
@@ -366,8 +376,9 @@ type UpdateSettingsRequest struct {
 	RiskControlEnabled *bool `json:"risk_control_enabled"`
 
 	// cyber 会话屏蔽开关 + TTL
-	CyberSessionBlockEnabled    *bool `json:"cyber_session_block_enabled"`
-	CyberSessionBlockTTLSeconds *int  `json:"cyber_session_block_ttl_seconds"`
+	CyberSessionBlockEnabled          *bool `json:"cyber_session_block_enabled"`
+	CyberSessionBlockTTLSeconds       *int  `json:"cyber_session_block_ttl_seconds"`
+	CyberSessionIdentityStrictEnabled *bool `json:"cyber_session_identity_strict_enabled"`
 
 	// OpenAI fast/flex policy (optional, only updated when provided)
 	OpenAIFastPolicySettings *dto.OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
@@ -498,6 +509,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	if req.OpenAICodexTicketHarvestScope != nil && req.OpenAICodexTicketHarvestScope.Mode == "" {
+		response.BadRequest(c, "harvest scope mode is required")
+		return
+	}
 	auditReq := settingsAuditRequest(req)
 	omitted := omittedSettingKeys(sentFields)
 
@@ -540,6 +555,23 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	forwardedClientIPHeaders := append([]string(nil), previousSettings.ForwardedClientIPHeaders...)
 	if req.ForwardedClientIPHeaders != nil {
 		forwardedClientIPHeaders = append([]string(nil), (*req.ForwardedClientIPHeaders)...)
+	}
+
+	// 开启敏感操作 step-up 门控属自锁风险操作：仅允许本人已启用 TOTP 的管理员会话开启，
+	// 否则开启后操作者立即被挡在所有敏感操作之外。仅在 false→true 的开启瞬间校验，
+	// 保持开启状态的常规设置保存不受影响。
+	if stepUpEnabled && !previousSettings.StepUpEnabled {
+		if !h.ensureActorTotpForStepUp(c) {
+			return
+		}
+	}
+	// 关闭 step-up 门控本身就是敏感操作：防止拿到管理员会话的攻击者先关闸再执行导出/备份。
+	// previousSettings 已证实开关处于开启状态，使用无条件门控变体，
+	// 避免门控内部二次读取开关时因存储故障 fail-open（前端捕获 STEP_UP_REQUIRED 弹码重试）。
+	if !stepUpEnabled && previousSettings.StepUpEnabled {
+		if !middleware.EnforceStepUpAlways(c, h.totpService, h.userService) {
+			return
+		}
 	}
 
 	// 验证参数
@@ -1764,6 +1796,58 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAICodexVersionAutoSyncEnabled
 		}(),
+		OpenAICodexTicketEnabled: func() bool {
+			if req.OpenAICodexTicketEnabled != nil {
+				return *req.OpenAICodexTicketEnabled
+			}
+			return previousSettings.OpenAICodexTicketEnabled
+		}(),
+		OpenAICodexTicketHarvestProxyURL: func() string {
+			next := strings.TrimSpace(req.OpenAICodexTicketHarvestProxyURL)
+			if req.OpenAICodexTicketUseSavedStaticProxy && service.IsMaskedProxyURL(next) && previousSettings.OpenAICodexTicketStaticProxyURL != "" {
+				return previousSettings.OpenAICodexTicketStaticProxyURL
+			}
+			if service.IsMaskedProxyURL(next) {
+				return previousSettings.OpenAICodexTicketHarvestProxyURL
+			}
+			return next
+		}(),
+		OpenAICodexTicketStaticProxyURL: func() string {
+			if old := previousSettings.OpenAICodexTicketHarvestProxyURL; old != "" && old != "http://127.0.0.1:3101" {
+				return old
+			}
+			return previousSettings.OpenAICodexTicketStaticProxyURL
+		}(),
+		OpenAICodexTicketStrictResponse: func() bool {
+			if req.OpenAICodexTicketStrictResponse != nil {
+				return *req.OpenAICodexTicketStrictResponse
+			}
+			return previousSettings.OpenAICodexTicketStrictResponse
+		}(),
+		OpenAICodexTicketFailClosed: func() bool {
+			if req.OpenAICodexTicketFailClosed != nil {
+				return *req.OpenAICodexTicketFailClosed
+			}
+			return previousSettings.OpenAICodexTicketFailClosed
+		}(),
+		OpenAICodexTicketHarvestScope: func() service.CodexTicketHarvestScope {
+			if req.OpenAICodexTicketHarvestScope != nil {
+				return *req.OpenAICodexTicketHarvestScope
+			}
+			return previousSettings.OpenAICodexTicketHarvestScope
+		}(),
+		OpenAICodexTicketStrategy: func() string {
+			if req.OpenAICodexTicketStrategy != nil {
+				return *req.OpenAICodexTicketStrategy
+			}
+			return previousSettings.OpenAICodexTicketStrategy
+		}(),
+		OpenAICodexTicketModels: func() []string {
+			if req.OpenAICodexTicketModels != nil {
+				return service.NormalizeOpenAICodexTicketModels(*req.OpenAICodexTicketModels)
+			}
+			return previousSettings.OpenAICodexTicketModels
+		}(),
 		ClaudeCodeClientVersion: func() string {
 			if req.ClaudeCodeClientVersion != nil {
 				return *req.ClaudeCodeClientVersion
@@ -1951,6 +2035,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AvailableChannelsEnabled
 		}(),
+		PelicanShowcaseEnabled: func() bool {
+			if req.PelicanShowcaseEnabled != nil {
+				return *req.PelicanShowcaseEnabled
+			}
+			return previousSettings.PelicanShowcaseEnabled
+		}(),
+		PelicanShowcase: func() service.PelicanShowcaseConfig {
+			if req.PelicanShowcase != nil {
+				return *req.PelicanShowcase
+			}
+			return previousSettings.PelicanShowcase
+		}(),
 		SubscriptionEnabled: func() bool {
 			if req.SubscriptionEnabled != nil {
 				return *req.SubscriptionEnabled
@@ -2004,6 +2100,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.CyberSessionBlockTTLSeconds
 			}
 			return previousSettings.CyberSessionBlockTTLSeconds
+		}(),
+		CyberSessionIdentityStrictEnabled: func() bool {
+			if req.CyberSessionIdentityStrictEnabled != nil {
+				return *req.CyberSessionIdentityStrictEnabled
+			}
+			return previousSettings.CyberSessionIdentityStrictEnabled
 		}(),
 	}
 
@@ -2068,17 +2170,26 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		},
 		ForceEmailOnThirdPartySignup: boolValueOrDefault(req.ForceEmailOnThirdPartySignup, previousAuthSourceDefaults.ForceEmailOnThirdPartySignup),
 	}
-	securityBaseline := service.SettingSecurityBaseline{
-		StepUpEnabled:      previousSettings.StepUpEnabled,
-		RiskControlEnabled: previousSettings.RiskControlEnabled,
+	if err := h.settingService.UpdateSettingsWithAuthSourceDefaultsOmitting(c.Request.Context(), settings, authSourceDefaults, omitted); err != nil {
+		response.ErrorFrom(c, err)
+		return
 	}
-	var fastPolicy *service.OpenAIFastPolicySettings
+	if h.opsService != nil {
+		h.opsService.SetMonitoringEnabled(settings.OpsMonitoringEnabled)
+	}
+
+	// Update OpenAI fast policy (stored under dedicated key, only when provided).
 	if req.OpenAIFastPolicySettings != nil {
-		fastPolicy = openaiFastPolicySettingsFromDTO(req.OpenAIFastPolicySettings)
+		if err := h.settingService.SetOpenAIFastPolicySettings(c.Request.Context(), openaiFastPolicySettingsFromDTO(req.OpenAIFastPolicySettings)); err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
 	}
-	var paymentReq *service.UpdatePaymentConfigRequest
-	if hasPaymentFields(req) {
-		paymentReq = &service.UpdatePaymentConfigRequest{
+
+	// Update payment configuration (integrated into system settings).
+	// Skip if no payment fields were provided (prevents accidental wipe).
+	if h.paymentConfigService != nil && hasPaymentFields(req) {
+		paymentReq := service.UpdatePaymentConfigRequest{
 			Enabled:                       req.PaymentEnabled,
 			MinAmount:                     req.PaymentMinAmount,
 			MaxAmount:                     req.PaymentMaxAmount,
@@ -2103,44 +2214,14 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			AlipayForceQRCode:             req.PaymentAlipayForceQRCode,
 			AlipayMobilePrecreateDeepLink: req.PaymentAlipayMobilePrecreateDeepLink,
 		}
-	}
-
-	err = h.settingService.UpdateSettingsAtomically(c.Request.Context(), service.SettingsAtomicUpdateInput{
-		Settings:                 settings,
-		AuthSourceDefaults:       authSourceDefaults,
-		OpenAIFastPolicySettings: fastPolicy,
-		PaymentConfig:            paymentReq,
-		OmittedSettingKeys:       omitted,
-		SecurityBaseline:         securityBaseline,
-		Authorize: func(current service.SettingSecurityBaseline) error {
-			_, stepUpOmitted := omitted[service.SettingKeyStepUpEnabled]
-			if !stepUpOmitted && settings.StepUpEnabled && !current.StepUpEnabled {
-				if !h.ensureActorTotpForStepUp(c) {
-					return errSettingsAuthorizationResponseWritten
-				}
-			}
-			stepUpDowngrade := !stepUpOmitted && current.StepUpEnabled && !settings.StepUpEnabled
-			riskControlDowngrade := current.RiskControlEnabled && req.RiskControlEnabled != nil && !*req.RiskControlEnabled
-			if stepUpDowngrade || riskControlDowngrade {
-				if !middleware.EnforceStepUpAlways(c, h.totpService, h.userService) {
-					return errSettingsAuthorizationResponseWritten
-				}
-			}
-			return nil
-		},
-	})
-	if err != nil {
-		if !errors.Is(err, errSettingsAuthorizationResponseWritten) {
+		if err := h.paymentConfigService.UpdatePaymentConfig(c.Request.Context(), paymentReq); err != nil {
 			response.ErrorFrom(c, err)
+			return
 		}
-		return
-	}
-	// Runtime state is refreshed only after the atomic repository commit succeeds.
-	if h.opsService != nil {
-		h.opsService.SetMonitoringEnabled(settings.OpsMonitoringEnabled)
-	}
-	if paymentReq != nil && h.paymentService != nil {
-		h.paymentService.RefreshProviders(c.Request.Context())
+		// Refresh in-memory provider registry so config changes take effect immediately
+		if h.paymentService != nil {
+			h.paymentService.RefreshProviders(c.Request.Context())
+		}
 	}
 
 	h.auditSettingsUpdate(c, previousSettings, settings, previousAuthSourceDefaults, authSourceDefaults, auditReq)
@@ -2342,6 +2423,15 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexClientVersion:                               updatedSettings.OpenAICodexClientVersion,
 		OpenAICodexClientVersionSynced:                         updatedSettings.OpenAICodexClientVersionSynced,
 		OpenAICodexVersionAutoSyncEnabled:                      updatedSettings.OpenAICodexVersionAutoSyncEnabled,
+		OpenAICodexTicketEnabled:                               updatedSettings.OpenAICodexTicketEnabled,
+		OpenAICodexTicketHarvestProxyURL:                       service.MaskProxyURL(updatedSettings.OpenAICodexTicketHarvestProxyURL),
+		OpenAICodexTicketStaticProxyURL:                        service.MaskProxyURL(updatedSettings.OpenAICodexTicketStaticProxyURL),
+		OpenAICodexTicketHarvestScope:                          updatedSettings.OpenAICodexTicketHarvestScope,
+		OpenAICodexTicketStrategy:                              updatedSettings.OpenAICodexTicketStrategy,
+		OpenAICodexTicketStrictResponse:                        updatedSettings.OpenAICodexTicketStrictResponse,
+		OpenAICodexTicketFailClosed:                            updatedSettings.OpenAICodexTicketFailClosed,
+		OpenAICodexTicketHarvestProxyConfigured:                strings.TrimSpace(updatedSettings.OpenAICodexTicketHarvestProxyURL) != "",
+		OpenAICodexTicketModels:                                updatedSettings.OpenAICodexTicketModels,
 		ClaudeCodeClientVersion:                                updatedSettings.ClaudeCodeClientVersion,
 		ClaudeCodeClientVersionSynced:                          updatedSettings.ClaudeCodeClientVersionSynced,
 		ClaudeCodeVersionAutoSyncEnabled:                       updatedSettings.ClaudeCodeVersionAutoSyncEnabled,
@@ -2424,6 +2514,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		GrokDefaultBaseURLMode:         updatedSettings.GrokDefaultBaseURLMode,
 
 		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
+		PelicanShowcaseEnabled:   updatedSettings.PelicanShowcaseEnabled,
+		PelicanShowcase:          updatedSettings.PelicanShowcase,
 		SubscriptionEnabled:      updatedSettings.SubscriptionEnabled,
 
 		ModelPlazaEnabled:       updatedSettings.ModelPlazaEnabled,
@@ -2433,11 +2525,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 
 		AffiliateEnabled: updatedSettings.AffiliateEnabled,
 
-		RiskControlEnabled:          updatedSettings.RiskControlEnabled,
-		CyberSessionBlockEnabled:    updatedSettings.CyberSessionBlockEnabled,
-		CyberSessionBlockTTLSeconds: updatedSettings.CyberSessionBlockTTLSeconds,
-		AccountSchedulingThresholds: updatedSettings.AccountSchedulingThresholds,
-		AllowUserViewErrorRequests:  updatedSettings.AllowUserViewErrorRequests,
+		RiskControlEnabled:                updatedSettings.RiskControlEnabled,
+		CyberSessionBlockEnabled:          updatedSettings.CyberSessionBlockEnabled,
+		CyberSessionBlockTTLSeconds:       updatedSettings.CyberSessionBlockTTLSeconds,
+		CyberSessionIdentityStrictEnabled: updatedSettings.CyberSessionIdentityStrictEnabled,
+		AccountSchedulingThresholds:       updatedSettings.AccountSchedulingThresholds,
+		AllowUserViewErrorRequests:        updatedSettings.AllowUserViewErrorRequests,
 	}
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
 		slog.Error("openai_fast_policy_settings_get_failed", "error", err)

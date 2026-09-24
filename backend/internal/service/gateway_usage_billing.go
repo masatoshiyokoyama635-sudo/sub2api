@@ -608,6 +608,13 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	}
 	usageCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
+	defer func() {
+		if recorder, ok := repo.(interface {
+			RecordRequestTiming(context.Context, string, int64)
+		}); ok {
+			recorder.RecordRequestTiming(ctx, usageLog.RequestID, usageLog.APIKeyID)
+		}
+	}()
 
 	if writer, ok := repo.(usageLogBestEffortWriter); ok {
 		if err := writer.CreateBestEffort(usageCtx, usageLog); err != nil {
@@ -786,6 +793,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		groupDefault := apiKey.Group.RateMultiplier
 		multiplier = s.ResolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, groupDefault)
 	}
+	multiplier *= account.UserGroupRateMultiplier()
 	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。高峰因子按请求时刻现算，
 	// 不并入上面的 getUserGroupRateMultiplier，以免污染 user:group 倍率缓存。
 	pricingAt := input.PricingAt
@@ -858,7 +866,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {
-		applyAccountStatsCostAt(ctx, usageLog, s.channelService, s.billingService,
+		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
 			account.ID, *apiKey.GroupID, result.UpstreamModel, result.Model,
 			// Anthropic's input_tokens excludes cache_read and cache_creation (billed separately);
 			// OpenAI gateway uses actualInputTokens which also excludes cache_read for the same reason.

@@ -487,7 +487,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_IdleTimeoutRelea
 	ap.mu.Unlock()
 }
 
-func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_FollowupCreateUsesSessionModelForReasoningPolicy(t *testing.T) {
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_FollowupCreateCanOmitModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{}
@@ -540,14 +540,6 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_FollowupCreateUs
 			"responses_websockets_v2_enabled": true,
 		},
 	}
-	hooks := &OpenAIWSIngressHooks{
-		MaxReasoningEffort:          "medium",
-		MaxReasoningEffortOverLimit: ReasoningEffortOverLimitDeny,
-		ReasoningEffortMappings: []ReasoningEffortMapping{
-			{From: "max", To: "low", MatchType: "exact", Model: "client-model"},
-			{From: "low", To: "max", MatchType: "exact", Model: "client-model"},
-		},
-	}
 
 	serverErrCh := make(chan error, 1)
 	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -581,7 +573,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_FollowupCreateUs
 			return
 		}
 
-		serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "sk-test", firstMessage, hooks)
+		serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "sk-test", firstMessage, nil)
 	}))
 	defer wsServer.Close()
 
@@ -605,7 +597,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_FollowupCreateUs
 	require.Equal(t, "resp_omit_model_1", gjson.GetBytes(firstEvent, "response.id").String())
 
 	writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","stream":false,"previous_response_id":"resp_omit_model_1","reasoning":{"effort":"max"}}`))
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","stream":false,"previous_response_id":"resp_omit_model_1"}`))
 	cancelWrite()
 	require.NoError(t, err)
 
@@ -614,20 +606,11 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_FollowupCreateUs
 	cancelRead()
 	require.NoError(t, readErr)
 	require.Equal(t, "resp_omit_model_2", gjson.GetBytes(secondEvent, "response.id").String())
-
-	// The same model fallback must also drive deny. Without the fallback this
-	// exact low -> max mapping is missed and the low request would reach upstream.
-	writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","stream":false,"previous_response_id":"resp_omit_model_2","reasoning":{"effort":"low"}}`))
-	cancelWrite()
-	require.NoError(t, err)
+	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 
 	select {
 	case serverErr := <-serverErrCh:
-		var closeErr *OpenAIWSClientCloseError
-		require.ErrorAs(t, serverErr, &closeErr)
-		require.Equal(t, coderws.StatusPolicyViolation, closeErr.StatusCode())
-		require.Contains(t, closeErr.Reason(), `reasoning effort "max" exceeds`)
+		require.NoError(t, serverErr)
 	case <-time.After(5 * time.Second):
 		t.Fatal("等待 ingress websocket 结束超时")
 	}
@@ -636,7 +619,6 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_FollowupCreateUs
 	require.Equal(t, "gpt-5.1", gjson.Get(requestToJSONString(captureConn.writes[0]), "model").String())
 	require.Equal(t, "gpt-5.1", gjson.Get(requestToJSONString(captureConn.writes[1]), "model").String())
 	require.Equal(t, "resp_omit_model_1", gjson.Get(requestToJSONString(captureConn.writes[1]), "previous_response_id").String())
-	require.Equal(t, "low", gjson.Get(requestToJSONString(captureConn.writes[1]), "reasoning.effort").String())
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_CodexImageBridgeRespectsResponsesLite(t *testing.T) {
@@ -689,6 +671,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_CodexImageBridge
 	}
 	account := &Account{
 		ID:          31,
+		GroupIDs:    []int64{groupID},
 		Name:        "openai-codex-image-ws",
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,

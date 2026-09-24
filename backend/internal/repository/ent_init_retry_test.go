@@ -2,13 +2,8 @@ package repository
 
 import (
 	"context"
-	"database/sql/driver"
 	"errors"
 	"fmt"
-	"io"
-	"net"
-	"os"
-	"syscall"
 	"testing"
 	"time"
 
@@ -28,27 +23,6 @@ func TestIsTransientDatabaseInitializationError(t *testing.T) {
 	}{
 		{name: "postgres is starting", err: transientDatabaseError("57P03"), want: true},
 		{name: "connection failure", err: fmt.Errorf("wrapped: %w", transientDatabaseError("08006")), want: true},
-		{name: "bad pooled connection", err: fmt.Errorf("wrapped: %w", driver.ErrBadConn), want: true},
-		{name: "connection eof", err: io.EOF, want: true},
-		{name: "truncated connection", err: io.ErrUnexpectedEOF, want: true},
-		{
-			name: "connection refused before postgres accepts clients",
-			err: &net.OpError{
-				Op:  "dial",
-				Net: "tcp",
-				Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED},
-			},
-			want: true,
-		},
-		{name: "connection reset", err: &os.SyscallError{Syscall: "read", Err: syscall.ECONNRESET}, want: true},
-		{name: "broken pipe", err: &os.SyscallError{Syscall: "write", Err: syscall.EPIPE}, want: true},
-		{name: "host unreachable", err: &os.SyscallError{Syscall: "connect", Err: syscall.EHOSTUNREACH}, want: true},
-		{name: "network timeout", err: &net.DNSError{Err: "i/o timeout", Name: "db", IsTimeout: true}, want: true},
-		{name: "temporary dns failure", err: &net.DNSError{Err: "temporary failure", Name: "db", IsTemporary: true}, want: true},
-		{name: "permanent dns failure", err: &net.DNSError{Err: "no such host", Name: "invalid", IsNotFound: true}, want: false},
-		{name: "invalid address", err: &net.AddrError{Err: "missing port", Addr: "db"}, want: false},
-		{name: "canceled startup", err: fmt.Errorf("wrapped: %w", context.Canceled), want: false},
-		{name: "expired startup", err: context.DeadlineExceeded, want: false},
 		{name: "authentication failure", err: transientDatabaseError("28P01"), want: false},
 		{name: "migration error", err: errors.New("migration checksum mismatch"), want: false},
 	}
@@ -130,11 +104,13 @@ func TestInitializeDatabaseWithRetryReturnsLastErrorAfterLimit(t *testing.T) {
 	require.Equal(t, databaseInitializationRetryMax, delays[len(delays)-1])
 }
 
-func TestInitializeDatabaseWithRetryAllowsConnectionRecovery(t *testing.T) {
+func TestInitializeDatabaseWithRetryAllowsIdempotentMigrationRetry(t *testing.T) {
+	applied := make(map[string]bool)
 	attempts := 0
 	err := initializeDatabaseWithRetryWithWait(context.Background(), func(context.Context) error {
 		attempts++
-		if attempts == 1 {
+		if !applied["001_init.sql"] {
+			applied["001_init.sql"] = true
 			return transientDatabaseError("57P03")
 		}
 		return nil
@@ -142,4 +118,5 @@ func TestInitializeDatabaseWithRetryAllowsConnectionRecovery(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 2, attempts)
+	require.True(t, applied["001_init.sql"])
 }

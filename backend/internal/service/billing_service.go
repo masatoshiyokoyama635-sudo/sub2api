@@ -1414,9 +1414,6 @@ func applyChannelTokenPriceOverrides(pricing *ModelPricing, channelPricing *Chan
 		}
 	}
 	if channelPricing.CacheWrite1hPrice != nil {
-		if channelPricing.CacheWritePrice == nil && pricing.CacheCreation5mPrice <= 0 {
-			pricing.CacheCreation5mPrice = pricing.CacheCreationPricePerToken
-		}
 		pricing.CacheCreation1hPrice = *channelPricing.CacheWrite1hPrice
 		pricing.SupportsCacheBreakdown = true
 	}
@@ -1677,19 +1674,13 @@ func (s *BillingService) computeTokenBreakdown(
 // multiplier 用于长上下文等场景下的整体价格缩放（普通调用传 1.0 即可）。
 func (s *BillingService) computeCacheCreationCost(pricing *ModelPricing, tokens UsageTokens, price, multiplier float64) float64 {
 	if pricing.SupportsCacheBreakdown && (pricing.CacheCreation5mPrice > 0 || pricing.CacheCreation1hPrice > 0) {
-		serviceTierRatio := 1.0
-		if pricing.CacheCreationPricePerToken > 0 && price > 0 {
-			serviceTierRatio = price / pricing.CacheCreationPricePerToken
-		}
-		price5m := pricing.CacheCreation5mPrice * serviceTierRatio
-		price1h := pricing.CacheCreation1hPrice * serviceTierRatio
 		cacheCreation5mTokens, cacheCreation1hTokens := normalizeCacheCreationBreakdown(tokens)
 		if cacheCreation5mTokens == 0 && cacheCreation1hTokens == 0 && tokens.CacheCreationTokens > 0 {
 			// API 未返回 ephemeral 明细，回退到全部按 5m 单价计费
-			return float64(tokens.CacheCreationTokens) * price5m * multiplier
+			return float64(tokens.CacheCreationTokens) * pricing.CacheCreation5mPrice * multiplier
 		}
-		return float64(cacheCreation5mTokens)*price5m*multiplier +
-			float64(cacheCreation1hTokens)*price1h*multiplier
+		return float64(cacheCreation5mTokens)*pricing.CacheCreation5mPrice*multiplier +
+			float64(cacheCreation1hTokens)*pricing.CacheCreation1hPrice*multiplier
 	}
 	return float64(tokens.CacheCreationTokens) * price * multiplier
 }

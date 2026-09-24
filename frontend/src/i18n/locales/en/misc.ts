@@ -31,7 +31,6 @@ export default {
     refresh: 'Refresh',
     sourceMode: 'Source Build',
     sourceModeHint: 'Source build, use git pull to update',
-    customModeHint: 'Custom build: pull a verified custom short-SHA image to update',
     updateNow: 'Update Now',
     updating: 'Updating...',
     updateComplete: 'Update Complete',

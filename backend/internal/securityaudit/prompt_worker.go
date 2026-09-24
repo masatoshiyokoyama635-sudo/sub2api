@@ -8,11 +8,6 @@ import (
 	"time"
 )
 
-const (
-	defaultLeaseHeartbeatInterval = 30 * time.Second
-	leaseHeartbeatRefreshTimeout  = 5 * time.Second
-)
-
 type WorkerRuntime struct {
 	active           atomic.Int64
 	processed        atomic.Int64
@@ -25,29 +20,21 @@ type WorkerRuntime struct {
 }
 
 type Runner struct {
-	config                 ConfigStore
-	repo                   JobRepository
-	payload                PayloadStore
-	scanner                PromptScanner
-	metrics                Metrics
-	clock                  Clock
-	leaseHeartbeatInterval time.Duration
-	runtime                WorkerRuntime
+	config  ConfigStore
+	repo    JobRepository
+	payload PayloadStore
+	scanner PromptScanner
+	metrics Metrics
+	clock   Clock
+	runtime WorkerRuntime
 
-	mu           sync.Mutex
-	state        promptLifecycleState
-	cancel       context.CancelFunc
-	startupDone  chan struct{}
-	shutdownDone chan struct{}
-	shutdownErr  error
-	wg           sync.WaitGroup
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 func NewRunner(config ConfigStore, repo JobRepository, payload PayloadStore, scanner PromptScanner, metrics Metrics) *Runner {
-	return &Runner{
-		config: config, repo: repo, payload: payload, scanner: scanner, metrics: metrics,
-		clock: realClock{}, leaseHeartbeatInterval: defaultLeaseHeartbeatInterval,
-	}
+	return &Runner{config: config, repo: repo, payload: payload, scanner: scanner, metrics: metrics, clock: realClock{}}
 }
 
 func (r *Runner) Start(ctx context.Context) error {
@@ -55,23 +42,13 @@ func (r *Runner) Start(ctx context.Context) error {
 		return errors.New("prompt audit worker dependencies unavailable")
 	}
 	r.mu.Lock()
-	switch r.state {
-	case promptLifecycleStarting, promptLifecycleRunning:
+	if r.cancel != nil {
 		r.mu.Unlock()
 		return nil
-	case promptLifecycleStopping, promptLifecycleStopped:
-		r.mu.Unlock()
-		return ErrPromptAuditNotRestartable
 	}
 	runCtx, cancel := context.WithCancel(ctx)
-	startupDone := make(chan struct{})
-	r.state = promptLifecycleStarting
 	r.cancel = cancel
-	r.startupDone = startupDone
-	r.shutdownDone = nil
-	r.shutdownErr = nil
 	r.mu.Unlock()
-
 	if err := r.payload.Ping(runCtx); err != nil {
 		r.setLastError("payload_store_unavailable", err.Error())
 	}
@@ -81,13 +58,6 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 	r.wg.Add(1)
 	go r.reclaimer(runCtx)
-
-	r.mu.Lock()
-	if r.state == promptLifecycleStarting {
-		r.state = promptLifecycleRunning
-	}
-	r.mu.Unlock()
-	close(startupDone)
 	return nil
 }
 
@@ -96,58 +66,21 @@ func (r *Runner) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	r.mu.Lock()
-	switch r.state {
-	case promptLifecycleNew:
-		r.mu.Unlock()
-		return nil
-	case promptLifecycleStopped:
-		shutdownErr := r.shutdownErr
-		r.mu.Unlock()
-		return shutdownErr
-	case promptLifecycleStopping:
-		shutdownDone := r.shutdownDone
-		r.mu.Unlock()
-		return r.waitForShutdown(ctx, shutdownDone)
-	case promptLifecycleStarting, promptLifecycleRunning:
-		r.state = promptLifecycleStopping
-		cancel := r.cancel
-		startupDone := r.startupDone
-		shutdownDone := make(chan struct{})
-		r.shutdownDone = shutdownDone
-		r.mu.Unlock()
-		if cancel != nil {
-			cancel()
-		}
-		go r.finishShutdown(startupDone, shutdownDone)
-		return r.waitForShutdown(ctx, shutdownDone)
-	default:
-		r.mu.Unlock()
-		return nil
-	}
-}
-
-func (r *Runner) waitForShutdown(ctx context.Context, done <-chan struct{}) error {
-	err := waitPromptLifecycle(ctx, done, func() error {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return r.shutdownErr
-	})
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		LogWarn(EventProcessFailed, map[string]any{"status": "shutdown_timeout", "error_code": "worker_shutdown_timeout"})
-	}
-	return err
-}
-
-func (r *Runner) finishShutdown(startupDone, shutdownDone chan struct{}) {
-	if startupDone != nil {
-		<-startupDone
-	}
-	r.wg.Wait()
-	r.mu.Lock()
+	cancel := r.cancel
 	r.cancel = nil
-	r.state = promptLifecycleStopped
 	r.mu.Unlock()
-	close(shutdownDone)
+	if cancel != nil {
+		cancel()
+	}
+	done := make(chan struct{})
+	go func() { r.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		LogWarn(EventProcessFailed, map[string]any{"status": "shutdown_timeout", "error_code": "worker_shutdown_timeout"})
+		return ctx.Err()
+	}
 }
 
 func (r *Runner) worker(ctx context.Context, workerID int) {
@@ -200,118 +133,7 @@ func (r *Runner) processSafely(ctx context.Context, workerID int, cfg ActiveConf
 	}
 }
 
-type jobLeaseHeartbeat struct {
-	cancelProcessing context.CancelFunc
-	stopCh           chan struct{}
-	done             chan struct{}
-	stopOnce         sync.Once
-	errMu            sync.Mutex
-	err              error
-}
-
-func (h *jobLeaseHeartbeat) fail(err error) {
-	h.errMu.Lock()
-	h.err = err
-	h.errMu.Unlock()
-	h.cancelProcessing()
-}
-
-func (h *jobLeaseHeartbeat) stop() error {
-	if h == nil {
-		return nil
-	}
-	h.stopOnce.Do(func() {
-		close(h.stopCh)
-	})
-	<-h.done
-	return h.currentError()
-}
-
-func (h *jobLeaseHeartbeat) currentError() error {
-	if h == nil {
-		return nil
-	}
-	h.errMu.Lock()
-	defer h.errMu.Unlock()
-	return h.err
-}
-
-func (r *Runner) startLeaseHeartbeat(parent context.Context, job *Job) (context.Context, *jobLeaseHeartbeat) {
-	processingCtx, cancelProcessing := context.WithCancel(parent)
-	heartbeat := &jobLeaseHeartbeat{cancelProcessing: cancelProcessing, stopCh: make(chan struct{}), done: make(chan struct{})}
-	interval := r.leaseHeartbeatInterval
-	if interval <= 0 {
-		interval = defaultLeaseHeartbeatInterval
-	}
-	go func() {
-		defer close(heartbeat.done)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-parent.Done():
-				return
-			case <-heartbeat.stopCh:
-				return
-			case <-ticker.C:
-				// Refresh is governed by the component lifetime, not the scanner's
-				// failure-cancellation context. Normal quiesce waits for this bounded
-				// operation to finish before any terminal transition.
-				refreshCtx, refreshCancel := context.WithTimeout(parent, leaseHeartbeatRefreshTimeout)
-				err := r.repo.RefreshLease(refreshCtx, job.ID, job.ClaimVersion, r.clock.Now())
-				refreshCancel()
-				if err == nil {
-					continue
-				}
-				if parent.Err() != nil {
-					return
-				}
-				r.setLastError("lease_heartbeat_failed", "")
-				LogWarn(EventProcessFailed, mergeLogFields(jobLogFields(job), map[string]any{
-					"status": "lease_lost", "error_code": "lease_heartbeat_failed",
-				}))
-				heartbeat.fail(&leaseHeartbeatError{cause: err})
-				return
-			}
-		}
-	}()
-	return processingCtx, heartbeat
-}
-
-type leaseHeartbeatError struct{ cause error }
-
-func (e *leaseHeartbeatError) Error() string { return "lease_heartbeat_failed" }
-func (e *leaseHeartbeatError) Unwrap() error { return e.cause }
-
-func (r *Runner) trustedAsyncConfig(groupID *int64) (ActiveConfig, error) {
-	current, ok := r.config.Active()
-	if !ok || current.EffectiveMode() != ModeAsync {
-		return current, &GuardError{Code: "audit_disabled", Retryable: false}
-	}
-	if r.config.EffectiveMode() != ModeAsync || !current.IncludesGroup(groupID) {
-		return current, &GuardError{Code: "audit_config_changed", Retryable: false}
-	}
-	expectedVersion, activeVersion, _, loadError := r.config.RuntimeState()
-	if loadError != "" || expectedVersion != current.ConfigVersion || activeVersion != current.ConfigVersion {
-		return current, &GuardError{Code: "audit_config_changed", Retryable: false}
-	}
-	return current, nil
-}
-
-func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig, job *Job) (returnErr error) {
-	if r == nil || r.config == nil || job == nil {
-		return &GuardError{Code: ErrorCodeUnavailable}
-	}
-	// A job may remain queued while administrators rotate credentials or turn
-	// async auditing off. Re-read the active snapshot immediately before any
-	// scanner dispatch; the claim-time config is only a scheduling hint.
-	current, configErr := r.trustedAsyncConfig(job.Snapshot.GroupID)
-	if configErr != nil {
-		job.ConfigVersion = current.ConfigVersion
-		return r.finishFailure(ctx, job, configErr)
-	}
-	cfg = current
-	job.ConfigVersion = cfg.ConfigVersion
+func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig, job *Job) error {
 	baseFields := jobLogFields(job)
 	LogInfo(EventAuditStarted, mergeLogFields(baseFields, map[string]any{"worker_id": workerID, "attempts": job.Attempts, "status": "processing"}))
 	scanText, err := r.payload.Get(ctx, job.ID)
@@ -328,46 +150,13 @@ func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig,
 	chunks := SplitRunes(scanText, minimumInputLimit(endpoints))
 	results := make([]*NormalizedResult, 0, len(chunks))
 	started := r.clock.Now()
-	processingCtx, leaseHeartbeat := r.startLeaseHeartbeat(ctx, job)
-	defer leaseHeartbeat.cancelProcessing()
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			heartbeatErr := leaseHeartbeat.stop()
-			if heartbeatErr != nil {
-				returnErr = heartbeatErr
-				return
-			}
-			panic(recovered)
-		}
-		if heartbeatErr := leaseHeartbeat.stop(); heartbeatErr != nil {
-			r.setLastError("lease_heartbeat_failed", "")
-			returnErr = heartbeatErr
-		}
-	}()
-	finishWithHeartbeat := func(failure error) error {
-		if heartbeatErr := leaseHeartbeat.stop(); heartbeatErr != nil {
-			return heartbeatErr
-		}
-		return r.finishFailure(ctx, job, failure)
-	}
 	for index, chunk := range chunks {
-		if err := r.repo.RefreshLease(processingCtx, job.ID, job.ClaimVersion, r.clock.Now()); err != nil {
+		if err := r.repo.RefreshLease(ctx, job.ID, job.ClaimVersion, r.clock.Now()); err != nil {
 			return err
 		}
-		current, configErr := r.trustedAsyncConfig(job.Snapshot.GroupID)
-		if configErr != nil || current.ConfigVersion != cfg.ConfigVersion {
-			return finishWithHeartbeat(&GuardError{Code: "audit_config_changed", Retryable: false})
-		}
-		currentEndpoints := current.EnabledEndpoints()
-		if len(currentEndpoints) == 0 {
-			return finishWithHeartbeat(&GuardError{Code: "no_enabled_endpoint", Retryable: false})
-		}
 		chunkStarted := r.clock.Now()
-		LogInfo(EventChunkStarted, mergeLogFields(baseFields, map[string]any{"worker_id": workerID, "chunk_index": index + 1, "chunk_total": len(chunks), "chunk_chars": len([]rune(chunk)), "input_chars": job.Snapshot.PromptLength, "input_limit": minimumInputLimit(currentEndpoints), "status": "started"}))
-		result, scanErr := scanWithFailover(processingCtx, r.scanner, current.Scanners, currentEndpoints, chunk, r.metrics)
-		if heartbeatErr := leaseHeartbeat.currentError(); heartbeatErr != nil {
-			return heartbeatErr
-		}
+		LogInfo(EventChunkStarted, mergeLogFields(baseFields, map[string]any{"worker_id": workerID, "chunk_index": index + 1, "chunk_total": len(chunks), "chunk_chars": len([]rune(chunk)), "input_chars": job.Snapshot.PromptLength, "input_limit": minimumInputLimit(endpoints), "status": "started"}))
+		result, scanErr := scanWithFailover(ctx, r.scanner, cfg.Scanners, endpoints, chunk, r.metrics)
 		if scanErr != nil {
 			LogWarn(EventChunkFailed, mergeLogFields(baseFields, map[string]any{
 				"worker_id": workerID, "chunk_index": index + 1, "chunk_total": len(chunks),
@@ -376,7 +165,7 @@ func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig,
 				"error_code": guardErrorCode(scanErr), "status": "failed",
 			}))
 			r.observeAsyncFailure(scanErr, r.clock.Now().Sub(started))
-			return finishWithHeartbeat(scanErr)
+			return r.finishFailure(ctx, job, scanErr)
 		}
 		results = append(results, result)
 		LogInfo(EventChunkCompleted, mergeLogFields(baseFields, map[string]any{"worker_id": workerID, "chunk_index": index + 1, "chunk_total": len(chunks), "guard_endpoint_id": result.GuardEndpointID, "action": result.Action, "latency_ms": r.clock.Now().Sub(chunkStarted).Milliseconds(), "status": "completed"}))
@@ -389,7 +178,7 @@ func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig,
 		if r.metrics != nil {
 			r.metrics.Observe(DecisionInvalid, r.clock.Now().Sub(started))
 		}
-		return finishWithHeartbeat(&GuardError{Code: ErrorCodeInvalidResponse, Cause: err})
+		return r.finishFailure(ctx, job, &GuardError{Code: ErrorCodeInvalidResponse, Cause: err})
 	}
 	aggregated.ChunkTotal = len(chunks)
 	if r.metrics != nil {
@@ -400,9 +189,6 @@ func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig,
 		"action": aggregated.Action, "chunk_total": aggregated.ChunkTotal,
 		"latency_ms": aggregated.LatencyMS, "guard_endpoint_id": aggregated.GuardEndpointID, "status": "completed",
 	}))
-	if heartbeatErr := leaseHeartbeat.stop(); heartbeatErr != nil {
-		return heartbeatErr
-	}
 	event, err := r.repo.Complete(ctx, job, aggregated, cfg.StorePassEvents)
 	if err != nil {
 		return err
@@ -481,10 +267,6 @@ func (r *Runner) reclaimer(ctx context.Context) {
 			return
 		case <-ticker.C:
 			now := r.clock.Now()
-			if _, err := r.repo.CleanupTerminalJobs(ctx, now.Add(-24*time.Hour), 100); err != nil {
-				r.setLastError("terminal_cleanup_failed", "")
-				LogWarn(EventProcessFailed, map[string]any{"status": "cleanup_failed", "error_code": "terminal_cleanup_failed"})
-			}
 			count, err := r.repo.ReclaimStale(ctx, now.Add(-2*time.Minute), now.Add(-90*time.Second), 100)
 			if err != nil {
 				r.setLastError("reclaim_failed", err.Error())

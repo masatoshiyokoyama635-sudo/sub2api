@@ -66,7 +66,6 @@ type Event struct {
 type JobRepository interface {
 	CreateStagingWithCapacity(ctx context.Context, snapshot PromptSnapshot, configVersion int64, maxAttempts, capacity int) (*Job, error)
 	PublishQueued(ctx context.Context, jobID int64) error
-	JobStatus(ctx context.Context, jobID int64) (string, error)
 	MarkStagingFailed(ctx context.Context, jobID int64, code, message string) error
 	ClaimNextJob(ctx context.Context, now time.Time) (*Job, bool, error)
 	RefreshLease(ctx context.Context, jobID, claimVersion int64, now time.Time) error
@@ -75,7 +74,6 @@ type JobRepository interface {
 	Fail(ctx context.Context, jobID, claimVersion int64, code, message string) error
 	ReclaimStale(ctx context.Context, stagingBefore, processingBefore time.Time, limit int) (int64, error)
 	QueueStats(ctx context.Context) (QueueStats, error)
-	CleanupTerminalJobs(ctx context.Context, before time.Time, limit int) (int64, error)
 	RecordBlocking(ctx context.Context, snapshot PromptSnapshot, configVersion int64, result *NormalizedResult, storePassEvents bool) (*Event, error)
 }
 
@@ -131,17 +129,6 @@ func (r *PostgreSQLRepository) PublishQueued(ctx context.Context, jobID int64) e
 		UPDATE prompt_audit_jobs SET status='queued', next_attempt_at=NOW(), updated_at=NOW()
 		WHERE id=$1 AND status='staging'`, jobID)
 	return requireOneRow(result, err, ErrLeaseLost)
-}
-
-func (r *PostgreSQLRepository) JobStatus(ctx context.Context, jobID int64) (string, error) {
-	if r == nil || r.db == nil {
-		return "", errors.New("prompt audit database unavailable")
-	}
-	var status string
-	if err := r.db.QueryRowContext(ctx, `SELECT status FROM prompt_audit_jobs WHERE id=$1`, jobID).Scan(&status); err != nil {
-		return "", err
-	}
-	return status, nil
 }
 
 func (r *PostgreSQLRepository) MarkStagingFailed(ctx context.Context, jobID int64, code, _ string) error {
@@ -253,29 +240,6 @@ func (r *PostgreSQLRepository) ReclaimStale(ctx context.Context, stagingBefore, 
 			last_error_code=CASE WHEN j.status='staging' THEN 'staging_timeout' ELSE 'processing_lease_expired' END,
 			last_error_message='', updated_at=NOW()
 		FROM stale WHERE j.id=stale.id`, stagingBefore.UTC(), processingBefore.UTC(), limit)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-func (r *PostgreSQLRepository) CleanupTerminalJobs(ctx context.Context, before time.Time, limit int) (int64, error) {
-	if r == nil || r.db == nil {
-		return 0, errors.New("prompt audit database unavailable")
-	}
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
-	result, err := r.db.ExecContext(ctx, `
-		WITH terminal AS (
-			SELECT id FROM prompt_audit_jobs
-			WHERE status IN ('done','failed') AND processed_at < $1
-			  AND NOT EXISTS (SELECT 1 FROM prompt_audit_events e WHERE e.job_id=prompt_audit_jobs.id)
-			ORDER BY processed_at, id
-			FOR UPDATE SKIP LOCKED LIMIT $2
-		)
-		DELETE FROM prompt_audit_jobs j USING terminal
-		WHERE j.id=terminal.id`, before.UTC(), limit)
 	if err != nil {
 		return 0, err
 	}

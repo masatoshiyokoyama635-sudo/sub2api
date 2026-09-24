@@ -47,20 +47,4 @@ func TestAPIKeyAuthSnapshotGroupPricingRoundtrip(t *testing.T) {
 	require.True(t, resolved.longContextPricingEnabled)
 	require.InDelta(t, inputPrice, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, outputPrice, resolved.BasePricing.OutputPricePerToken, 1e-12)
-
-	directSnapshot := svc.snapshotFromAPIKey(context.Background(), apiKey)
-	first := svc.snapshotToAPIKey(apiKey.Key, directSnapshot)
-	second := svc.snapshotToAPIKey(apiKey.Key, directSnapshot)
-	require.NotNil(t, first.Group)
-	require.NotNil(t, second.Group)
-
-	first.Group.ModelPricing[0].Models[0] = "mutated"
-	*first.Group.ModelPricing[0].InputPrice = 99
-
-	require.Equal(t, "claude-sonnet-*", apiKey.Group.ModelPricing[0].Models[0])
-	require.Equal(t, "claude-sonnet-*", directSnapshot.Group.ModelPricing[0].Models[0])
-	require.Equal(t, "claude-sonnet-*", second.Group.ModelPricing[0].Models[0])
-	require.InDelta(t, inputPrice, *apiKey.Group.ModelPricing[0].InputPrice, 1e-12)
-	require.InDelta(t, inputPrice, *directSnapshot.Group.ModelPricing[0].InputPrice, 1e-12)
-	require.InDelta(t, inputPrice, *second.Group.ModelPricing[0].InputPrice, 1e-12)
 }

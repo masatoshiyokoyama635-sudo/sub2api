@@ -75,59 +75,6 @@ func TestOpenAIGatewayHandlerResponses_PassiveNamespaceDoesNotTrigger403(t *test
 		"passive image_gen namespace with tool_choice=auto should not trigger 403 (#4447)")
 }
 
-func TestOpenAIGatewayHandlerResponses_ChannelMappedImageModelIsRejectedBeforeScheduling(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	groupID := int64(6311)
-	userID := int64(6312)
-	channelSvc := service.NewChannelService(&openAIWSUsageHandlerChannelRepoStub{
-		channels: []service.Channel{{
-			ID:       6313,
-			Name:     "mapped-image-gate",
-			Status:   service.StatusActive,
-			GroupIDs: []int64{groupID},
-			ModelMapping: map[string]map[string]string{
-				service.PlatformOpenAI: {"text-alias": "gpt-image-2"},
-			},
-		}},
-		groupPlatforms: map[int64]string{groupID: service.PlatformOpenAI},
-	}, nil, nil, nil, nil)
-	cfg := &config.Config{RunMode: config.RunModeSimple}
-	gatewaySvc := service.NewOpenAIGatewayService(
-		nil, nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, channelSvc, nil, nil, nil,
-	)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"text-alias","input":"draw"}`))
-	c.Request.Header.Set("Content-Type", "application/json")
-	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
-		ID:      6314,
-		GroupID: &groupID,
-		Group: &service.Group{
-			ID:                   groupID,
-			Platform:             service.PlatformOpenAI,
-			AllowImageGeneration: false,
-		},
-		User: &service.User{ID: userID, Status: service.StatusActive},
-	})
-	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: userID, Concurrency: 1})
-	h := &OpenAIGatewayHandler{
-		gatewayService:      gatewaySvc,
-		billingCacheService: service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil),
-		apiKeyService:       &service.APIKeyService{},
-		concurrencyHelper: &ConcurrencyHelper{concurrencyService: service.NewConcurrencyService(
-			&helperConcurrencyCacheStub{userSeq: []bool{true}},
-		)},
-		cfg:          cfg,
-		imageLimiter: &imageConcurrencyLimiter{},
-	}
-
-	h.Responses(c)
-
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Contains(t, rec.Body.String(), service.ImageGenerationPermissionMessage())
-}
-
 func runOpenAIResponsesImagePermissionGateTest(t *testing.T, platform string, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	gin.SetMode(gin.TestMode)

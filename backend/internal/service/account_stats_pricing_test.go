@@ -11,46 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func resolveAccountStatsCost(
-	ctx context.Context,
-	channelService *ChannelService,
-	billingService *BillingService,
-	accountID int64,
-	groupID int64,
-	upstreamModel string,
-	tokens UsageTokens,
-	requestCount int,
-	totalCost float64,
-	serviceTier string,
-	pricingAt time.Time,
-	reasoningEfforts ...string,
-) *float64 {
-	return resolveAccountStatsCostAt(
-		ctx, channelService, billingService, accountID, groupID, upstreamModel,
-		tokens, requestCount, totalCost, serviceTier, pricingAt, reasoningEfforts...,
-	)
-}
-
-func tryModelFilePricing(billingService *BillingService, model string, tokens UsageTokens, serviceTier string, pricingAt time.Time, reasoningEfforts ...string) *float64 {
-	return tryModelFilePricingAt(context.Background(), billingService, model, tokens, serviceTier, pricingAt, reasoningEfforts...)
-}
-
-func applyAccountStatsCost(
-	ctx context.Context,
-	usageLog *UsageLog,
-	cs *ChannelService, bs *BillingService,
-	accountID int64, groupID int64,
-	upstreamModel, requestedModel string,
-	tokens UsageTokens,
-	totalCost float64,
-	pricingAt time.Time,
-) {
-	applyAccountStatsCostAt(
-		ctx, usageLog, cs, bs, accountID, groupID, upstreamModel, requestedModel,
-		tokens, totalCost, pricingAt,
-	)
-}
-
 // ---------------------------------------------------------------------------
 // matchAccountStatsRule
 // ---------------------------------------------------------------------------
@@ -689,28 +649,6 @@ func TestTryModelFilePricing_WithCacheTokens(t *testing.T) {
 	// 100*0.001 + 50*0.002 + 200*0.003 + 300*0.0005
 	// = 0.1 + 0.1 + 0.6 + 0.15 = 0.95
 	require.InDelta(t, 0.95, *result, 1e-12)
-}
-
-func TestResolveAccountStatsCost_DeepSeekPeakUsesPricingAt(t *testing.T) {
-	channel := &Channel{ID: 1, Status: StatusActive}
-	cs := newTestChannelServiceForStats(t, channel, 10, PlatformDeepseek)
-	bs := NewBillingService(&config.Config{}, nil)
-	tokens := UsageTokens{InputTokens: 1_000_000, OutputTokens: 1_000_000, CacheReadTokens: 1_000_000}
-
-	peak := resolveAccountStatsCostAt(
-		context.Background(), cs, bs, 1, 10, "deepseek-v4-pro", tokens, 1, 0, "",
-		time.Date(2026, time.August, 24, 2, 0, 0, 0, time.UTC),
-	)
-	offPeak := resolveAccountStatsCostAt(
-		context.Background(), cs, bs, 1, 10, "deepseek-v4-pro", tokens, 1, 0, "",
-		time.Date(2026, time.August, 24, 12, 0, 0, 0, time.UTC),
-	)
-
-	require.NotNil(t, peak)
-	require.NotNil(t, offPeak)
-	require.InDelta(t, 2.662, *offPeak, 1e-12)
-	require.InDelta(t, 5.324, *peak, 1e-12)
-	require.InDelta(t, *offPeak*2, *peak, 1e-12)
 }
 
 func TestTryModelFilePricing_DeepSeekPeakPricing(t *testing.T) {

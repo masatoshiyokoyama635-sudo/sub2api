@@ -71,6 +71,16 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	defaultMappedModel string,
 	compatPromptCacheTenantIsolated bool,
 ) (*OpenAIForwardResult, error) {
+	latest, admissionErr := s.admitOpenAITurn(
+		context.WithoutCancel(ctx),
+		c,
+		account,
+		gjson.GetBytes(body, "model").String(),
+	)
+	if admissionErr != nil {
+		return nil, admissionErr
+	}
+	account = latest
 	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
@@ -321,7 +331,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		} else if promptCacheKey != "" {
 			reqBody["prompt_cache_key"] = promptCacheKey
 		}
-		applyCodexAccountIdentityClientMetadataMap(reqBody, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+		s.applyCodexAccountIdentityOrHarvestPinMap(ctx, account, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c), upstreamModel, reqBody)
 		responsesBody, err = json.Marshal(reqBody)
 		if err != nil {
 			return nil, fmt.Errorf("remarshal after codex transform: %w", err)
@@ -384,12 +394,16 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	}
 
 	if promptCacheKey != "" {
-		apiKeyID := getAPIKeyIDFromContext(c)
-		sessionKey := promptCacheKey
-		if !compatPromptCacheTenantIsolated {
-			sessionKey = isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey)
+		if session := s.harvestPinnedSessionForModel(ctx, account, upstreamModel); session != "" {
+			upstreamReq.Header.Set("session_id", session)
+		} else {
+			apiKeyID := getAPIKeyIDFromContext(c)
+			sessionKey := promptCacheKey
+			if !compatPromptCacheTenantIsolated {
+				sessionKey = isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey)
+			}
+			upstreamReq.Header.Set("session_id", generateSessionUUID(sessionKey))
 		}
-		upstreamReq.Header.Set("session_id", generateSessionUUID(sessionKey))
 	}
 
 	// 7. Send request
@@ -443,15 +457,12 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	}
 	stampOpenAIResponsesUpstreamEndpoint(c, result)
 
-	// cyber_policy：标记已设、error 已按 Chat Completions 格式发给客户端。可信的
-	// partial result 交给 handler 走正常 RecordUsage；没有计量观测时才走 fallback。
-	cyberPolicyMarked := GetOpsCyberPolicy(c) != nil
-	if cyberPolicyMarked {
+	// cyber_policy：标记已设、error 已按 Chat Completions 格式发给客户端。丢弃 result、
+	// 返回哨兵，使 handler 落入 tokens=0 免费用量行（对齐 /v1/responses），不计费、不 failover。
+	if GetOpsCyberPolicy(c) != nil {
 		if handleErr == nil {
 			handleErr = errOpenAICyberPolicyForwarded
 		}
-	}
-	if handleErr != nil && !shouldReturnOpenAICompatResult(result, handleErr, cyberPolicyMarked) {
 		return nil, handleErr
 	}
 
@@ -459,7 +470,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
 	// fast policy filter/force 之后）里的 tier，policy filter 删掉字段后不再
 	// 按原请求 Fast 计费。
-	if result != nil {
+	if handleErr == nil && result != nil {
 		if tier := resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(responsesBody)); tier != nil {
 			result.ServiceTier = tier
 		}
@@ -564,31 +575,6 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	}
 	observer.Observe(finalResponse.Model, true)
 	observer.ObserveServiceTier(finalResponse.ServiceTier, true)
-	result := &OpenAIForwardResult{
-		RequestID:                     requestID,
-		UpstreamHeaders:               resp.Header,
-		Usage:                         usage,
-		Model:                         originalModel,
-		BillingModel:                  billingModel,
-		UpstreamModel:                 upstreamModel,
-		UpstreamResponseModel:         observedUpstreamResponseModel(c),
-		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
-		UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
-		Stream:                        false,
-		Duration:                      time.Since(startTime),
-	}
-	// Grok chat bridge: bill native search tools found in the terminal Responses body.
-	if account != nil && account.IsGrok() {
-		if body, marshalErr := json.Marshal(finalResponse); marshalErr == nil {
-			result.SearchCount = countGrokNativeSearchCallsFromJSONBytes(body)
-		}
-	}
-	returnPartial := func(responseErr error) (*OpenAIForwardResult, error) {
-		if shouldReturnOpenAIPartialResult(&result.Usage, result.ImageCount, result.SearchCount, responseErr) {
-			return result, responseErr
-		}
-		return nil, responseErr
-	}
 	if strings.TrimSpace(finalResponse.Status) == "failed" {
 		payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": finalResponse})
 		// cyber_policy 致命不可重试：不 failover，以 Chat Completions 错误格式回写（F4），
@@ -607,8 +593,7 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 				clientMsg = "Request blocked by upstream cyber-security policy"
 			}
 			writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", clientMsg)
-			cyberErr := fmt.Errorf("openai cyber_policy: %s", msg)
-			return returnPartial(cyberErr)
+			return nil, fmt.Errorf("openai cyber_policy: %s", msg)
 		}
 		message := openAICompatFailedResponseMessage(finalResponse)
 		if openAIStreamFailedEventShouldFailover(payload, message) {
@@ -625,10 +610,10 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 			}
 			MarkResponseCommitted(c)
 			writeChatCompletionsError(c, status, errType, errMsg)
-			return returnPartial(fmt.Errorf("upstream response failed (passthrough): %s", errMsg))
+			return nil, fmt.Errorf("upstream response failed (passthrough): %s", errMsg)
 		}
 		writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", message)
-		return returnPartial(fmt.Errorf("upstream response failed: %s", message))
+		return nil, fmt.Errorf("upstream response failed: %s", message)
 	}
 	if strings.TrimSpace(finalResponse.Status) == "completed" {
 		logOpenAISuccessMissingUsage(c.Request.Context(), c, account, resp, &usage, "response.completed", false)
@@ -655,6 +640,27 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	c.JSON(http.StatusOK, chatResp)
 
+	result := &OpenAIForwardResult{
+		RequestID:                     requestID,
+		UpstreamHeaders:               resp.Header,
+		Usage:                         usage,
+		Model:                         originalModel,
+		BillingModel:                  billingModel,
+		UpstreamModel:                 upstreamModel,
+		UpstreamResponseModel:         observedUpstreamResponseModel(c),
+		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+		UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
+		Stream:                        false,
+		Duration:                      time.Since(startTime),
+	}
+	// Grok chat bridge: bill native search tools found in the terminal Responses body.
+	if account != nil && account.IsGrok() && finalResponse != nil {
+		if body, err := json.Marshal(finalResponse); err == nil {
+			if n := countGrokNativeSearchCallsFromJSONBytes(body); n > 0 {
+				result.SearchCount = n
+			}
+		}
+	}
 	return result, nil
 }
 
@@ -769,7 +775,6 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			Stream:                        true,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
-			ClientDisconnect:              clientDisconnected,
 		}
 		if searchCount > 0 {
 			out.SearchCount = searchCount
@@ -939,7 +944,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 
 	finalizeStream := func() (*OpenAIForwardResult, error) {
 		if streamFailoverErr != nil {
-			return nil, streamFailoverErr
+			if c == nil || c.Writer == nil || !c.Writer.Written() {
+				return nil, streamFailoverErr
+			}
+			return resultWithUsage(), streamFailoverErr
 		}
 		if streamNonFailoverErr != nil {
 			return resultWithUsage(), streamNonFailoverErr

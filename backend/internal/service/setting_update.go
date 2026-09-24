@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,119 +16,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
-
-// AtomicSettingRepository is an optional repository capability used by the
-// administrative settings endpoint. Repositories that do not provide it remain
-// supported through the service's compatibility fallback.
-type AtomicSettingRepository interface {
-	UpdateSettingsAtomic(ctx context.Context, request SettingAtomicUpdate) error
-}
-
-// SettingsAtomicUpdateInput contains every settings group persisted by the
-// administrative settings endpoint.
-type SettingsAtomicUpdateInput struct {
-	Settings                 *SystemSettings
-	AuthSourceDefaults       *AuthSourceDefaultSettings
-	OpenAIFastPolicySettings *OpenAIFastPolicySettings
-	PaymentConfig            *UpdatePaymentConfigRequest
-	OmittedSettingKeys       OmittedSettingKeys
-	SecurityBaseline         SettingSecurityBaseline
-	Authorize                func(current SettingSecurityBaseline) error
-}
-
-// UpdateSettingsAtomically validates and serializes every supplied settings
-// group before issuing one repository write. Runtime caches are refreshed only
-// after the repository reports a successful commit.
-func (s *SettingService) UpdateSettingsAtomically(ctx context.Context, input SettingsAtomicUpdateInput) error {
-	if input.Settings == nil {
-		return infraerrors.BadRequest("INVALID_SETTINGS", "settings cannot be nil")
-	}
-
-	updates := make(map[string]string)
-	if input.PaymentConfig != nil {
-		paymentUpdates, err := buildPaymentConfigUpdates(*input.PaymentConfig)
-		if err != nil {
-			return err
-		}
-		mergeSettingUpdates(updates, paymentUpdates)
-	}
-
-	systemUpdates, err := s.buildSystemSettingsUpdates(ctx, input.Settings)
-	if err != nil {
-		return err
-	}
-	mergeSettingUpdates(updates, systemUpdates)
-
-	authUpdates, err := s.buildAuthSourceDefaultUpdates(ctx, input.AuthSourceDefaults)
-	if err != nil {
-		return err
-	}
-	mergeSettingUpdates(updates, authUpdates)
-
-	if input.OpenAIFastPolicySettings != nil {
-		value, err := buildOpenAIFastPolicySetting(input.OpenAIFastPolicySettings)
-		if err != nil {
-			return infraerrors.BadRequest("INVALID_OPENAI_FAST_POLICY_SETTINGS", err.Error())
-		}
-		updates[SettingKeyOpenAIFastPolicySettings] = value
-	}
-	input.OmittedSettingKeys.dropFrom(updates)
-
-	request := SettingAtomicUpdate{
-		Updates:   updates,
-		Baseline:  input.SecurityBaseline,
-		Authorize: input.Authorize,
-	}
-	if repo, ok := s.settingRepo.(AtomicSettingRepository); ok {
-		err = repo.UpdateSettingsAtomic(ctx, request)
-	} else {
-		err = s.updateSettingsAtomicFallback(ctx, request)
-	}
-	if err != nil {
-		return err
-	}
-	s.refreshCachedSettingsAfterWrite(ctx, input.Settings, input.OmittedSettingKeys)
-	return nil
-}
-
-func (s *SettingService) updateSettingsAtomicFallback(ctx context.Context, request SettingAtomicUpdate) error {
-	values, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyStepUpEnabled, SettingKeyRiskControlEnabled})
-	if err != nil {
-		return err
-	}
-	current := securityBaselineFromValues(values)
-	if current != request.Baseline {
-		return ErrSettingsUpdateConflict
-	}
-	if securityDowngradeRequested(current, request.Updates) && request.Authorize == nil {
-		return ErrSettingsStrictAuthorizationRequired
-	}
-	if request.Authorize != nil {
-		if err := request.Authorize(current); err != nil {
-			return err
-		}
-	}
-	return s.settingRepo.SetMultiple(ctx, request.Updates)
-}
-
-func securityBaselineFromValues(values map[string]string) SettingSecurityBaseline {
-	return SettingSecurityBaseline{
-		StepUpEnabled:      values[SettingKeyStepUpEnabled] == "true",
-		RiskControlEnabled: values[SettingKeyRiskControlEnabled] == "true",
-	}
-}
-
-func securityDowngradeRequested(current SettingSecurityBaseline, updates map[string]string) bool {
-	stepUpDisabled := current.StepUpEnabled && updates[SettingKeyStepUpEnabled] == "false"
-	riskControlDisabled := current.RiskControlEnabled && updates[SettingKeyRiskControlEnabled] == "false"
-	return stepUpDisabled || riskControlDisabled
-}
-
-func mergeSettingUpdates(dst, src map[string]string) {
-	for key, value := range src {
-		dst[key] = value
-	}
-}
 
 // OmittedSettingKeys marks setting keys the caller's payload never carried.
 // SystemSettings is a plain struct, so a field the caller omitted arrives as a
@@ -157,10 +45,14 @@ func (s *SettingService) UpdateSettingsOmitting(ctx context.Context, settings *S
 	}
 	omitted.dropFrom(updates)
 
+	wakeHarvest := s.codexHarvestSettingsChanged(ctx, updates)
 	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
 		return err
 	}
 	s.refreshCachedSettingsAfterWrite(ctx, settings, omitted)
+	if wakeHarvest {
+		s.notifyCodexHarvestAfterSettingsWrite()
+	}
 	return nil
 }
 
@@ -187,10 +79,14 @@ func (s *SettingService) UpdateSettingsWithAuthSourceDefaultsOmitting(ctx contex
 	}
 	omitted.dropFrom(updates)
 
+	wakeHarvest := s.codexHarvestSettingsChanged(ctx, updates)
 	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
 		return err
 	}
 	s.refreshCachedSettingsAfterWrite(ctx, settings, omitted)
+	if wakeHarvest {
+		s.notifyCodexHarvestAfterSettingsWrite()
+	}
 	return nil
 }
 
@@ -545,6 +441,18 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
 
+	// Pelican showcase switch + gallery limits
+	updates[SettingKeyPelicanShowcaseEnabled] = strconv.FormatBool(settings.PelicanShowcaseEnabled)
+	showcase, showcaseErr := NormalizePelicanShowcaseConfig(settings.PelicanShowcase)
+	if showcaseErr != nil {
+		return nil, infraerrors.BadRequest("INVALID_PELICAN_SHOWCASE", showcaseErr.Error())
+	}
+	if err := s.validateAddedPelicanShowcaseGroups(ctx, showcase.GroupIDs); err != nil {
+		return nil, err
+	}
+	showcaseJSON, _ := json.Marshal(showcase)
+	updates[SettingKeyPelicanShowcaseConfig] = string(showcaseJSON)
+
 	// Subscription feature switch
 	updates[SettingKeySubscriptionEnabled] = strconv.FormatBool(settings.SubscriptionEnabled)
 
@@ -565,6 +473,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	if settings.CyberSessionBlockTTLSeconds > 0 {
 		updates[SettingKeyCyberSessionBlockTTLSeconds] = strconv.Itoa(settings.CyberSessionBlockTTLSeconds)
 	}
+	updates[SettingKeyCyberSessionIdentityStrictEnabled] = strconv.FormatBool(settings.CyberSessionIdentityStrictEnabled)
 
 	// Claude Code version check
 	updates[SettingKeyMinClaudeCodeVersion] = settings.MinClaudeCodeVersion
@@ -598,6 +507,50 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAICodexUserAgent] = strings.TrimSpace(settings.OpenAICodexUserAgent)
 	updates[SettingKeyOpenAICodexClientVersion] = NormalizeCodexClientVersion(settings.OpenAICodexClientVersion)
 	updates[SettingKeyOpenAICodexVersionAutoSyncEnabled] = strconv.FormatBool(settings.OpenAICodexVersionAutoSyncEnabled)
+	updates[SettingKeyOpenAICodexTicketEnabled] = strconv.FormatBool(settings.OpenAICodexTicketEnabled)
+	updates[SettingKeyOpenAICodexTicketFailClosed] = strconv.FormatBool(settings.OpenAICodexTicketFailClosed)
+	if err := ValidateOpenAICodexTicketHarvestProxyURL(settings.OpenAICodexTicketHarvestProxyURL); err != nil {
+		return nil, infraerrors.BadRequest("INVALID_CODEX_HARVEST_PROXY", err.Error())
+	}
+	updates[SettingKeyOpenAICodexTicketHarvestProxyURL] = strings.TrimSpace(settings.OpenAICodexTicketHarvestProxyURL)
+	if value := settings.OpenAICodexTicketStrategy; value != "" && value != "fixed" && value != "standby" {
+		return nil, infraerrors.BadRequest("INVALID_TICKET_STRATEGY", "strategy must be fixed or standby")
+	}
+	scope, scopeErr := NormalizeCodexTicketHarvestScope(settings.OpenAICodexTicketHarvestScope)
+	if scopeErr != nil {
+		return nil, infraerrors.BadRequest("INVALID_TICKET_HARVEST_SCOPE", scopeErr.Error())
+	}
+	// Validate only a changed selection, so deleting a selected group does not
+	// prevent unrelated settings from being saved. Stale IDs match no accounts.
+	scopeJSON, _ := json.Marshal(scope)
+	if s.defaultSubGroupReader != nil && len(scope.GroupIDs) > 0 {
+		old, readErr := s.GetCodexTicketHarvestScope(ctx)
+		if readErr != nil || old.Mode != scope.Mode || !slices.Equal(old.GroupIDs, scope.GroupIDs) {
+			for _, id := range scope.GroupIDs {
+				group, err := s.defaultSubGroupReader.GetByID(ctx, id)
+				if err != nil && !errors.Is(err, ErrGroupNotFound) {
+					return nil, err
+				}
+				if err != nil || group == nil || group.Platform != PlatformOpenAI {
+					return nil, infraerrors.BadRequest("INVALID_TICKET_HARVEST_GROUP", "harvest groups must exist and use the OpenAI platform")
+				}
+			}
+		}
+	}
+	updates[SettingKeyOpenAICodexTicketHarvestScope] = string(scopeJSON)
+	updates[SettingKeyOpenAICodexTicketStrategy] = NormalizeCodexTicketStrategy(settings.OpenAICodexTicketStrategy)
+	updates[SettingKeyOpenAICodexTicketStrict] = strconv.FormatBool(settings.OpenAICodexTicketStrictResponse)
+	if settings.OpenAICodexTicketStaticProxyURL != "" {
+		updates[SettingKeyOpenAICodexTicketStaticProxyURL] = settings.OpenAICodexTicketStaticProxyURL
+	}
+	if proxy := strings.TrimSpace(settings.OpenAICodexTicketHarvestProxyURL); proxy != "" && proxy != "http://127.0.0.1:3101" {
+		updates[SettingKeyOpenAICodexTicketStaticProxyURL] = proxy
+	}
+	modelsJSON, err := json.Marshal(NormalizeOpenAICodexTicketModels(settings.OpenAICodexTicketModels))
+	if err != nil {
+		return nil, fmt.Errorf("marshal Codex ticket models: %w", err)
+	}
+	updates[SettingKeyOpenAICodexTicketModels] = string(modelsJSON)
 	// SettingKeyOpenAICodexClientVersionSynced 由自动同步任务独占写入，此处不得覆盖，
 	// 否则面板保存会把同步结果清空。
 	updates[SettingKeyClaudeCodeClientVersion] = NormalizeClaudeCodeClientVersion(settings.ClaudeCodeClientVersion)
@@ -859,6 +812,11 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	// 版本号缓存只做失效，不在此重算：生效值还取决于自动同步写入的 synced 键，
 	// 这里没有它的最新值，重算会把同步结果覆盖成陈旧值。
 	s.InvalidateOpenAICodexClientVersionCache()
+	s.InvalidateOpenAICodexTicketEnabledCache()
+	s.InvalidateOpenAICodexTicketFailClosedCache()
+	s.InvalidateOpenAICodexTicketModelsCache()
+	s.InvalidateOpenAICodexTicketHarvestProxyCache()
+	s.InvalidateOpenAICodexTicketHarvestScopeCache()
 	s.InvalidateClaudeCodeClientVersionCache()
 	openAIAdvancedSchedulerSettingSF.Forget(openAIAdvancedSchedulerSettingKey)
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
@@ -913,6 +871,10 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	// codex_cli_only 加固策略缓存：设置更新后强制下次重载（涉及 4 个键 + JSON 解析，直接置过期）。
 	s.codexRestrictionPolicySF.Forget("codex_restriction_policy")
 	s.codexRestrictionPolicyCache.Store(&cachedCodexRestrictionPolicy{expiresAt: 0})
+	// Cyber 会话屏蔽与严格身份门控必须在后台保存后立即生效，不能继续
+	// 使用最长 60 秒的旧开关快照。
+	s.cyberSessionBlockRuntimeSF.Forget("cyber_session_block_runtime")
+	s.cyberSessionBlockRuntimeCache.Store(&cachedCyberSessionBlockRuntime{expiresAt: 0})
 	if s.onUpdate != nil {
 		s.onUpdate() // Invalidate cache after settings update
 	}

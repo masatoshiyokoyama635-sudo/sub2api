@@ -359,9 +359,6 @@ func intervalToModelPricing(iv *PricingInterval, base *ModelPricing, chPricing *
 		pricing.CacheCreation1hPrice = applyMultiplier(pricing.CacheCreation1hPrice, iv.CacheWriteMultiplier)
 	}
 	if iv.CacheWrite1hPrice != nil {
-		if iv.CacheWritePrice == nil && pricing.CacheCreation5mPrice <= 0 {
-			pricing.CacheCreation5mPrice = pricing.CacheCreationPricePerToken
-		}
 		pricing.CacheCreation1hPrice = *iv.CacheWrite1hPrice
 		pricing.SupportsCacheBreakdown = true
 	}

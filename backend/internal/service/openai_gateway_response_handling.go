@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"net/http"
 	"sort"
 	"strconv"
@@ -30,50 +31,9 @@ type openaiStreamingResult struct {
 	usage            *OpenAIUsage
 	firstTokenMs     *int
 	responseID       string
-	clientDisconnect bool
 	imageCount       int
 	imageOutputSizes []string
 	searchCount      int
-}
-
-func hasObservedOpenAIBilling(usage *OpenAIUsage, imageCount, searchCount int) bool {
-	if imageCount > 0 || searchCount > 0 {
-		return true
-	}
-	if usage == nil {
-		return false
-	}
-	return usage.InputTokens > 0 || usage.ImageInputTokens > 0 ||
-		usage.OutputTokens > 0 || usage.CacheCreationInputTokens > 0 ||
-		usage.CacheReadInputTokens > 0 || usage.ImageOutputTokens > 0
-}
-
-// shouldReturnOpenAIPartialResult keeps billable observations on non-failover
-// errors. A failover attempt must remain result=nil or a later successful
-// account would cause the same client request to be charged twice.
-func shouldReturnOpenAIPartialResult(usage *OpenAIUsage, imageCount, searchCount int, err error) bool {
-	if err == nil || !hasObservedOpenAIBilling(usage, imageCount, searchCount) {
-		return false
-	}
-	var failoverErr *UpstreamFailoverError
-	return !errors.As(err, &failoverErr)
-}
-
-// shouldReturnOpenAICompatResult preserves zero-usage state needed to
-// distinguish partial output and client disconnects. Billable failover results
-// remain suppressed so a later successful account cannot charge the same turn
-// twice; unmetered cyber failures stay nil so the handler writes one fallback
-// usage row.
-func shouldReturnOpenAICompatResult(result *OpenAIForwardResult, err error, cyberPolicyMarked bool) bool {
-	if result == nil {
-		return false
-	}
-	observedBilling := hasObservedOpenAIBilling(&result.Usage, result.ImageCount, result.SearchCount)
-	if cyberPolicyMarked && !observedBilling {
-		return false
-	}
-	var failoverErr *UpstreamFailoverError
-	return !observedBilling || !errors.As(err, &failoverErr)
 }
 
 type openaiNonStreamingResult struct {
@@ -160,7 +120,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	var firstTokenMs *int
+	ctx = requesttiming.ResponseContext(ctx, resp)
 	ttftMode := s.openAITTFTMode(ctx)
+	requesttiming.Mode(ctx, ttftMode)
 	firstOutputProgressObserved := false
 	bufferedWriter := bufio.NewWriterSize(w, 4*1024)
 	var firstOutputStage *openAIFirstOutputStage
@@ -195,6 +157,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 		}
 		flusher.Flush()
+		requesttiming.OutputFlushed(ctx)
 		return nil
 	}
 
@@ -395,7 +358,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			usage:            usage,
 			firstTokenMs:     firstTokenMs,
 			responseID:       responseID,
-			clientDisconnect: clientDisconnected,
 			imageCount:       imageCounter.Count(),
 			imageOutputSizes: imageCounter.Sizes(),
 			searchCount:      searchCounter,
@@ -431,7 +393,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 		}
 		if sawTerminalEvent && !sawFailedEvent {
-			s.clearOpenAIProxyStreamDisconnect(account)
+			s.clearOpenAIProxyStreamDisconnect(account, resp)
 		}
 		if !sawTerminalEvent && !openAIStreamClientOutputStarted(c, clientOutputStarted) && !eventShouldFlush {
 			return resultWithUsage(), s.newOpenAIStreamFailoverError(
@@ -446,7 +408,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		flushPending("Client disconnected during final flush, returning collected usage")
 		if !sawTerminalEvent {
 			if openAIStreamClientOutputStarted(c, clientOutputStarted) && !clientDisconnected {
-				s.recordOpenAIProxyStreamDisconnect(account, errors.New("stream ended before terminal event"), upstreamRequestID)
+				s.recordOpenAIProxyStreamDisconnect(account, errors.New("stream ended before terminal event"), upstreamRequestID, resp)
 			}
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete: missing terminal event")
 		}
@@ -480,7 +442,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		if sawTerminalEvent {
 			if !sawFailedEvent {
-				s.clearOpenAIProxyStreamDisconnect(account)
+				s.clearOpenAIProxyStreamDisconnect(account, resp)
 				logger.LegacyPrintf("service.openai_gateway", "Upstream scan ended after terminal event: %v", scanErr)
 			}
 			result, err := finalizeStream()
@@ -510,7 +472,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if clientDisconnected {
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete after disconnect: %w", scanErr), true
 		}
-		s.recordOpenAIProxyStreamDisconnect(account, scanErr, upstreamRequestID)
+		s.recordOpenAIProxyStreamDisconnect(account, scanErr, upstreamRequestID, resp)
 		code, message := classifyOpenAIUpstreamStreamReadError(scanErr)
 		sendErrorEvent(code, message)
 		return resultWithUsage(), fmt.Errorf("stream read error: %w", scanErr), true
@@ -739,6 +701,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				return
 			}
 
+			requesttiming.Output(ctx, openAIStreamDataStartsSemanticTTFT(data, eventType), startsVisibleOutput, timingTerminal(eventType))
 			// 写入客户端（客户端断开后继续 drain 上游）
 			if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
 				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)

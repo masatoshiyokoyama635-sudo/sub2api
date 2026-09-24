@@ -27,7 +27,6 @@ type grokQuotaAccountRepo struct {
 	*mockAccountRepoForPlatform
 	updates               map[int64]map[string]any
 	updateCalls           int
-	casCalls              int
 	rateLimitedCalls      int
 	lastRateLimitedID     int64
 	lastRateLimitResetAt  time.Time
@@ -60,24 +59,6 @@ func (r *grokQuotaAccountRepo) UpdateExtra(_ context.Context, id int64, updates 
 		}
 	}
 	return nil
-}
-
-func (r *grokQuotaAccountRepo) UpdateGrokBillingSnapshotIfIdentityUnchanged(_ context.Context, id int64, _ GrokBillingProbeIdentity, billing *xai.BillingSummary) (bool, error) {
-	r.casCalls++
-	r.updateCalls++
-	if r.mockAccountRepoForPlatform == nil || r.mockAccountRepoForPlatform.accountsByID[id] == nil {
-		return false, ErrGrokBillingProbeIdentityChanged
-	}
-	account := r.mockAccountRepoForPlatform.accountsByID[id]
-	if account.Extra == nil {
-		account.Extra = make(map[string]any)
-	}
-	account.Extra[grokBillingExtraKey] = billing
-	if r.updates == nil {
-		r.updates = make(map[int64]map[string]any)
-	}
-	r.updates[id] = map[string]any{grokBillingExtraKey: billing}
-	return true, nil
 }
 
 func (r *grokQuotaAccountRepo) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {

@@ -17,12 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func promptAuditRouteTestHandlers() *handler.Handlers {
-	return &handler.Handlers{Admin: &handler.AdminHandlers{
-		PromptAudit: securityaudit.NewPromptAdminHandler(nil),
-	}}
-}
-
 func TestEveryGatewayPOSTRouteIsClassifiedForPromptAuditCoverage(t *testing.T) {
 	routeSource, err := os.ReadFile("gateway.go")
 	require.NoError(t, err)
@@ -127,8 +121,7 @@ func TestPromptAuditAdminRoutesRejectUnauthenticatedAndNonAdminRequests(t *testi
 	})
 	auditLog := servermiddleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() })
 	stepUp := servermiddleware.StepUpAuthMiddleware(func(c *gin.Context) { c.Next() })
-	strictStepUp := servermiddleware.StrictStepUpAuthMiddleware(func(c *gin.Context) { c.Next() })
-	RegisterAdminRoutes(router.Group("/api/v1"), handlers, adminAuth, auditLog, stepUp, strictStepUp, nil, nil)
+	RegisterAdminRoutes(router.Group("/api/v1"), handlers, adminAuth, auditLog, stepUp, nil, nil)
 
 	for _, tc := range []struct {
 		name       string
@@ -146,40 +139,6 @@ func TestPromptAuditAdminRoutesRejectUnauthenticatedAndNonAdminRequests(t *testi
 			}
 			router.ServeHTTP(recorder, request)
 			require.Equal(t, tc.wantStatus, recorder.Code)
-		})
-	}
-}
-
-func TestPromptAuditSensitiveRoutesRequireStepUp(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	adminAuth := servermiddleware.AdminAuthMiddleware(func(c *gin.Context) { c.Next() })
-	auditLog := servermiddleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() })
-	stepUp := servermiddleware.StepUpAuthMiddleware(func(c *gin.Context) {
-		servermiddleware.AbortWithError(c, http.StatusForbidden, "STEP_UP_REQUIRED", "Recent two-factor verification required")
-	})
-	strictStepUp := servermiddleware.StrictStepUpAuthMiddleware(stepUp)
-	RegisterAdminRoutes(router.Group("/api/v1"), promptAuditRouteTestHandlers(), adminAuth, auditLog, stepUp, strictStepUp, nil, nil)
-
-	for _, tc := range []struct {
-		method string
-		path   string
-	}{
-		{method: http.MethodPut, path: "/api/v1/admin/prompt-audit/config"},
-		{method: http.MethodPost, path: "/api/v1/admin/prompt-audit/endpoints/probe"},
-		{method: http.MethodGet, path: "/api/v1/admin/prompt-audit/events/1"},
-		{method: http.MethodDelete, path: "/api/v1/admin/prompt-audit/events/1"},
-		{method: http.MethodPost, path: "/api/v1/admin/prompt-audit/events/batch-delete"},
-		{method: http.MethodPost, path: "/api/v1/admin/prompt-audit/events/delete-preview"},
-		{method: http.MethodPost, path: "/api/v1/admin/prompt-audit/events/delete-by-filter"},
-	} {
-		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
-			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
-			request.Header.Set("Content-Type", "application/json")
-			router.ServeHTTP(recorder, request)
-			require.Equal(t, http.StatusForbidden, recorder.Code)
-			require.Contains(t, recorder.Body.String(), "STEP_UP_REQUIRED")
 		})
 	}
 }

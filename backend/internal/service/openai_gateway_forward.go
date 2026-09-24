@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -18,10 +20,27 @@ import (
 )
 
 // Forward forwards request to OpenAI API
-func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (result *OpenAIForwardResult, resultErr error) {
+	defer func() {
+		outcome := "success"
+		if resultErr != nil {
+			outcome = "failed"
+		}
+		disconnected := result != nil && result.ClientDisconnect
+		if disconnected {
+			outcome = "client_disconnected"
+		}
+		requesttiming.Outcome(ctx, outcome, disconnected)
+	}()
+	defer requesttiming.Observe(ctx, "forward_attempt")()
+	latest, admissionErr := s.admitOpenAITurn(ctx, c, account, extractOpenAICodexTicketModel(body))
+	if admissionErr != nil {
+		return nil, admissionErr
+	}
+	account = latest
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
-	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
+	if shouldForwardOpenAIResponsesViaChatCompletions(account, body) {
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
 	}
 	filteredBody, filterErr := filterOpenAIResponsesNoneReasoningEffortForAccount(account, body)
@@ -56,6 +75,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			},
 		})
 		return nil, errors.New("codex_cli_only restriction: only codex official clients are allowed")
+	}
+
+	// The SDK adapter owns Lite declarations, custom tools, replay item IDs,
+	// namespaces and compaction. Do not lower them to generic OpenAI API shapes.
+	if account.IsCopilotSDKEnabled() {
+		view := newOpenAIRequestView(body)
+		SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
+		return s.forwardOpenAIPassthrough(ctx, c, account, body, body, view.Model, false,
+			extractOpenAIReasoningEffortFromBody(body, view.Model), view.Stream, startTime)
 	}
 
 	normalizedBody, normalized, err := normalizeOpenAICodexCompactReasoningEffortForAccount(c, account, body)
@@ -138,9 +166,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	nativeCNResponses := account.UsesNativeCNResponses()
-	nativeDeepSeekResponses := account.Platform == PlatformDeepseek && nativeCNResponses
-	if nativeDeepSeekResponses && account.Type == AccountTypeAPIKey && !compactPath &&
-		needsOpenAIResponsesClientToolAdaptation(body) {
+	// 先判定是否要走 Chat fallback：fallback 会自己从原始 body 重新计算 custom /
+	// tool_search / namespace 工具并正确还原 custom_tool_call。若这里先做 client-tool
+	// adaptation 把顶层 custom 改写成 function，再进 fallback 时回程查不到 custom
+	// 映射，会把 custom_tool_call 降级成 function_call（Codex 判 unsupported call）。
+	// 因此进入 fallback 的请求必须跳过 adaptation。
+	if shouldAdaptDeepSeekResponsesClientTools(account, body, compactPath) {
 		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
 		if adaptErr != nil {
 			return nil, fmt.Errorf("adapt DeepSeek Responses client tools: %w", adaptErr)
@@ -161,20 +192,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	if account.IsOpenCodeGo() {
 		mapped := resolveOpenCodeGoMappedModel(account, body, "")
-		protocol := openCodeGoNativeProtocol(account, mapped)
-		// These early protocol returns bypass the shared image gates below.
-		// Include the account-mapped model and the original explicit tool intent.
-		if IsExplicitImageGenerationIntent(openAIResponsesEndpoint, mapped, canonicalImageIntentBody) {
-			if !GroupAllowsImageGeneration(apiKeyGroup(getAPIKeyFromContext(c))) {
-				MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
-				c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": ImageGenerationPermissionMessage()}})
-				return nil, errors.New("image generation disabled for group")
-			}
-			if protocol != APIProtocolResponses {
-				return nil, fmt.Errorf("responses image generation requires a Responses-capable account")
-			}
-		}
-		switch protocol {
+		switch openCodeGoNativeProtocol(account, mapped) {
 		case APIProtocolAnthropic:
 			return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, "")
 		case APIProtocolResponses:
@@ -208,10 +226,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		originalModel = reqModel
 	}
 
-	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
-		if IsExplicitImageGenerationIntent(openAIResponsesEndpoint, reqModel, body) {
-			return nil, fmt.Errorf("responses image generation requires a Responses-capable account")
-		}
+	if isOpenAINativeCompactionV2(c) && shouldForwardDeepSeekResponsesCompactViaChatCompletions(account, body) {
+		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
+	}
+	if shouldForwardOpenAIResponsesViaChatCompletions(account, body) {
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
@@ -372,7 +390,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		codexImageGenerationExplicitToolPolicy != codexImageGenerationExplicitToolPolicyStrip &&
 		s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
 	var imageIntent bool
-	canonicalImageIntent := resolveOpenAIImageIntentHint(c, reqModel, canonicalImageIntentBody, IsExplicitImageGenerationIntent)
+	canonicalImageIntent := resolveOpenAIImageIntentHint(c, reqModel, canonicalImageIntentBody, IsImageGenerationIntent)
 	if isCodexCLI && codexImageGenerationExplicitToolPolicy == codexImageGenerationExplicitToolPolicyStrip {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
@@ -548,8 +566,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if codexResult.Modified {
 			markDecodedModified()
 		}
+		harvestPins := s.harvestPinsCodexIdentity(ctx, account, upstreamModel)
 		// 带真实 device_id 时补齐 client_metadata 安装标识，与真实 Codex 对齐（compact 形态不同，跳过）。
-		if !isCompactRequest && applyCodexClientMetadata(decoded, account) {
+		// Harvest-bound traffic must keep the issuing probe's empty metadata;
+		// injecting openai_device_id here is a second installation identity.
+		if !isCompactRequest && !harvestPins && applyCodexClientMetadata(decoded, account) {
 			markDecodedModified()
 		}
 		if currentClientPromptCacheKey, ok := decoded["prompt_cache_key"].(string); ok {
@@ -558,13 +579,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		// Account namespace is orthogonal to fingerprint convergence: preserve
 		// each client's identity cardinality, but never reuse it across OAuth
 		// credentials after scheduler failover.
-		if !isCompactRequest && applyCodexAccountIdentityClientMetadataMap(decoded, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c)) {
+		if !isCompactRequest && !harvestPins && applyCodexAccountIdentityClientMetadataMap(decoded, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c)) {
 			markDecodedModified()
 		}
 		stageCodexFingerprintIDs(c, nil)
 		// 指纹收敛：一次性解析收敛 ID，请求体和出站头共享同一份 IDs（保证 turn_id 等随机字段一致）。
 		// fingerprintIDs 在此处解析，后续 buildUpstreamRequest 中使用同一份。
-		if !isCompactRequest {
+		if !isCompactRequest && !harvestPins {
 			var clientHeaders http.Header
 			if c != nil && c.Request != nil {
 				clientHeaders = c.Request.Header
@@ -583,6 +604,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
 		}
+		if s.pinHarvestIdentityMapsForModel(ctx, account, upstreamModel, decoded) {
+			markDecodedModified()
+		}
 		if strings.TrimSpace(clientPromptCacheKey) != "" {
 			// The body now carries an account-scoped value. Keep the original here
 			// so the header builder derives the same namespace exactly once.
@@ -593,6 +617,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			promptCacheKey = currentPromptCacheKey
 		} else if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
+		}
+		if session := s.harvestPinnedSessionForModel(ctx, account, upstreamModel); session != "" {
+			promptCacheKey = session
 		}
 	}
 
@@ -795,7 +822,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		imageSizeTier = imageCfg.SizeTier
 		imageInputSize = imageCfg.InputSize
 	}
-	// Get access token
+	// Get access token. Non-WS attempts re-read the authoritative account and
+	// refresh this token immediately before building the request below.
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
 		return nil, err
@@ -925,6 +953,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if wsErr == nil {
 				break
 			}
+			if IsOpenAITurnAdmissionError(wsErr) {
+				return nil, wsErr
+			}
 			if c != nil && c.Writer != nil && c.Writer.Written() {
 				break
 			}
@@ -1003,11 +1034,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			break
 		}
-		var failoverErr *UpstreamFailoverError
-		if wsErr != nil && (wsResult == nil || errors.As(wsErr, &failoverErr)) {
-			s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
-			return nil, wsErr
-		}
 		if wsErr == nil {
 			firstTokenMs := int64(0)
 			hasFirstTokenMs := wsResult != nil && wsResult.FirstTokenMs != nil
@@ -1027,19 +1053,19 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				firstTokenMs,
 				wsAttempts,
 			)
+			wsResult.UpstreamModel = upstreamModel
+			if wsResult.BillingModel == "" {
+				wsResult.BillingModel = billingModel
+			}
+			if wsResult.ImageCount > 0 {
+				wsResult.ImageSize = imageSizeTier
+				wsResult.ImageInputSize = imageInputSize
+				wsResult.BillingModel = imageBillingModel
+			}
+			return wsResult, nil
 		}
-		// Non-failover drain errors still carry usage and disconnect state for
-		// the handler. Apply the same billing metadata as a completed WS turn.
-		wsResult.UpstreamModel = upstreamModel
-		if wsResult.BillingModel == "" {
-			wsResult.BillingModel = billingModel
-		}
-		if wsResult.ImageCount > 0 {
-			wsResult.ImageSize = imageSizeTier
-			wsResult.ImageInputSize = imageInputSize
-			wsResult.BillingModel = imageBillingModel
-		}
-		return wsResult, wsErr
+		s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
+		return nil, wsErr
 	}
 
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
@@ -1059,6 +1085,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	agentTaskRecoveryTried := false
 	rejectedFieldRetryState := openAIResponsesRejectedFieldRetryStateForRequest(c, body)
 	for {
+		latest, admissionErr := s.admitOpenAITurn(ctx, c, account, extractOpenAICodexTicketModel(body))
+		if admissionErr != nil {
+			return nil, admissionErr
+		}
+		account = latest
+		token, _, err = s.GetAccessToken(ctx, account)
+		if err != nil {
+			return nil, err
+		}
+
 		// Build upstream request
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		var headerGuard *openAIFirstOutputHeaderGuard
@@ -1085,9 +1121,21 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 
 		// Send request
+		if err := s.applyOpenAICodexTicket(ctx, account, extractOpenAICodexTicketModel(body), upstreamReq.Header); err != nil {
+			if headerGuard != nil {
+				headerGuard.close()
+			}
+			return nil, err
+		}
 		upstreamStart := time.Now()
 		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+		if errors.Is(err, ErrCodexTicketResponseRejected) {
+			if headerGuard != nil {
+				headerGuard.close()
+			}
+			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+		}
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
@@ -1238,11 +1286,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		var usage *OpenAIUsage
 		var firstTokenMs *int
 		responseID := ""
-		clientDisconnect := false
 		imageCount := 0
 		searchCount := 0
 		var imageOutputSizes []string
-		var responseErr error
 		if reqStream {
 			streamResult, err := s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, upstreamModel, reasoningEffortValue)
 			if err != nil {
@@ -1282,15 +1328,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					}
 					return s.handleErrorResponse(ctx, compactResp, c, account, body, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
 				}
-				if streamResult == nil || !shouldReturnOpenAIPartialResult(streamResult.usage, streamResult.imageCount, streamResult.searchCount, err) {
-					return nil, err
-				}
-				responseErr = err
+				return nil, err
 			}
 			usage = streamResult.usage
 			firstTokenMs = streamResult.firstTokenMs
 			responseID = strings.TrimSpace(streamResult.responseID)
-			clientDisconnect = streamResult.clientDisconnect
 			imageCount = streamResult.imageCount
 			imageOutputSizes = streamResult.imageOutputSizes
 			searchCount = streamResult.searchCount
@@ -1318,17 +1360,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			imageOutputSizes = nonStreamResult.imageOutputSizes
 			searchCount = nonStreamResult.searchCount
 		}
-		if responseErr == nil {
-			s.bindHTTPResponseAccount(ctx, c, account, responseID)
-		}
+		s.bindHTTPResponseAccount(ctx, c, account, responseID)
 
 		// Extract and save Codex usage snapshot from response headers (for OAuth accounts).
 		// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
-		if responseErr == nil && account.UsesOpenAICodexProtocol() && !account.IsShadow() {
+		if account.UsesOpenAICodexProtocol() && !account.IsShadow() {
 			if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
 				s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
 			}
-		} else if responseErr == nil && account.IsShadow() && account.ParentAccountID != nil {
+		} else if account.IsShadow() && account.ParentAccountID != nil {
 			notifyOpenAIAutoReset(*account.ParentAccountID)
 		}
 
@@ -1353,7 +1393,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			OpenAIWSMode:                  false,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
-			ClientDisconnect:              clientDisconnect,
 		}
 		if imageCount > 0 {
 			forwardResult.ImageCount = imageCount
@@ -1369,11 +1408,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			forwardResult.SearchCount = searchCount
 		}
 		stampOpenAIResponsesUpstreamEndpoint(c, forwardResult)
-		return forwardResult, responseErr
+		return forwardResult, nil
 	}
 }
 
 func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
+	if account.IsCopilotSDKEnabled() {
+		return false
+	}
 	if account == nil || account.Type != AccountTypeAPIKey {
 		return false
 	}
@@ -1397,7 +1439,173 @@ func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
 	return !openai_compat.ShouldUseResponsesAPI(account.Extra)
 }
 
+// shouldForwardOpenAIResponsesViaChatCompletions 是 chat-completions 回退的统一
+// 路由判定：账号级协议配置或探测结论要求回退，或者入站请求的形状是当前上游无法
+// 正确处理的（见 shouldForwardDeepSeekResponsesLiteViaChatCompletions）。
+func shouldForwardOpenAIResponsesViaChatCompletions(account *Account, body []byte) bool {
+	if account.IsCopilotSDKEnabled() {
+		return false
+	}
+	return shouldForwardOpenAIResponsesViaRawChatCompletions(account) ||
+		shouldForwardDeepSeekResponsesLiteViaChatCompletions(account, body)
+}
+
+// shouldForwardDeepSeekResponsesLiteViaChatCompletions 报告走原生 Responses 的
+// DeepSeek 语义上游是否应改走 chat 回退路径。
+//
+// DeepSeek 的 /responses 端点会接受 input[].additional_tools 并返回 200，但不会
+// 解析其中的工具声明——模型侧等同于没有任何工具可用，只能把调用写进正文
+// （DSML / <tool_call>{...}</tool_call>）。Codex 对 GPT 系模型名启用 Responses
+// Lite 时正是这个形状；同一上游用原生模型名（工具走顶层 tools）时一切正常。
+//
+// 上游判定用 isDeepSeekResponsesUpstream，覆盖官方 DeepSeek 与把 deepseek-* 模型
+// 挂在 platform=openai 下的聚合站（两者实测行为一致）。
+//
+// chat 回退路径的 apicompat.EffectiveResponsesTools 会把 additional_tools 提升为
+// 顶层工具，namespace 子工具摊平后回程再还原为 custom_tool_call，因此这里对
+// DeepSeek 语义上游显式绕开原生端点。
+func shouldForwardDeepSeekResponsesLiteViaChatCompletions(account *Account, body []byte) bool {
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return false
+	}
+	if !isDeepSeekResponsesUpstream(account, gjson.GetBytes(body, "model").String()) {
+		return false
+	}
+	return openAIRequestBodyHasAdditionalTools(body)
+}
+
+// shouldForwardDeepSeekResponsesCompactViaChatCompletions 报告 DeepSeek 语义上游的
+// remote compaction v2 请求是否应改走 chat 桥。DeepSeek /responses 不认识
+// compaction_trigger，会把它当普通回合，返回 reasoning+message 而非 compaction
+// item，Codex 判 fatal（got 0 items）。改走 chat 桥后在回程合成 compaction item。
+func shouldForwardDeepSeekResponsesCompactViaChatCompletions(account *Account, body []byte) bool {
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return false
+	}
+	if !isDeepSeekResponsesUpstream(account, gjson.GetBytes(body, "model").String()) {
+		return false
+	}
+	return HasCompactionTriggerInInput(body)
+}
+
+// deepSeekAPIHost 是 DeepSeek 官方 API 主机名，Responses 与 Chat Completions 同址。
+const deepSeekAPIHost = "api.deepseek.com"
+
+// isDeepSeekResponsesUpstream 报告该账号当前是否会打到表现 DeepSeek 语义的上游：
+// 原生 /responses 接受 input[].additional_tools 却静默忽略其中的工具声明，且
+// /chat/completions 不接受 response_format=json_schema。
+//
+// 识别分两路：
+//
+//  1. 明确的 DeepSeek 上游：platform=deepseek 且使用原生 Responses 协议，或
+//     platform=openai + base_url 指向 api.deepseek.com。后者是把 GPT 系模型名
+//     映射到 DeepSeek 时的经典接入方式，此时 platform 字段不代表真实上游。
+//  2. 本次请求实际转发到的模型属于 DeepSeek 模型族：部分聚合站（如 88api）用
+//     platform=openai 接入、hostname 不是 api.deepseek.com，但 model_mapping 把
+//     GPT 模型名映射到 deepseek-*。这类上游实测与官方 DeepSeek 表现一致，
+//     不识别的话 Responses Lite 仍会退化成 DSML 正文。
+//
+// 第二路绑定到具体请求的模型（requestedModel 是客户端模型名，经该账号
+// model_mapping 解析得到真正的出站模型），而不是账号的全部映射表：同一账号可能
+// 既有映射到 DeepSeek 的模型、也有映射到其他上游的模型，只有前者需要这套处理。
+func isDeepSeekResponsesUpstream(account *Account, requestedModel string) bool {
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return false
+	}
+	if account.Platform == PlatformDeepseek {
+		return account.UsesNativeCNResponses()
+	}
+	if !account.IsOpenAICompatible() {
+		return false
+	}
+	if isDeepSeekAPIHost(account.GetOpenAIBaseURL()) {
+		return true
+	}
+	return requestTargetsDeepSeekModel(account, requestedModel)
+}
+
+// isDeepSeekAPIHost 判断 base_url 是否指向 DeepSeek 官方 API。
+// 用完整 hostname 比较，api.deepseek.com.evil.example 这类后缀伪造不会命中。
+func isDeepSeekAPIHost(baseURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Hostname(), deepSeekAPIHost)
+}
+
+// requestTargetsDeepSeekModel 报告该账号把 requestedModel 转发到 DeepSeek 模型族。
+//
+// requestedModel 为空时无法做请求级判定，退回「账号是否含 DeepSeek 映射」的账号级
+// 判定；调用方在能拿到模型名时都应传入。
+func requestTargetsDeepSeekModel(account *Account, requestedModel string) bool {
+	if account == nil {
+		return false
+	}
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel != "" {
+		return isDeepSeekModelName(account.GetMappedModel(requestedModel))
+	}
+	return accountMapsToDeepSeekModel(account)
+}
+
+// isDeepSeekModelName 判断模型名是否属于 DeepSeek 模型族。
+func isDeepSeekModelName(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek-")
+}
+
+// accountMapsToDeepSeekModel 报告该账号的 model_mapping 是否包含 DeepSeek 模型。
+// 供无法取得请求模型名的调用点使用（能力判定按候选账号逐个评估）。
+func accountMapsToDeepSeekModel(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	for _, upstream := range account.GetModelMapping() {
+		if isDeepSeekModelName(upstream) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDeepSeekSemanticsAccount 报告该账号整体上属于 DeepSeek 语义上游：platform 或
+// hostname 命中 DeepSeek，或 model_mapping 含 deepseek-*（聚合站映射账号）。
+//
+// 用于只有账号、没有请求模型名的判定点（例如按候选账号逐个评估的端点能力检查）。
+// 能拿到请求模型时应改用 requestTargetsDeepSeekModel 做更精确的请求级判定。
+func isDeepSeekSemanticsAccount(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	if account.Platform == PlatformDeepseek {
+		return true
+	}
+	if !account.IsOpenAICompatible() {
+		return false
+	}
+	if isDeepSeekAPIHost(account.GetOpenAIBaseURL()) {
+		return true
+	}
+	return accountMapsToDeepSeekModel(account)
+}
+
+// shouldAdaptDeepSeekResponsesClientTools 决定是否在进入原生 DeepSeek Responses 前
+// 改写 client-only 工具。需要走 Chat fallback 的请求（含 input[].additional_tools 的
+// Responses Lite 形状）必须跳过：fallback 会从原始 body 重新计算 custom / tool_search /
+// namespace 工具并正确还原 custom_tool_call，先行改写会丢失顶层 custom 映射，回程
+// 降级成 function_call（Codex 判 unsupported call）。
+func shouldAdaptDeepSeekResponsesClientTools(account *Account, body []byte, compactPath bool) bool {
+	return account != nil &&
+		account.Platform == PlatformDeepseek &&
+		account.UsesNativeCNResponses() &&
+		account.Type == AccountTypeAPIKey &&
+		!compactPath &&
+		!shouldForwardOpenAIResponsesViaChatCompletions(account, body) &&
+		needsOpenAIResponsesClientToolAdaptation(body)
+}
+
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
+	defer requesttiming.Observe(ctx, "build_upstream_request")()
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {
@@ -1473,6 +1681,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// 客户端回带的 x-codex-turn-state 若已知由其他账号铸造（failover 换号），
 	// 剥离后再出站——异账号 blob 与本账号的（指纹收敛后）出站身份自相矛盾。
 	s.guardOpenAICodexTurnStateEcho(c, account, req.Header)
+	if err := s.applyOpenAICodexTicket(ctx, account, extractOpenAICodexTicketModel(body), req.Header); err != nil {
+		return nil, err
+	}
 	if account.UsesOpenAICodexProtocol() {
 		compatMessagesBridge := isOpenAICompatMessagesBridgeContext(c) || isOpenAICompatMessagesBridgeBody(body)
 		// 清除客户端透传的 session 头，后续用隔离后的值重新设置，防止跨用户会话碰撞。
@@ -1487,17 +1698,22 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 			req.Header.Set("originator", resolveOpenAIUpstreamOriginator(c, isCodexCLI))
 		}
 		apiKeyID := getAPIKeyIDFromContext(c)
+		harvestSession := s.harvestPinnedSessionForModel(ctx, account, extractOpenAICodexTicketModel(body))
 		if isOpenAIResponsesCompactPath(c) {
 			req.Header.Set("accept", "application/json")
 			if req.Header.Get("version") == "" {
 				req.Header.Set("version", CodexCanonicalClientVersion())
 			}
-			compactSession := resolveOpenAICompactSessionID(c)
-			req.Header.Set("session_id", isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), compactSession))
+			if harvestSession == "" {
+				compactSession := resolveOpenAICompactSessionID(c)
+				req.Header.Set("session_id", isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), compactSession))
+			}
 		} else {
 			req.Header.Set("accept", "text/event-stream")
 		}
-		if promptCacheKey != "" {
+		if harvestSession != "" {
+			req.Header.Set("session_id", harvestSession)
+		} else if promptCacheKey != "" {
 			isolated := isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey)
 			req.Header.Set("session_id", isolated)
 			if !compatMessagesBridge || clientConversationID != "" {
@@ -1524,10 +1740,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 
 	// 账号 namespace 不改变客户端身份基数，但确保 scheduler failover 后不会把
 	// 同一组 Codex IDs 发送给另一份 OAuth 凭据。可选指纹收敛随后仍可覆盖这些值。
-	applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
-
-	// 指纹收敛：使用 Forward() 中预计算的收敛 ID 改写出站头，与请求体使用同一份 IDs。
-	applyStagedCodexFingerprintHeaders(c, account, req.Header)
+	if s.harvestPinnedSessionForModel(ctx, account, extractOpenAICodexTicketModel(body)) == "" {
+		applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+		applyStagedCodexFingerprintHeaders(c, account, req.Header)
+	}
 
 	// 终态收口：强制统一 OAuth 出站身份（User-Agent / originator / version 同源自洽）。
 	// 客户端自报身份不参与构造，浏览器型 UA 也因此不会再到达上游（原浏览器 UA 兜底已被吸收）。
@@ -1552,6 +1768,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	applyOpenAICodexBetaFeatures(c, account, req.Header)
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http", req.Header, body, "not_applicable")
+	s.pinBoundCodexTicketHarvestIdentity(req, account)
 
 	if err := applyMappedGPT55LiteCompatibility(req, account, body); err != nil {
 		return nil, err

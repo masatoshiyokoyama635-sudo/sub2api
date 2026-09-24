@@ -29,7 +29,7 @@ func clampOllamaCloudUpstreamMaxTokens(account *Account, body []byte) []byte {
 	if account == nil || len(body) == 0 {
 		return body
 	}
-	if !isOllamaCloudUpstreamBaseURL(account.GetOpenAIBaseURL()) {
+	if !isOllamaCloudBaseURL(account.GetOpenAIBaseURL()) {
 		return body
 	}
 	if !isDeepSeekModel(gjson.GetBytes(body, "model").String()) && !isOllamaCloudRawChatCompletionsAccount(account) {
@@ -59,7 +59,7 @@ func ollamaCloudResponsesMaxOutputTokensClamp(account *Account, upstreamModel st
 	if account == nil || account.Type != AccountTypeAPIKey || !isDeepSeekModel(upstreamModel) {
 		return 0, false
 	}
-	if !isOllamaCloudUpstreamBaseURL(ollamaCloudResponsesUpstreamBaseURL(account)) {
+	if !isOllamaCloudBaseURL(ollamaCloudResponsesUpstreamBaseURL(account)) {
 		return 0, false
 	}
 	value := gjson.GetBytes(body, "max_output_tokens")

@@ -39,6 +39,8 @@ func newSimpleModeGroupRouter(svc *stubAdminService) *gin.Engine {
 	r.DELETE("/groups/:id/rate-multipliers", h.ClearGroupRateMultipliers)
 	r.PUT("/groups/:id/rpm-overrides", h.BatchSetGroupRPMOverrides)
 	r.DELETE("/groups/:id/rpm-overrides", h.ClearGroupRPMOverrides)
+	r.PUT("/groups/:id/user-denied-models", h.BatchSetGroupUserDeniedModels)
+	r.DELETE("/groups/:id/user-denied-models", h.ClearGroupUserDeniedModels)
 	r.DELETE("/groups/:id", h.Delete)
 	return r
 }
@@ -62,7 +64,7 @@ func TestGroupHandlerSimpleModeSanitizesCommercialFields(t *testing.T) {
 	require.Equal(t, service.SubscriptionTypeStandard, created.SubscriptionType)
 	require.Nil(t, created.DailyLimitUSD)
 	require.False(t, created.AllowImageGeneration)
-	require.Nil(t, created.LongContextPricingEnabled)
+	require.False(t, created.LongContextPricingEnabled)
 	require.Empty(t, created.ModelPricing)
 	require.False(t, created.AllowBatchImageGeneration)
 	require.Nil(t, created.VideoPrice720P)
@@ -286,6 +288,8 @@ func TestGroupHandlerSimpleModeBlocksAdvancedOperations(t *testing.T) {
 		{http.MethodDelete, "/groups/1/rate-multipliers", ""},
 		{http.MethodPut, "/groups/1/rpm-overrides", `{"entries":[]}`},
 		{http.MethodDelete, "/groups/1/rpm-overrides", ""},
+		{http.MethodPut, "/groups/1/user-denied-models", `{"entries":[]}`},
+		{http.MethodDelete, "/groups/1/user-denied-models", ""},
 		{http.MethodGet, "/groups/1/stats", ""},
 		{http.MethodGet, "/groups/1/api-keys", ""},
 		{http.MethodGet, "/groups/live-capability", ""},

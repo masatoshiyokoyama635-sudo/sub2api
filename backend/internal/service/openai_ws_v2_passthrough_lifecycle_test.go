@@ -202,15 +202,6 @@ func startPassthroughLifecycleServerWithHooks(
 		req := r.Clone(controlCtx)
 		req.Header = req.Header.Clone()
 		ginCtx.Request = req
-		groupID := int64(902)
-		ginCtx.Set("api_key", &APIKey{
-			ID:      903,
-			GroupID: &groupID,
-			Group: &Group{
-				ID:                   groupID,
-				AllowImageGeneration: false,
-			},
-		})
 		var hooks *OpenAIWSIngressHooks
 		if hooksFactory != nil {
 			hooks = hooksFactory(ginCtx)
@@ -273,6 +264,61 @@ func TestPassthroughLifecycle_LaterTurnPreOutputRateLimitRequestsReconnect(t *te
 		t.Fatalf("later-turn reconnect must not replay the retained first request: %s", replay)
 	default:
 	}
+}
+
+func TestPassthroughLifecycle_AdmissionFailureClearsResponseAffinity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	controlCtx, cancelControl := context.WithCancelCause(context.Background())
+	defer cancelControl(context.Canceled)
+
+	upstream := newStagedPassthroughConn()
+	account := passthroughLifecycleAccount()
+	repo := &turnAdmissionRepo{account: account}
+	svc := newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream)
+	svc.accountRepo = repo
+	svc.requireLatestTurnAdmission = true
+	stateStore := NewOpenAIWSStateStore(nil)
+	svc.openaiWSStateStore = stateStore
+	const responseID = "resp_passthrough_admission_rejected"
+	require.NoError(t, stateStore.BindResponseAccount(context.Background(), 0, responseID, account.ID, time.Hour))
+	stateStore.BindResponseConn(responseID, "conn-passthrough-admission", time.Hour)
+
+	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, svc, account)
+	defer server.Close()
+	clientConn := dialPassthroughLifecycleClient(t, server)
+	defer func() { _ = clientConn.CloseNow() }()
+
+	require.Equal(t, "response.create", gjson.GetBytes(requirePassthroughUpstreamWrite(t, upstream, time.Second), "type").String())
+	upstream.Send(fmt.Sprintf(`{"type":"response.completed","response":{"id":%q,"model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`, responseID))
+	completed, err := readPassthroughLifecycleFrame(t, clientConn, time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(completed, "type").String())
+
+	account.Schedulable = false
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), time.Second)
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(
+		fmt.Sprintf(`{"type":"response.create","model":"gpt-5.1","previous_response_id":%q,"stream":false}`, responseID),
+	))
+	cancelWrite()
+	require.NoError(t, err)
+
+	select {
+	case err := <-serverErr:
+		require.True(t, IsOpenAITurnAdmissionError(err), "%v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("passthrough admission failure did not terminate")
+	}
+	select {
+	case payload := <-upstream.writes:
+		t.Fatalf("ineligible later turn reached upstream: %s", payload)
+	default:
+	}
+
+	accountID, err := stateStore.GetResponseAccount(context.Background(), 0, responseID)
+	require.NoError(t, err)
+	require.Zero(t, accountID)
+	_, responseConnExists := stateStore.GetResponseConn(responseID)
+	require.False(t, responseConnExists)
 }
 
 func TestPassthroughLifecycle_CyberTerminalEventsMarkBeforeAfterTurn(t *testing.T) {
@@ -816,200 +862,6 @@ func TestPassthroughLifecycle_TerminalSwitchesToInterTurnIdleTimeout(t *testing.
 		require.Equal(t, "websocket idle timeout", closeErr.Reason())
 	case <-time.After(3 * time.Second):
 		t.Fatal("passthrough terminal turn did not use inter-turn idle timeout")
-	}
-}
-
-func TestPassthroughLifecycle_FollowupWithoutModelUsesSessionModelForReasoningPolicy(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	tests := []struct {
-		name          string
-		from          string
-		to            string
-		requested     string
-		wantForwarded bool
-		wantEffort    string
-	}{
-		{name: "mapping downgrades before deny ceiling", from: "max", to: "low", requested: "max", wantForwarded: true, wantEffort: "low"},
-		{name: "mapping raises into deny ceiling", from: "low", to: "max", requested: "low", wantForwarded: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			controlCtx, cancelControl := context.WithCancelCause(context.Background())
-			defer cancelControl(context.Canceled)
-			upstream := newStagedPassthroughConn()
-			upstream.Send(`{"type":"response.completed","response":{"id":"resp_reasoning_first","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
-			server, serverErr := startPassthroughLifecycleServerWithHooks(
-				t,
-				controlCtx,
-				newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream),
-				passthroughLifecycleAccount(),
-				func(*gin.Context) *OpenAIWSIngressHooks {
-					return &OpenAIWSIngressHooks{
-						InitialRequestModel:         "gpt-5.1",
-						MaxReasoningEffort:          "medium",
-						MaxReasoningEffortOverLimit: ReasoningEffortOverLimitDeny,
-						ReasoningEffortMappings: []ReasoningEffortMapping{
-							{From: tt.from, To: tt.to, MatchType: "exact", Model: "gpt-5.1"},
-						},
-					}
-				},
-			)
-			defer server.Close()
-			clientConn := dialPassthroughLifecycleClient(t, server)
-			defer func() { _ = clientConn.CloseNow() }()
-
-			firstWrite := requirePassthroughUpstreamWrite(t, upstream, 3*time.Second)
-			require.Equal(t, "gpt-5.1", gjson.GetBytes(firstWrite, "model").String())
-			completed, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-			require.NoError(t, err)
-			require.Equal(t, "resp_reasoning_first", gjson.GetBytes(completed, "response.id").String())
-
-			writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
-			err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","previous_response_id":"resp_reasoning_first","reasoning":{"effort":"`+tt.requested+`"}}`))
-			cancelWrite()
-			require.NoError(t, err)
-
-			if tt.wantForwarded {
-				secondWrite := requirePassthroughUpstreamWrite(t, upstream, 3*time.Second)
-				require.Equal(t, "gpt-5.1", gjson.GetBytes(secondWrite, "model").String())
-				require.Equal(t, tt.wantEffort, gjson.GetBytes(secondWrite, "reasoning.effort").String())
-				upstream.Send(`{"type":"response.completed","response":{"id":"resp_reasoning_second","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
-				completed, err = readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-				require.NoError(t, err)
-				require.Equal(t, "resp_reasoning_second", gjson.GetBytes(completed, "response.id").String())
-				require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
-				select {
-				case err := <-serverErr:
-					require.NoError(t, err)
-				case <-time.After(3 * time.Second):
-					t.Fatal("passthrough reasoning downgrade test did not exit")
-				}
-				return
-			}
-
-			select {
-			case unexpected := <-upstream.writes:
-				t.Fatalf("denied reasoning frame reached upstream: %s", unexpected)
-			case <-time.After(100 * time.Millisecond):
-			}
-			_, err = readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-			var websocketCloseErr coderws.CloseError
-			require.ErrorAs(t, err, &websocketCloseErr)
-			require.Equal(t, coderws.StatusPolicyViolation, websocketCloseErr.Code)
-			require.Contains(t, websocketCloseErr.Reason, `reasoning effort "max" exceeds`)
-			select {
-			case err := <-serverErr:
-				var closeErr *OpenAIWSClientCloseError
-				require.ErrorAs(t, err, &closeErr)
-				require.Equal(t, coderws.StatusPolicyViolation, closeErr.StatusCode())
-				require.Contains(t, closeErr.Reason(), `reasoning effort "max" exceeds`)
-			case <-time.After(3 * time.Second):
-				t.Fatal("passthrough reasoning deny test did not exit")
-			}
-		})
-	}
-}
-
-func TestPassthroughLifecycle_SessionUpdateModelDrivesReasoningPolicyForModelLessFollowup(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	controlCtx, cancelControl := context.WithCancelCause(context.Background())
-	defer cancelControl(context.Canceled)
-	upstream := newStagedPassthroughConn()
-	upstream.Send(`{"type":"response.completed","response":{"id":"resp_reasoning_before_model_update","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
-	server, serverErr := startPassthroughLifecycleServerWithHooks(
-		t,
-		controlCtx,
-		newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream),
-		passthroughLifecycleAccount(),
-		func(*gin.Context) *OpenAIWSIngressHooks {
-			return &OpenAIWSIngressHooks{
-				InitialRequestModel:         "gpt-5.1",
-				MaxReasoningEffort:          "medium",
-				MaxReasoningEffortOverLimit: ReasoningEffortOverLimitDeny,
-				ReasoningEffortMappings: []ReasoningEffortMapping{
-					{From: "max", To: "low", MatchType: "exact", Model: "gpt-5.5"},
-				},
-			}
-		},
-	)
-	defer server.Close()
-	clientConn := dialPassthroughLifecycleClient(t, server)
-	defer func() { _ = clientConn.CloseNow() }()
-
-	firstWrite := requirePassthroughUpstreamWrite(t, upstream, 3*time.Second)
-	require.Equal(t, "gpt-5.1", gjson.GetBytes(firstWrite, "model").String())
-	completed, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-	require.NoError(t, err)
-	require.Equal(t, "resp_reasoning_before_model_update", gjson.GetBytes(completed, "response.id").String())
-
-	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"session.update","session":{"model":"gpt-5.5"}}`))
-	cancelWrite()
-	require.NoError(t, err)
-	sessionUpdate := requirePassthroughUpstreamWrite(t, upstream, 3*time.Second)
-	require.Equal(t, "session.update", gjson.GetBytes(sessionUpdate, "type").String())
-	require.Equal(t, "gpt-5.5", gjson.GetBytes(sessionUpdate, "session.model").String())
-
-	writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","previous_response_id":"resp_reasoning_before_model_update","reasoning":{"effort":"max"}}`))
-	cancelWrite()
-	require.NoError(t, err)
-	followupWrite := requirePassthroughUpstreamWrite(t, upstream, 3*time.Second)
-	require.Equal(t, "response.create", gjson.GetBytes(followupWrite, "type").String())
-	require.Equal(t, "gpt-5.5", gjson.GetBytes(followupWrite, "model").String())
-	require.Equal(t, "low", gjson.GetBytes(followupWrite, "reasoning.effort").String())
-
-	upstream.Send(`{"type":"response.completed","response":{"id":"resp_reasoning_after_model_update","model":"gpt-5.5","usage":{"input_tokens":1,"output_tokens":1}}}`)
-	completed, err = readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-	require.NoError(t, err)
-	require.Equal(t, "resp_reasoning_after_model_update", gjson.GetBytes(completed, "response.id").String())
-	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
-	select {
-	case err := <-serverErr:
-		require.NoError(t, err)
-	case <-time.After(3 * time.Second):
-		t.Fatal("passthrough session model update reasoning test did not exit")
-	}
-}
-
-func TestPassthroughLifecycle_SecondTurnImageIntentIsRejected(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	controlCtx, cancelControl := context.WithCancelCause(context.Background())
-	defer cancelControl(context.Canceled)
-	upstream := newStagedPassthroughConn()
-	upstream.Send(`{"type":"response.completed","response":{"id":"resp_text_first","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
-	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream), passthroughLifecycleAccount())
-	defer server.Close()
-	clientConn := dialPassthroughLifecycleClient(t, server)
-	defer func() { _ = clientConn.CloseNow() }()
-
-	require.Equal(t, "response.create", gjson.GetBytes(requirePassthroughUpstreamWrite(t, upstream, time.Second), "type").String())
-	completed, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-	require.NoError(t, err)
-	require.Equal(t, "resp_text_first", gjson.GetBytes(completed, "response.id").String())
-
-	writeCtx, cancelWrite := context.WithTimeout(context.Background(), time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","previous_response_id":"resp_text_first","tools":[{"type":"image_generation"}],"tool_choice":"auto","input":"draw"}`))
-	cancelWrite()
-	require.NoError(t, err)
-
-	_, err = readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-	var closeErr coderws.CloseError
-	require.ErrorAs(t, err, &closeErr)
-	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
-	require.Equal(t, ImageGenerationPermissionMessage(), closeErr.Reason)
-	select {
-	case unexpected := <-upstream.writes:
-		t.Fatalf("forbidden second turn reached upstream: %s", unexpected)
-	case <-time.After(100 * time.Millisecond):
-	}
-	select {
-	case proxyErr := <-serverErr:
-		var policyClose *OpenAIWSClientCloseError
-		require.ErrorAs(t, proxyErr, &policyClose)
-		require.Equal(t, ImageGenerationPermissionMessage(), policyClose.Reason())
-	case <-time.After(3 * time.Second):
-		t.Fatal("passthrough image-intent gate did not terminate the connection")
 	}
 }
 
