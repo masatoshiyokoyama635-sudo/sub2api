@@ -974,6 +974,16 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 // BulkUpdateAccounts updates multiple accounts in one request.
 // It merges credentials/extra keys instead of overwriting the whole object.
 func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error) {
+	const openAIExcelBPSExtraKey = "openai_excel_bps"
+	excelBPSValue, excelBPSRequested := input.Extra[openAIExcelBPSExtraKey]
+	if excelBPSRequested {
+		if _, ok := excelBPSValue.(bool); !ok {
+			return nil, infraerrors.BadRequest(
+				"OPENAI_EXCEL_BPS_INVALID",
+				"openai_excel_bps must be a boolean",
+			)
+		}
+	}
 	// Managed probe/session state may only enter through dedicated typed endpoints.
 	input.Extra = MergeOpenAICodexTicketExtra(input.Extra, nil)
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
@@ -1021,7 +1031,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil || excelBPSRequested {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -1073,6 +1083,23 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 					"spark shadow account %d proxy is inherited from its parent and cannot be set in bulk; manage it on the parent account", acc.ID)
 			}
 		}
+	}
+
+	// Excel/BPS is deliberately scoped to real OpenAI OAuth accounts. Keep the
+	// field out of the generic JSONB merge so a mixed bulk selection cannot write
+	// it onto API keys or unrelated platforms, while preserving every other extra
+	// key supplied by the request.
+	var excelBPSAccountIDs []int64
+	if excelBPSRequested {
+		for _, accountID := range input.AccountIDs {
+			account, ok := targetsByID[accountID]
+			if ok && isExcelBPSBulkAccount(account) {
+				excelBPSAccountIDs = append(excelBPSAccountIDs, accountID)
+			}
+		}
+		// Do not mutate the caller's map while removing the scoped key.
+		input.Extra = maps.Clone(input.Extra)
+		delete(input.Extra, openAIExcelBPSExtraKey)
 	}
 
 	// 预加载账号平台信息（混合渠道检查需要）。
@@ -1193,9 +1220,19 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		repoUpdates.Schedulable = input.Schedulable
 	}
 
-	// Run bulk update for column/jsonb fields first.
-	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
-		return nil, err
+	// Run bulk update for column/jsonb fields first. The Excel/BPS-only request
+	// may leave this update empty after the scoped field is removed.
+	if hasAccountBulkUpdateFields(repoUpdates) {
+		if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
+			return nil, err
+		}
+	}
+	if excelBPSRequested && len(excelBPSAccountIDs) > 0 {
+		if _, err := s.accountRepo.BulkUpdate(ctx, excelBPSAccountIDs, AccountBulkUpdate{
+			Extra: map[string]any{openAIExcelBPSExtraKey: excelBPSValue},
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	// 将 proxy 变更传播到每个目标账号的 spark 影子账号
@@ -1242,6 +1279,19 @@ func updatesUpstreamBillingProbeIdentity(credentials map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func hasAccountBulkUpdateFields(updates AccountBulkUpdate) bool {
+	return updates.Name != nil || updates.ProxyID != nil || updates.Concurrency != nil ||
+		updates.Priority != nil || updates.RateMultiplier != nil || updates.GroupRateMultiplier != nil ||
+		updates.LoadFactor != nil || updates.Status != nil || updates.Schedulable != nil ||
+		len(updates.Credentials) > 0 || len(updates.Extra) > 0 || updates.ProbeEnabled != nil ||
+		updates.EnsureCodexFingerprintSeed
+}
+
+func isExcelBPSBulkAccount(account *Account) bool {
+	return account != nil && account.IsOpenAIOAuth() &&
+		!account.IsShadow() && !account.IsOpenAIAgentIdentity() && !account.IsOpenAIPersonalAccessToken()
 }
 
 func upstreamBillingProbeIdentity(account *Account) map[string]any {
