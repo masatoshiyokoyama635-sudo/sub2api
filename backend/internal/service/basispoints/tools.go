@@ -285,7 +285,7 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 	result := make([]any, 0, len(input))
 	seenCalls := make(map[string]bool)
 	var trigger any
-	for _, raw := range input {
+	for index, raw := range input {
 		item, ok := raw.(object)
 		if !ok {
 			return nil, fmt.Errorf("invalid Basispoints input item")
@@ -328,7 +328,7 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 				seenCalls[id] = true
 			}
 			item["type"] = "function_call_output"
-			if err := validateHistoryContent(item["output"]); err != nil {
+			if err := validateHistoryContent(item["output"], index, "output"); err != nil {
 				return nil, err
 			}
 			// Codex custom results carry ctco_ IDs. After lowering to a function
@@ -344,7 +344,7 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 		case "configuration_update":
 			return nil, fmt.Errorf("basispoints does not support configuration_update; start a new request with the desired effort")
 		}
-		if err := validateHistoryContent(item["content"]); err != nil {
+		if err := validateHistoryContent(item["content"], index, "content"); err != nil {
 			return nil, err
 		}
 		result = append(result, item)
@@ -353,23 +353,6 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 		result = append(result, trigger)
 	}
 	return result, nil
-}
-
-func validateHistoryContent(value any) error {
-	content, _ := value.([]any)
-	for _, rawPart := range content {
-		part, _ := rawPart.(object)
-		switch text(part["type"]) {
-		case "input_text", "output_text", "text", "refusal":
-		case "input_image":
-			if err := validateImage(part); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("basispoints supports text and HTTPS input_image content only")
-		}
-	}
-	return nil
 }
 
 func isTool(item object) bool {
@@ -466,6 +449,11 @@ func (b *Bridge) translateDirectCatalogCall(native object) (object, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Direct calls can carry real upstream encryption metadata. Only relay
+	// that metadata when the arguments still belong to the same client tool.
+	if encrypted := native["encrypted_function_args"]; encrypted != nil && info.Kind == "function" {
+		result["encrypted_function_args"] = encrypted
+	}
 	// The model bypassed run_officejs, so the bare native name is not a BPS tool.
 	// Cache a transport-wrapped replay so the next turn presents a BPS-known
 	// run_officejs item, matching how absent history is rebuilt.
@@ -529,6 +517,11 @@ func (b *Bridge) finishClientToolCall(native object, info tool, envelope object,
 		}
 		encoded, _ := json.Marshal(args)
 		result["arguments"] = string(encoded)
+		// The relay envelope contains plaintext, even when a catalog parameter
+		// declares encrypted:true. Codex collaboration tools distinguish an
+		// explicit empty list from a missing field: without it, they incorrectly
+		// package plaintext messages as encrypted_content for the child agent.
+		result["encrypted_function_args"] = []string{}
 	}
 	return result, nil
 }
