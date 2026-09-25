@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://tosky.io/site-assets/images/logo-icon.png" alt="Sub2API Logo" width="128" />
+<img src="assets/logo-icon.png" alt="Sub2API Logo" width="128" />
 
 # Sub2API
 
@@ -45,12 +45,16 @@
 
 ## 本仓库的维护方向
 
-基于 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) 持续维护，按需 cherry-pick 上游更新，同时保留并迭代自己的功能。默认分支为 `production`，发布版本和更新源均使用本仓库。
+本仓库是 `ranxi2001/sub2api` 的独立生产 fork，基于 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) 按需同步。应用功能、上游修复、Release 和生产验证都以 `production` 分支为准；不会用上游默认分支或 tag 直接覆盖本 fork 的生产历史。
 
 - **DeepSeek 与 Codex 适配**：支持 Responses 到 Chat Completions 的转换、工具调用历史和上下文压缩兼容。配置模型映射后，可通过切换 API Key 分组使用 DeepSeek，沿用客户端配置。[操作教程](https://tosky.io/docs/?doc=deepseek-switch-group)
 - **Codex ticket 管理**：提供后台采集、注入、模型选择及账号状态展示；相关开关和采集代理由管理员配置。
 - **Mihomo 出口管理**：集成采集出口管理、票据刷新策略和节点状态操作，日常业务代理与采集出口分别配置。
-- **独立发布与升级**：使用 `ranxi2001/sub2api` 的 Release、安装资源和容器镜像，具体版本变化见 [更新说明](https://github.com/ranxi2001/sub2api/releases)。
+- **Excel / Basispoints**：维护模型级 BPS 路由、内嵌图片 HTTPS 中转、磁盘和并发保护、结构化输出校验，以及工具历史和 transport 恢复。BPS 不支持的搜索、图片生成等请求按请求回退原 Codex 通道。
+- **上游修复维护**：持续跟踪上游 Codex、Responses、工具调用、密文恢复和限流修复；先确认与本 fork 的行为差异，再按提交级别移植并补充回归测试。
+- **独立发布与升级**：使用 `ranxi2001/sub2api` 的 Release、安装资源和容器镜像。版本变更见 [更新说明](https://github.com/ranxi2001/sub2api/releases)；Release 成功不代表生产服务已经部署，线上状态需要单独验证。
+
+贡献代码时，请在独立分支中说明影响的请求路径、账号类型、配置默认值和兼容边界。涉及生产分支的修复应先进入原 PR head，通过 CI 后再合并；不要提交 Token、OAuth 导出、ticket、代理凭据或生产配置。
 
 ## 项目概述
 

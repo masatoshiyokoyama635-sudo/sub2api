@@ -31,6 +31,56 @@
         </p>
       </div>
 
+      <!-- Excel / BPS protocol (ChatGPT OAuth only) -->
+      <div v-if="allOpenAIOAuthOnly" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label id="bulk-edit-excel-bps-label" class="input-label mb-0" for="bulk-edit-excel-bps-enabled">
+              {{ t('admin.accounts.openai.excelBPS') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.excelBPSDesc') }}
+            </p>
+          </div>
+          <input v-model="enableExcelBPS" id="bulk-edit-excel-bps-enabled" type="checkbox"
+            aria-controls="bulk-edit-excel-bps-body"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+        </div>
+        <fieldset id="bulk-edit-excel-bps-body" :disabled="!enableExcelBPS"
+          :class="!enableExcelBPS && 'pointer-events-none opacity-50'"
+          aria-labelledby="bulk-edit-excel-bps-label">
+          <button type="button" role="switch" :aria-checked="excelBPSEnabled"
+            :aria-label="t('admin.accounts.openai.excelBPS')" data-testid="bulk-excel-bps-toggle"
+            @click="excelBPSEnabled = !excelBPSEnabled"
+            :class="['relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2', excelBPSEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600']">
+            <span :class="['pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition', excelBPSEnabled ? 'translate-x-5' : 'translate-x-0']" />
+          </button>
+          <div v-if="excelBPSEnabled" class="mt-3 space-y-3">
+            <label class="flex items-center gap-2 text-sm">
+              <input v-model="excelBPSAllModels" type="checkbox" data-testid="bulk-excel-bps-all-models" />
+              <span>{{ t('admin.accounts.openai.excelBPSAllModels') }}</span>
+            </label>
+            <div v-if="!excelBPSAllModels" data-testid="bulk-excel-bps-model-selection">
+              <label class="input-label">{{ t('admin.accounts.openai.excelBPSModels') }}</label>
+              <ModelWhitelistSelector v-model="excelBPSModels" platform="openai" />
+              <button type="button" class="btn btn-secondary" data-testid="bulk-excel-bps-astra-only"
+                @click="excelBPSModels = ['gpt-6-astra']">{{ t('admin.accounts.openai.excelBPSAstraOnly') }}</button>
+              <p class="input-hint">{{ t('admin.accounts.openai.excelBPSModelsHint') }}</p>
+            </div>
+            <p class="text-xs text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.excelBPSNotice') }}</p>
+            <div>
+              <label class="flex items-center gap-2">
+                <input v-model="excelBPSCacheCreationAsInput" type="checkbox"
+                  data-testid="bulk-excel-bps-cache-creation-as-input"
+                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+                <span class="text-sm">{{ t('admin.accounts.openai.excelBPSCacheCreationAsInput') }}</span>
+              </label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSCacheCreationAsInputDesc') }}</p>
+            </div>
+          </div>
+        </fieldset>
+      </div>
+
       <!-- OpenAI passthrough -->
       <div
         v-if="allOpenAIPassthroughCapable"
@@ -131,66 +181,6 @@
             />
           </button>
         </div>
-      </div>
-
-      <!-- OpenAI Excel / BPS protocol (OAuth only) -->
-      <div
-        v-if="allOpenAIOAuthOnly"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
-      >
-        <div class="mb-3 flex items-center justify-between gap-4">
-          <div class="flex-1">
-            <label
-              id="bulk-edit-openai-excel-bps-label"
-              class="input-label mb-0"
-              for="bulk-edit-openai-excel-bps-enabled"
-            >
-              {{ t('admin.accounts.openai.excelBPS') }}
-            </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.excelBPSDesc') }}
-            </p>
-          </div>
-          <input
-            v-model="enableOpenAIExcelBPS"
-            id="bulk-edit-openai-excel-bps-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-excel-bps-body"
-            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
-        </div>
-        <div
-          id="bulk-edit-openai-excel-bps-body"
-          :class="!enableOpenAIExcelBPS && 'pointer-events-none opacity-50'"
-          role="group"
-          aria-labelledby="bulk-edit-openai-excel-bps-label"
-        >
-          <button
-            type="button"
-            data-testid="bulk-edit-openai-excel-bps-toggle"
-            role="switch"
-            :disabled="!enableOpenAIExcelBPS"
-            :aria-checked="openAIExcelBPSEnabled"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openAIExcelBPSEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-            @click="openAIExcelBPSEnabled = !openAIExcelBPSEnabled"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                openAIExcelBPSEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
-        <p
-          v-if="openAIExcelBPSEnabled && enableOpenAIExcelBPS"
-          class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
-        >
-          {{ t('admin.accounts.openai.excelBPSNotice') }}
-        </p>
       </div>
 
       <!-- OpenAI API long-context billing -->
@@ -1729,9 +1719,9 @@ const enableGroupRateMultiplier = ref(false)
 const groupRateMultiplier = ref(1)
 const enableStatus = ref(false)
 const enableGroups = ref(false)
+const enableExcelBPS = ref(false)
 const enableOpenAIPassthrough = ref(false)
 const enableOpenAIFlattenNamespaces = ref(false)
-const enableOpenAIExcelBPS = ref(false)
 const enableOpenAILongContextBilling = ref(false)
 const enableOpenAIEndpointCapabilities = ref(false)
 const enableOpenAIResponsesMode = ref(false)
@@ -1765,10 +1755,13 @@ const priority = ref(1)
 const rateMultiplier = ref(1)
 const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
+const excelBPSEnabled = ref(false)
+const excelBPSAllModels = ref(false)
+const excelBPSModels = ref<string[]>(['gpt-6-astra'])
+const excelBPSCacheCreationAsInput = ref(false)
 const openaiPassthroughEnabled = ref(false)
 // Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
-const openAIExcelBPSEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>([
   'chat_completions',
@@ -2053,6 +2046,17 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     }
   }
 
+  if (enableExcelBPS.value && allOpenAIOAuthOnly.value) {
+    const extra = ensureExtra()
+    extra.openai_excel_bps = excelBPSEnabled.value
+    // null explicitly removes an existing model scope; [] selects no BPS models.
+    extra.openai_excel_bps_models = excelBPSEnabled.value && !excelBPSAllModels.value
+      ? [...new Set(excelBPSModels.value.map(model => model.trim()).filter(Boolean))]
+      : null
+    extra.openai_excel_bps_cache_creation_as_input =
+      excelBPSEnabled.value && excelBPSCacheCreationAsInput.value
+  }
+
   if (enableOpenAIPassthrough.value) {
     const extra = ensureExtra()
     extra.openai_passthrough = openaiPassthroughEnabled.value
@@ -2065,13 +2069,6 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
   if (enableOpenAIFlattenNamespaces.value && allOpenAIOAuthOnly.value) {
     const extra = ensureExtra()
     extra.openai_responses_flatten_namespaces = openaiFlattenNamespacesEnabled.value
-  }
-
-  // Excel/BPS is an opt-in bulk field. Sending false explicitly clears the
-  // existing flag; leaving the field disabled omits it and preserves it.
-  if (enableOpenAIExcelBPS.value && allOpenAIOAuthOnly.value) {
-    const extra = ensureExtra()
-    extra.openai_excel_bps = openAIExcelBPSEnabled.value
   }
 
   if (applyOpenAILongContextBilling) {
@@ -2286,9 +2283,9 @@ const handleSubmit = async () => {
 
   const hasAnyFieldEnabled =
     enableBaseUrl.value ||
+    (enableExcelBPS.value && allOpenAIOAuthOnly.value) ||
     enableOpenAIPassthrough.value ||
     enableOpenAIFlattenNamespaces.value ||
-    enableOpenAIExcelBPS.value ||
     (enableOpenAILongContextBilling.value && allOpenAIPassthroughCapable.value) ||
     (enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value) ||
     (enableOpenAIResponsesMode.value && allOpenAIAPIKey.value) ||
@@ -2450,9 +2447,9 @@ watch(
       enableRateMultiplier.value = false
       enableStatus.value = false
       enableGroups.value = false
+      enableExcelBPS.value = false
       enableOpenAIPassthrough.value = false
       enableOpenAIFlattenNamespaces.value = false
-      enableOpenAIExcelBPS.value = false
       enableOpenAILongContextBilling.value = false
       enableOpenAIEndpointCapabilities.value = false
       enableOpenAIResponsesMode.value = false
@@ -2469,9 +2466,12 @@ watch(
 
       // Reset all values
       baseUrl.value = ''
+      excelBPSEnabled.value = false
+      excelBPSAllModels.value = false
+      excelBPSModels.value = ['gpt-6-astra']
+      excelBPSCacheCreationAsInput.value = false
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
-      openAIExcelBPSEnabled.value = false
       openAILongContextBillingEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openAIResponsesMode.value = 'auto'

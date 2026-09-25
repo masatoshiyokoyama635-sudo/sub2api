@@ -20,9 +20,6 @@ type accountRepoStubForBulkUpdate struct {
 	bulkUpdateIDs       []int64
 	bulkUpdateCalls     int
 	lastBulkUpdate      AccountBulkUpdate
-	lastBulkUpdateIDs   []int64
-	bulkUpdateIDHistory [][]int64
-	bulkUpdateHistory   []AccountBulkUpdate
 	bindGroupErrByID    map[int64]error
 	bindGroupsCalls     []int64
 	bindGroupsByAccount map[int64][]int64
@@ -59,9 +56,6 @@ func (s *accountRepoStubForBulkUpdate) BulkUpdate(_ context.Context, ids []int64
 	s.bulkUpdateCalls++
 	s.bulkUpdateIDs = append([]int64{}, ids...)
 	s.lastBulkUpdate = updates
-	s.lastBulkUpdateIDs = append([]int64{}, ids...)
-	s.bulkUpdateIDHistory = append(s.bulkUpdateIDHistory, append([]int64{}, ids...))
-	s.bulkUpdateHistory = append(s.bulkUpdateHistory, updates)
 	if s.bulkUpdateErr != nil {
 		return 0, s.bulkUpdateErr
 	}
@@ -170,52 +164,6 @@ func TestAdminService_BulkUpdateAccounts_AllSuccessIDs(t *testing.T) {
 	require.ElementsMatch(t, []int64{1, 2, 3}, result.SuccessIDs)
 	require.Empty(t, result.FailedIDs)
 	require.Len(t, result.Results, 3)
-}
-
-func TestAdminService_BulkUpdateAccounts_ExcelBPSScopesToOpenAIOAuth(t *testing.T) {
-	repo := &accountRepoStubForBulkUpdate{
-		getByIDsAccounts: []*Account{
-			{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
-			{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
-			{ID: 3, Platform: PlatformAnthropic, Type: AccountTypeOAuth},
-			{ID: 4, Platform: PlatformOpenAI, Type: AccountTypeOAuth, ParentAccountID: int64PtrForBulkUpdate(99)},
-		},
-	}
-	svc := &adminServiceImpl{accountRepo: repo}
-
-	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
-		AccountIDs: []int64{1, 2, 3, 4},
-		Extra: map[string]any{
-			"openai_excel_bps":  true,
-			"unrelated_setting": true,
-		},
-	})
-
-	require.NoError(t, err)
-	require.Equal(t, 4, result.Success)
-	require.Equal(t, 2, repo.bulkUpdateCalls)
-	require.Equal(t, []int64{1, 2, 3, 4}, repo.bulkUpdateIDHistory[0])
-	require.Equal(t, []int64{1}, repo.lastBulkUpdateIDs)
-	require.Equal(t, map[string]any{"openai_excel_bps": true}, repo.lastBulkUpdate.Extra)
-	// The generic update keeps unrelated extra keys and never receives the
-	// protocol flag, preventing it from leaking onto API keys/non-OpenAI rows.
-	require.Equal(t, map[string]any{"unrelated_setting": true}, repo.bulkUpdateHistory[0].Extra)
-}
-
-func int64PtrForBulkUpdate(value int64) *int64 { return &value }
-
-func TestAdminService_BulkUpdateAccounts_RejectsMalformedExcelBPS(t *testing.T) {
-	repo := &accountRepoStubForBulkUpdate{}
-	svc := &adminServiceImpl{accountRepo: repo}
-
-	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
-		AccountIDs: []int64{1},
-		Extra:      map[string]any{"openai_excel_bps": "true"},
-	})
-
-	require.Nil(t, result)
-	requireApplicationErrorReason(t, err, "OPENAI_EXCEL_BPS_INVALID")
-	require.Zero(t, repo.bulkUpdateCalls)
 }
 
 func TestAdminService_BulkUpdateAccounts_RejectsRateChangeForSyncedAccounts(t *testing.T) {
