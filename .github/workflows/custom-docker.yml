@@ -21,6 +21,8 @@ env:
 
 jobs:
   test:
+    env:
+      TZ: Asia/Shanghai
     permissions:
       contents: read
     runs-on: ubuntu-latest
