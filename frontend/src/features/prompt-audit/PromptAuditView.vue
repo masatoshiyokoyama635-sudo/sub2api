@@ -140,7 +140,6 @@
       @criteria-change="clearDeletePreview"
     />
     <EventDetailDialog :show="showEventDetail" :event="activeEvent" :loading="loading.detail" @close="closeEventDetail" />
-    <TotpStepUpDialog :controller="promptAuditStepUp" />
   </AppLayout>
 </template>
 
@@ -149,8 +148,6 @@ import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
-import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorCode, extractApiErrorMessage } from '@/utils/apiError'
 import RuntimeOverview from './components/RuntimeOverview.vue'
@@ -172,11 +169,10 @@ import type {
   PromptLoadErrors,
   PromptProbeResult,
 } from './types'
-import { buildUpdateRequest, cloneData, configToDraft, draftFingerprint, emptyEventFilters, eventFilterPayload } from './viewModel'
+import { buildUpdateRequest, cloneData, configToDraft, draftFingerprint, emptyEventFilters } from './viewModel'
 
 const { t, locale } = useI18n()
 const appStore = useAppStore()
-const promptAuditStepUp = useStepUp()
 type PromptAuditPageTab = 'config' | 'events'
 const activeTab = ref<PromptAuditPageTab>('events')
 const pageTabs = computed(() => [
@@ -238,21 +234,6 @@ const SaveToggle = defineComponent({
     ])
   },
 })
-
-function reportStepUpBlocked(error: unknown): boolean {
-  if (!isStepUpBlocked(error)) return false
-  appStore.showError(
-    stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
-      ? t('stepUp.adminApiKeyForbidden')
-      : t('stepUp.notEnabled')
-  )
-  return true
-}
-
-function reportSensitiveActionError(error: unknown, fallbackKey: string) {
-  if (isStepUpCancelled(error) || reportStepUpBlocked(error)) return
-  appStore.showError(errorMessage(error, fallbackKey))
-}
 
 function errorMessage(error: unknown, fallbackKey: string): string {
   const code = extractApiErrorCode(error)
@@ -333,16 +314,14 @@ async function saveConfig() {
   if (!draft.value || !dirty.value) return
   loading.saving = true
   try {
-    const saved = await promptAuditStepUp.run(() => promptAuditAPI.updateConfig(buildUpdateRequest(draft.value!)))
+    const saved = await promptAuditAPI.updateConfig(buildUpdateRequest(draft.value))
     serverConfig.value = configToDraft(saved)
     draft.value = configToDraft(saved)
     appStore.showSuccess(t('admin.promptAudit.messages.saved'))
     await loadRuntime()
   } catch (error) {
-    if (!isStepUpCancelled(error) && !reportStepUpBlocked(error)) {
-      const code = extractApiErrorCode(error)
-      appStore.showError(errorMessage(error, code === 'prompt_audit_config_conflict' ? 'admin.promptAudit.errors.prompt_audit_config_conflict' : 'admin.promptAudit.errors.saveConfig'))
-    }
+    const code = extractApiErrorCode(error)
+    appStore.showError(errorMessage(error, code === 'prompt_audit_config_conflict' ? 'admin.promptAudit.errors.prompt_audit_config_conflict' : 'admin.promptAudit.errors.saveConfig'))
   } finally {
     loading.saving = false
   }
@@ -351,12 +330,12 @@ async function runProbe(endpoint: PromptAuditEndpointDraft) {
   if (probingIds.value.includes(endpoint.id)) return
   probingIds.value = [...probingIds.value, endpoint.id]
   try {
-    const result = await promptAuditStepUp.run(() => promptAuditAPI.probeEndpoint(endpoint))
+    const result = await promptAuditAPI.probeEndpoint(endpoint)
     probeResults[endpoint.id] = result
     if (result.ok) appStore.showSuccess(t('admin.promptAudit.messages.probeSucceeded'))
     else appStore.showError(`${result.error_code || result.status}: ${result.message}`)
   } catch (error) {
-    reportSensitiveActionError(error, 'admin.promptAudit.errors.probe')
+    appStore.showError(errorMessage(error, 'admin.promptAudit.errors.probe'))
   } finally {
     probingIds.value = probingIds.value.filter((id) => id !== endpoint.id)
   }
@@ -379,8 +358,8 @@ async function openEvent(id: number) {
   showEventDetail.value = true
   loading.detail = true
   activeEvent.value = null
-  try { activeEvent.value = await promptAuditStepUp.run(() => promptAuditAPI.getEvent(id)) }
-  catch (error) { reportSensitiveActionError(error, 'admin.promptAudit.errors.loadDetail'); showEventDetail.value = false }
+  try { activeEvent.value = await promptAuditAPI.getEvent(id) }
+  catch (error) { appStore.showError(errorMessage(error, 'admin.promptAudit.errors.loadDetail')); showEventDetail.value = false }
   finally { loading.detail = false }
 }
 function closeEventDetail() { showEventDetail.value = false; activeEvent.value = null }
@@ -394,14 +373,13 @@ async function confirmIDDelete() {
   if (!mode || ids.length === 0) return
   loading.deleting = true
   try {
-    const result = await promptAuditStepUp.run(() => mode === 'single' ? promptAuditAPI.deleteEvent(ids[0]) : promptAuditAPI.batchDeleteEvents(ids))
+    const result = mode === 'single' ? await promptAuditAPI.deleteEvent(ids[0]) : await promptAuditAPI.batchDeleteEvents(ids)
     appStore.showSuccess(t('admin.promptAudit.messages.deleted', { count: result.deleted_events }))
     await Promise.allSettled([loadEvents(), loadRuntime()])
-  } catch (error) { reportSensitiveActionError(error, 'admin.promptAudit.errors.delete') }
+  } catch (error) { appStore.showError(errorMessage(error, 'admin.promptAudit.errors.delete')) }
   finally { loading.deleting = false }
 }
 function clearDeletePreview() {
-  filterPreviewRequestToken += 1
   deletePreview.value = null
   deletePreviewFilters.value = null
 }
@@ -413,19 +391,14 @@ function closeFilterDelete() {
   showFilterDelete.value = false
   clearDeletePreview()
 }
-let filterPreviewRequestToken = 0
-
 async function runFilterDeletePreview(value: PromptEventFilters) {
-  const requestToken = ++filterPreviewRequestToken
   loading.previewing = true
   try {
-    const preview = await promptAuditStepUp.run(() => promptAuditAPI.previewDelete(value))
-    if (requestToken !== filterPreviewRequestToken) return
-    deletePreview.value = preview
+    deletePreview.value = await promptAuditAPI.previewDelete(value)
     deletePreviewFilters.value = cloneData(value)
   } catch (error) {
     clearDeletePreview()
-    reportSensitiveActionError(error, 'admin.promptAudit.errors.previewDelete')
+    appStore.showError(errorMessage(error, 'admin.promptAudit.errors.previewDelete'))
   } finally { loading.previewing = false }
 }
 async function confirmFilterDelete(filters?: PromptEventFilters) {
@@ -434,25 +407,21 @@ async function confirmFilterDelete(filters?: PromptEventFilters) {
   try {
     let preview = deletePreview.value
     let previewFilters = deletePreviewFilters.value ? cloneData(deletePreviewFilters.value) : null
-    if (filters && previewFilters && JSON.stringify(eventFilterPayload(filters)) !== JSON.stringify(eventFilterPayload(previewFilters))) {
-      preview = null
-      previewFilters = null
-    }
     // One-click path: no fresh preview (never requested, or cleared by a
     // criteria change) — mint the confirmation token on the fly from the
     // criteria the dialog just emitted, then delete in the same action.
     if ((!preview || !previewFilters) && filters) {
-      preview = await promptAuditStepUp.run(() => promptAuditAPI.previewDelete(filters))
+      preview = await promptAuditAPI.previewDelete(filters)
       previewFilters = cloneData(filters)
     }
     if (!preview || !previewFilters) return
-    const result = await promptAuditStepUp.run(() => promptAuditAPI.deleteEventsByFilter(previewFilters!, preview!))
+    const result = await promptAuditAPI.deleteEventsByFilter(previewFilters, preview)
     closeFilterDelete()
     appStore.showSuccess(t('admin.promptAudit.messages.deleted', { count: result.deleted_events }))
     await Promise.allSettled([loadEvents(), loadRuntime()])
   } catch (error) {
     clearDeletePreview()
-    reportSensitiveActionError(error, 'admin.promptAudit.errors.deleteConfirmation')
+    appStore.showError(errorMessage(error, 'admin.promptAudit.errors.deleteConfirmation'))
   } finally { loading.deleting = false }
 }
 function formatDate(value: string): string {

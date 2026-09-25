@@ -37,35 +37,6 @@ func TestRedisPayloadStoreRoundTripTTLNamespaceAndDelete(t *testing.T) {
 	require.ErrorIs(t, err, redis.Nil)
 }
 
-func TestRedisPayloadStoreRejectsOversizedPayloadOnRead(t *testing.T) {
-	address := strings.TrimSpace(os.Getenv(promptAuditRedisTestEnv))
-	if address == "" {
-		t.Skip(promptAuditRedisTestEnv + " is not set")
-	}
-	client := redis.NewClient(&redis.Options{Addr: address})
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
-	store := NewRedisPayloadStore(client)
-	ctx := context.Background()
-	const jobID int64 = 987654322
-	require.NoError(t, client.Set(ctx, payloadKey(jobID), strings.Repeat("x", MaxPromptAuditPayloadBytes+1), time.Minute).Err())
-	t.Cleanup(func() { _ = client.Del(ctx, payloadKey(jobID)).Err() })
-
-	_, err := store.Get(ctx, jobID)
-	require.ErrorIs(t, err, ErrPromptAuditPayloadTooLarge)
-}
-
-func TestRedisPayloadStoreRejectsOversizedPayloadBeforeRedisCommand(t *testing.T) {
-	store := NewRedisPayloadStore(redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"}))
-	t.Cleanup(func() { require.NoError(t, store.client.Close()) })
-
-	err := store.Set(context.Background(), 1, strings.Repeat("x", MaxPromptAuditPayloadBytes+1), DefaultPayloadTTL)
-
-	require.ErrorIs(t, err, ErrPromptAuditPayloadTooLarge)
-	var guardErr *GuardError
-	require.ErrorAs(t, err, &guardErr)
-	require.Equal(t, ErrorCodeInvalidResponse, guardErr.Code)
-}
-
 func TestPromptRuntimeAggregatesConfigWorkersQueueRedisEndpointsAndGuardMetrics(t *testing.T) {
 	address := strings.TrimSpace(os.Getenv(promptAuditRedisTestEnv))
 	if address == "" {

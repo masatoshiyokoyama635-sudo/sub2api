@@ -395,43 +395,6 @@ func TestPromptAuditRepositoryHighWaterAndSafeDeletion(t *testing.T) {
 	require.Equal(t, int64(2), batchResult.DeletedEvents)
 }
 
-func TestPromptAuditCleanupTerminalJobsIsBoundedAndPreservesEventJobs(t *testing.T) {
-	db := openPromptAuditIntegrationDB(t)
-	repo := NewPostgreSQLRepository(db)
-	ctx := context.Background()
-	old := time.Now().UTC().Add(-48 * time.Hour)
-
-	withEvent, err := repo.RecordBlocking(ctx, integrationSnapshot("cleanup-event"), 1, integrationResult(EventCritical), true)
-	require.NoError(t, err)
-	withoutEventDone, err := repo.CreateStagingWithCapacity(ctx, integrationSnapshot("cleanup-done"), 1, 3, 10)
-	require.NoError(t, err)
-	withoutEventFailed, err := repo.CreateStagingWithCapacity(ctx, integrationSnapshot("cleanup-failed"), 1, 3, 10)
-	require.NoError(t, err)
-	require.NoError(t, repo.MarkStagingFailed(ctx, withoutEventFailed.ID, "payload_store_failed", "ignored"))
-	_, err = db.ExecContext(ctx, `UPDATE prompt_audit_jobs SET status='done', processed_at=$2, updated_at=$2 WHERE id=$1`, withoutEventDone.ID, old)
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `UPDATE prompt_audit_jobs SET processed_at=$2, updated_at=$2 WHERE id=$1`, withoutEventFailed.ID, old)
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `UPDATE prompt_audit_jobs SET processed_at=$2, updated_at=$2 WHERE id=$1`, withEvent.JobID, old)
-	require.NoError(t, err)
-
-	deleted, err := repo.CleanupTerminalJobs(ctx, time.Now().UTC().Add(-24*time.Hour), 1)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), deleted, "cleanup must honor its batch limit")
-
-	var remaining int
-	require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM prompt_audit_jobs WHERE id IN ($1,$2)`, withoutEventDone.ID, withoutEventFailed.ID).Scan(&remaining))
-	require.Equal(t, 1, remaining, "one of the two eligible no-event jobs should remain for the next bounded pass")
-	require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM prompt_audit_jobs WHERE id=$1`, withEvent.JobID).Scan(&remaining))
-	require.Equal(t, 1, remaining, "jobs referenced by events must never be orphan-cleaned")
-
-	deleted, err = repo.CleanupTerminalJobs(ctx, time.Now().UTC().Add(-24*time.Hour), 100)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), deleted)
-	require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM prompt_audit_jobs WHERE id IN ($1,$2)`, withoutEventDone.ID, withoutEventFailed.ID).Scan(&remaining))
-	require.Zero(t, remaining)
-}
-
 func TestPromptAuditServiceConfirmationKeepsPostPreviewEventsAndConcurrentDeletesAreSafe(t *testing.T) {
 	db := openPromptAuditIntegrationDB(t)
 	repo := NewPostgreSQLRepository(db)

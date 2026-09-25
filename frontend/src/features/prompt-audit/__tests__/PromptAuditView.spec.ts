@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
-import { ref } from 'vue'
 import type { PromptAuditConfig, PromptAuditRuntime } from '../types'
 import { SCANNER_CATALOG } from '../viewModel'
 import PromptAuditView from '../PromptAuditView.vue'
@@ -14,12 +13,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../api', () => ({ default: mocks }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess, showError: mocks.showError }) }))
-vi.mock('@/composables/useStepUp', () => ({
-  useStepUp: () => ({ visible: ref(false), blockedReason: ref(''), run: (action: () => Promise<unknown>) => action(), prompt: vi.fn(), onVerified: vi.fn(), onCancel: vi.fn() }),
-  isStepUpBlocked: () => false,
-  isStepUpCancelled: () => false,
-  stepUpBlockReason: () => '',
-}))
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return { ...actual, useI18n: () => ({ locale: { value: 'en' }, t: (key: string, params?: Record<string, unknown>) => key.replace(/\{(\w+)\}/g, (_, token) => String(params?.[token] ?? `{${token}}`)) }) }
@@ -61,7 +54,7 @@ const FilterDeleteStub = defineComponent({
 
 function mountView() {
   return mount(PromptAuditView, {
-    global: { stubs: { AppLayout: AppLayoutStub, RuntimeOverview: RuntimeStub, EndpointPool: EndpointStub, PolicyPanel: PolicyStub, EventWorkspace: EventsStub, EventDetailDialog: DetailStub, FilterDeleteDialog: FilterDeleteStub, ConfirmDialog: ConfirmStub, TotpStepUpDialog: true } },
+    global: { stubs: { AppLayout: AppLayoutStub, RuntimeOverview: RuntimeStub, EndpointPool: EndpointStub, PolicyPanel: PolicyStub, EventWorkspace: EventsStub, EventDetailDialog: DetailStub, FilterDeleteDialog: FilterDeleteStub, ConfirmDialog: ConfirmStub } },
   })
 }
 
@@ -177,21 +170,6 @@ describe('PromptAuditView', () => {
     await wrapper.get('[data-test="change-filter"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-test="filter-delete-dialog"]').exists()).toBe(true)
-    expect(wrapper.get('[data-test="dialog-preview-state"]').text()).toBe('none')
-  })
-
-  it('discards an in-flight filter preview after criteria change', async () => {
-    let resolvePreview!: (value: unknown) => void
-    mocks.previewDelete.mockImplementationOnce(() => new Promise((resolve) => { resolvePreview = resolve }))
-    const wrapper = mountView()
-    await flushPromises()
-
-    await wrapper.get('[data-test="preview"]').trigger('click')
-    await wrapper.get('[data-test="dialog-preview"]').trigger('click')
-    await wrapper.get('[data-test="change-filter"]').trigger('click')
-    resolvePreview({ matched_count: 99, filter_summary: {}, snapshot_max_id: 10, filter_hash: 'a'.repeat(64), confirmation_token: 'stale', expires_at: '2026-07-16T00:05:00Z' })
-    await flushPromises()
-
     expect(wrapper.get('[data-test="dialog-preview-state"]').text()).toBe('none')
   })
 

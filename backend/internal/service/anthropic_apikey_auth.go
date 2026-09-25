@@ -39,7 +39,7 @@ func (a *Account) GetAnthropicAPIKeyAuthScheme() string {
 // 与 '.../v1' 均合理），再复用既有严格 host helper isOllamaCloudBaseURL（精确
 // host、https、无 query/fragment、路径仅空或 /v1），不按 substring 匹配。
 func isOllamaCloudAnthropicAuthBaseURL(baseURL string) bool {
-	return isOllamaCloudUpstreamBaseURL(baseURL)
+	return isOllamaCloudBaseURL(strings.TrimRight(strings.TrimSpace(baseURL), "/"))
 }
 
 // setAnthropicAPIKeyAuthHeader 写入上游认证头。除 extra 覆写外，Ollama Cloud

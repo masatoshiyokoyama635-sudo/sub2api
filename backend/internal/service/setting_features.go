@@ -1004,23 +1004,10 @@ func (s *SettingService) GetOpenAIFastPolicySettings(ctx context.Context) (*Open
 
 // SetOpenAIFastPolicySettings 设置 OpenAI fast 策略配置
 func (s *SettingService) SetOpenAIFastPolicySettings(ctx context.Context, settings *OpenAIFastPolicySettings) error {
-	value, err := buildOpenAIFastPolicySetting(settings)
-	if err != nil {
-		return err
-	}
-	return s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, value)
-}
-
-// buildOpenAIFastPolicySetting validates and serializes the dedicated fast-policy
-// key without writing. It copies slices before normalization so callers are not
-// mutated while an atomic settings update is being prepared.
-func buildOpenAIFastPolicySetting(settings *OpenAIFastPolicySettings) (string, error) {
 	if settings == nil {
-		return "", fmt.Errorf("settings cannot be nil")
+		return fmt.Errorf("settings cannot be nil")
 	}
 
-	normalized := &OpenAIFastPolicySettings{Rules: make([]OpenAIFastPolicyRule, len(settings.Rules))}
-	copy(normalized.Rules, settings.Rules)
 	validActions := map[string]bool{
 		BetaPolicyActionPass: true, BetaPolicyActionFilter: true, BetaPolicyActionBlock: true,
 		OpenAIFastPolicyActionForcePriority: true,
@@ -1033,51 +1020,49 @@ func buildOpenAIFastPolicySetting(settings *OpenAIFastPolicySettings) (string, e
 		OpenAIFastTierMissing: true,
 	}
 
-	for i := range normalized.Rules {
-		rule := &normalized.Rules[i]
+	for i, rule := range settings.Rules {
 		tier := strings.ToLower(strings.TrimSpace(rule.ServiceTier))
 		if tier == "" {
 			tier = OpenAIFastTierAny
 		}
 		if !validTiers[tier] {
-			return "", fmt.Errorf("rule[%d]: invalid service_tier %q", i, rule.ServiceTier)
+			return fmt.Errorf("rule[%d]: invalid service_tier %q", i, rule.ServiceTier)
 		}
-		rule.ServiceTier = tier
+		settings.Rules[i].ServiceTier = tier
 		if !validActions[rule.Action] {
-			return "", fmt.Errorf("rule[%d]: invalid action %q", i, rule.Action)
+			return fmt.Errorf("rule[%d]: invalid action %q", i, rule.Action)
 		}
 		if !validScopes[rule.Scope] {
-			return "", fmt.Errorf("rule[%d]: invalid scope %q", i, rule.Scope)
+			return fmt.Errorf("rule[%d]: invalid scope %q", i, rule.Scope)
 		}
 		seenUserIDs := make(map[int64]struct{}, len(rule.UserIDs))
 		for j, userID := range rule.UserIDs {
 			if userID <= 0 {
-				return "", fmt.Errorf("rule[%d]: user_ids[%d] must be positive", i, j)
+				return fmt.Errorf("rule[%d]: user_ids[%d] must be positive", i, j)
 			}
 			if _, exists := seenUserIDs[userID]; exists {
-				return "", fmt.Errorf("rule[%d]: user_ids[%d] duplicates user_id %d", i, j, userID)
+				return fmt.Errorf("rule[%d]: user_ids[%d] duplicates user_id %d", i, j, userID)
 			}
 			seenUserIDs[userID] = struct{}{}
 		}
-		rule.UserIDs = append([]int64(nil), rule.UserIDs...)
-		rule.ModelWhitelist = append([]string(nil), rule.ModelWhitelist...)
 		for j, pattern := range rule.ModelWhitelist {
 			trimmed := strings.TrimSpace(pattern)
 			if trimmed == "" {
-				return "", fmt.Errorf("rule[%d]: model_whitelist[%d] cannot be empty", i, j)
+				return fmt.Errorf("rule[%d]: model_whitelist[%d] cannot be empty", i, j)
 			}
-			rule.ModelWhitelist[j] = trimmed
+			settings.Rules[i].ModelWhitelist[j] = trimmed
 		}
 		if rule.FallbackAction != "" && !validActions[rule.FallbackAction] {
-			return "", fmt.Errorf("rule[%d]: invalid fallback_action %q", i, rule.FallbackAction)
+			return fmt.Errorf("rule[%d]: invalid fallback_action %q", i, rule.FallbackAction)
 		}
 	}
 
-	data, err := json.Marshal(normalized)
+	data, err := json.Marshal(settings)
 	if err != nil {
-		return "", fmt.Errorf("marshal openai fast policy settings: %w", err)
+		return fmt.Errorf("marshal openai fast policy settings: %w", err)
 	}
-	return string(data), nil
+
+	return s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, string(data))
 }
 
 // SetStreamTimeoutSettings 设置流超时处理配置

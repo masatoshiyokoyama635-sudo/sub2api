@@ -89,19 +89,27 @@ func IsExplicitImageGenerationIntent(endpoint string, requestedModel string, bod
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return false
 	}
-	var imageIntent bool
+	var modelSeen, toolsSeen, toolChoiceSeen bool
+	imageIntent := false
 	parseRawJSONView(body).ForEach(func(key, value gjson.Result) bool {
 		switch key.Str {
 		case "model":
-			imageIntent = imageIntent || isOpenAIImageGenerationModel(strings.TrimSpace(value.String()))
+			if !modelSeen {
+				modelSeen = true
+				imageIntent = isOpenAIImageGenerationModel(strings.TrimSpace(value.String()))
+			}
 		case "tools":
-			imageIntent = imageIntent || openAIJSONToolsContainNativeImageGeneration(value)
-		case "input":
-			imageIntent = imageIntent || openAIJSONInputContainsNativeImageGenerationTool(value)
+			if !toolsSeen {
+				toolsSeen = true
+				imageIntent = openAIJSONToolsContainNativeImageGeneration(value)
+			}
 		case "tool_choice":
-			imageIntent = imageIntent || openAIJSONToolChoiceSelectsExplicitImageGeneration(value)
+			if !toolChoiceSeen {
+				toolChoiceSeen = true
+				imageIntent = openAIJSONToolChoiceSelectsExplicitImageGeneration(value)
+			}
 		}
-		return !imageIntent
+		return !imageIntent && (!modelSeen || !toolsSeen || !toolChoiceSeen)
 	})
 	return imageIntent
 }
@@ -258,21 +266,6 @@ func openAIJSONInputContainsImageGenTool(input gjson.Result) bool {
 			return true
 		}
 		found = openAIJSONToolsContainImageGeneration(item.Get("tools"))
-		return !found
-	})
-	return found
-}
-
-func openAIJSONInputContainsNativeImageGenerationTool(input gjson.Result) bool {
-	if !input.IsArray() {
-		return false
-	}
-	found := false
-	input.ForEach(func(_, item gjson.Result) bool {
-		if openAIJSONString(item.Get("type")) != "additional_tools" {
-			return true
-		}
-		found = openAIJSONToolsContainNativeImageGeneration(item.Get("tools"))
 		return !found
 	})
 	return found

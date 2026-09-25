@@ -73,13 +73,11 @@ func TestBuildFullPromptStripsNULAndTruncates(t *testing.T) {
 }
 
 func TestFullPromptFromScanTextRestoresMultiSegmentLayout(t *testing.T) {
-	scanText, metadataText, err := buildPrioritizedScanText([]string{"latest user", "system policy", "earlier user"})
-	require.NoError(t, err)
+	scanText, metadataText := buildPrioritizedScanText([]string{"latest user", "system policy", "earlier user"})
 	require.Contains(t, scanText, promptAuditPrioritySeparator)
 	require.Equal(t, metadataText, FullPromptFromScanText(scanText))
 
-	singleScan, singleMeta, err := buildPrioritizedScanText([]string{"only"})
-	require.NoError(t, err)
+	singleScan, singleMeta := buildPrioritizedScanText([]string{"only"})
 	require.NotContains(t, singleScan, promptAuditPrioritySeparator)
 	require.Equal(t, singleMeta, FullPromptFromScanText(singleScan))
 }
@@ -227,49 +225,6 @@ func TestResponsesWebSocketOnlyAuditsResponseCreateAndPreservesStage(t *testing.
 		Body: []byte(`{"type":"conversation.item.create","response":{"input":"must not scan this frame"}}`),
 	})
 	require.True(t, errors.Is(err, ErrNoPromptText))
-}
-
-func TestExtractPromptSnapshotRejectsOversizedRawBodyBeforeJSONDecode(t *testing.T) {
-	body := append([]byte(`{"messages":[{"role":"user","content":"ok"}],"padding":"`), strings.Repeat("x", MaxPromptAuditRequestBodyBytes)...)
-	body = append(body, []byte(`"}`)...)
-
-	_, err := ExtractPromptSnapshot(Request{Protocol: "openai_chat_completions", Body: body})
-	require.ErrorIs(t, err, ErrPromptAuditPayloadTooLarge)
-}
-
-func TestExtractPromptSnapshotEnforcesTotalPayloadByteCap(t *testing.T) {
-	exact := strings.Repeat("a", MaxPromptAuditPayloadBytes)
-	snapshot, err := ExtractPromptSnapshot(Request{
-		Protocol: "openai_chat_completions",
-		Body:     []byte(`{"messages":[{"role":"user","content":` + string(mustJSON(t, exact)) + `}]}`),
-	})
-	require.NoError(t, err)
-	require.Len(t, snapshot.ScanText, MaxPromptAuditPayloadBytes)
-
-	unicodeUnit := "界"
-	unicodeOver := strings.Repeat(unicodeUnit, MaxPromptAuditPayloadBytes/len(unicodeUnit)+1)
-	_, err = ExtractPromptSnapshot(Request{
-		Protocol: "openai_chat_completions",
-		Body:     []byte(`{"messages":[{"role":"user","content":` + string(mustJSON(t, unicodeOver)) + `}]}`),
-	})
-	var guardErr *GuardError
-	require.ErrorAs(t, err, &guardErr)
-	require.Equal(t, ErrorCodeInvalidResponse, guardErr.Code)
-	require.ErrorIs(t, err, ErrPromptAuditPayloadTooLarge)
-	require.LessOrEqual(t, len(err.Error()), 64)
-	require.NotContains(t, err.Error(), unicodeUnit)
-}
-
-func TestExtractPromptSnapshotCountsPrioritySeparatorInsidePayloadCap(t *testing.T) {
-	latest := strings.Repeat("a", MaxPromptAuditPayloadBytes/2)
-	history := strings.Repeat("b", MaxPromptAuditPayloadBytes-len(latest)-len(promptAuditPrioritySeparator)+1)
-	body := []byte(`{"messages":[` +
-		`{"role":"user","content":` + string(mustJSON(t, history)) + `},` +
-		`{"role":"user","content":` + string(mustJSON(t, latest)) + `}` +
-		`]}`)
-
-	_, err := ExtractPromptSnapshot(Request{Protocol: "openai_chat_completions", Body: body})
-	require.ErrorIs(t, err, ErrPromptAuditPayloadTooLarge)
 }
 
 func TestPromptSnapshotEmptyAndLongUnicodeInput(t *testing.T) {

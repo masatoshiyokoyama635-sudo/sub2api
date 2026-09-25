@@ -295,11 +295,11 @@ func buildEventWhere(filter EventFilter, firstIndex int) (string, []any) {
 		add(" AND e.prompt_hash=$%d", filter.PromptHash)
 	}
 	if filter.Keyword != "" {
-		add(` AND (e.request_id ILIKE $%d ESCAPE E'\\' OR e.prompt_hash ILIKE $%d ESCAPE E'\\' OR e.redacted_preview ILIKE $%d ESCAPE E'\\'
-			OR e.username_snapshot ILIKE $%d ESCAPE E'\\' OR e.user_email_snapshot ILIKE $%d ESCAPE E'\\' OR e.api_key_name_snapshot ILIKE $%d ESCAPE E'\\')`, "%"+escapeLikePattern(TrimRunes(filter.Keyword, 128))+"%")
+		add(` AND (e.request_id ILIKE $%d OR e.prompt_hash ILIKE $%d OR e.redacted_preview ILIKE $%d
+			OR e.username_snapshot ILIKE $%d OR e.user_email_snapshot ILIKE $%d OR e.api_key_name_snapshot ILIKE $%d)`, "%"+TrimRunes(filter.Keyword, 128)+"%")
 		// The clause has six placeholders but add only supplied one. Rebuild it with one shared placeholder.
-		clauses[len(clauses)-1] = fmt.Sprintf(` AND (e.request_id ILIKE $%[1]d ESCAPE E'\\' OR e.prompt_hash ILIKE $%[1]d ESCAPE E'\\' OR e.redacted_preview ILIKE $%[1]d ESCAPE E'\\'
-			OR e.username_snapshot ILIKE $%[1]d ESCAPE E'\\' OR e.user_email_snapshot ILIKE $%[1]d ESCAPE E'\\' OR e.api_key_name_snapshot ILIKE $%[1]d ESCAPE E'\\')`, firstIndex+len(args)-1)
+		clauses[len(clauses)-1] = fmt.Sprintf(` AND (e.request_id ILIKE $%[1]d OR e.prompt_hash ILIKE $%[1]d OR e.redacted_preview ILIKE $%[1]d
+			OR e.username_snapshot ILIKE $%[1]d OR e.user_email_snapshot ILIKE $%[1]d OR e.api_key_name_snapshot ILIKE $%[1]d)`, firstIndex+len(args)-1)
 	}
 	if filter.StartAt != nil {
 		add(" AND e.created_at >= $%d", filter.StartAt.UTC())
@@ -308,12 +308,6 @@ func buildEventWhere(filter EventFilter, firstIndex int) (string, []any) {
 		add(" AND e.created_at <= $%d", filter.EndAt.UTC())
 	}
 	return strings.Join(clauses, ""), args
-}
-
-func escapeLikePattern(value string) string {
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `%`, `\%`)
-	return strings.ReplaceAll(value, `_`, `\_`)
 }
 
 func eventColumns(alias string) string {

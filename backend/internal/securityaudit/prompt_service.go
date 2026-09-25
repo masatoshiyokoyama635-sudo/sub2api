@@ -23,18 +23,13 @@ type PromptService struct {
 	metrics   *AtomicMetrics
 	clock     Clock
 
-	lifecycleMu    sync.Mutex
-	lifecycleState promptLifecycleState
-	cancel         context.CancelFunc
-	background     context.Context
-	startupDone    chan struct{}
-	shutdownDone   chan struct{}
-	shutdownErr    error
-	enqueueWG      sync.WaitGroup
-	enqueueOpen    bool
-	enqueueSlots   chan struct{}
-	probeMu        sync.RWMutex
-	probes         map[string]ProbeResult
+	lifecycleMu  sync.Mutex
+	cancel       context.CancelFunc
+	background   context.Context
+	enqueueWG    sync.WaitGroup
+	enqueueSlots chan struct{}
+	probeMu      sync.RWMutex
+	probes       map[string]ProbeResult
 }
 
 func NewPromptService(
@@ -59,47 +54,16 @@ func (s *PromptService) Start(ctx context.Context) error {
 		return errors.New("prompt audit service unavailable")
 	}
 	s.lifecycleMu.Lock()
-	switch s.lifecycleState {
-	case promptLifecycleStarting, promptLifecycleRunning:
+	if s.cancel != nil {
 		s.lifecycleMu.Unlock()
 		return nil
-	case promptLifecycleStopping, promptLifecycleStopped:
-		s.lifecycleMu.Unlock()
-		return ErrPromptAuditNotRestartable
 	}
 	background, cancel := context.WithCancel(ctx)
-	startupDone := make(chan struct{})
-	s.lifecycleState = promptLifecycleStarting
-	s.background, s.cancel, s.enqueueOpen = background, cancel, true
-	s.startupDone = startupDone
-	s.shutdownDone = nil
-	s.shutdownErr = nil
+	s.background, s.cancel = background, cancel
 	s.lifecycleMu.Unlock()
-
 	configErr := s.config.Start(background)
 	workerErr := s.runner.Start(background)
-	startErr := errors.Join(configErr, workerErr)
-
-	s.lifecycleMu.Lock()
-	if s.lifecycleState == promptLifecycleStarting {
-		if workerErr != nil {
-			// Runner dependency/startup failure cannot leave the service half-live.
-			s.lifecycleState = promptLifecycleStopping
-			s.enqueueOpen = false
-			s.shutdownDone = make(chan struct{})
-			shutdownDone := s.shutdownDone
-			s.lifecycleMu.Unlock()
-			close(startupDone)
-			go s.finishShutdown(startupDone, shutdownDone)
-			return startErr
-		}
-		// A config load error is a recoverable degraded startup. The runner and
-		// config refresh loops remain active so the service can recover in place.
-		s.lifecycleState = promptLifecycleRunning
-	}
-	s.lifecycleMu.Unlock()
-	close(startupDone)
-	return startErr
+	return errors.Join(configErr, workerErr)
 }
 
 func (s *PromptService) Shutdown(ctx context.Context) error {
@@ -107,66 +71,33 @@ func (s *PromptService) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	s.lifecycleMu.Lock()
-	switch s.lifecycleState {
-	case promptLifecycleNew:
-		s.lifecycleMu.Unlock()
-		return nil
-	case promptLifecycleStopped:
-		shutdownErr := s.shutdownErr
-		s.lifecycleMu.Unlock()
-		return shutdownErr
-	case promptLifecycleStopping:
-		shutdownDone := s.shutdownDone
-		s.lifecycleMu.Unlock()
-		return s.waitForShutdown(ctx, shutdownDone)
-	case promptLifecycleStarting, promptLifecycleRunning:
-		s.lifecycleState = promptLifecycleStopping
-		cancel := s.cancel
-		s.enqueueOpen = false
-		startupDone := s.startupDone
-		shutdownDone := make(chan struct{})
-		s.shutdownDone = shutdownDone
-		s.lifecycleMu.Unlock()
-		if cancel != nil {
-			cancel()
-		}
-		go s.finishShutdown(startupDone, shutdownDone)
-		return s.waitForShutdown(ctx, shutdownDone)
-	default:
-		s.lifecycleMu.Unlock()
-		return nil
-	}
-}
-
-func (s *PromptService) waitForShutdown(ctx context.Context, done <-chan struct{}) error {
-	return waitPromptLifecycle(ctx, done, func() error {
-		s.lifecycleMu.Lock()
-		defer s.lifecycleMu.Unlock()
-		return s.shutdownErr
-	})
-}
-
-func (s *PromptService) finishShutdown(startupDone, shutdownDone chan struct{}) {
-	if startupDone != nil {
-		<-startupDone
+	cancel := s.cancel
+	s.cancel = nil
+	s.lifecycleMu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 	var workerErr error
 	if s.runner != nil {
-		workerErr = s.runner.Shutdown(context.Background())
+		workerErr = s.runner.Shutdown(ctx)
 	}
-	s.enqueueWG.Wait()
+	done := make(chan struct{})
+	go func() { s.enqueueWG.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		if workerErr == nil {
+			workerErr = ctx.Err()
+		}
+	}
 	var configErr error
 	if s.config != nil {
-		configErr = s.config.Shutdown(context.Background())
+		configErr = s.config.Shutdown(ctx)
 	}
-	shutdownErr := errors.Join(workerErr, configErr)
-	s.lifecycleMu.Lock()
-	s.cancel = nil
-	s.background = nil
-	s.shutdownErr = shutdownErr
-	s.lifecycleState = promptLifecycleStopped
-	s.lifecycleMu.Unlock()
-	close(shutdownDone)
+	if workerErr != nil {
+		return workerErr
+	}
+	return configErr
 }
 
 func (s *PromptService) EffectiveMode() Mode {
@@ -180,15 +111,6 @@ func (s *PromptService) Enqueue(_ context.Context, req Request) error {
 	if s == nil || s.enqueuer == nil || s.EffectiveMode() != ModeAsync {
 		return nil
 	}
-	preparation, ready, err := s.enqueuer.prepare(req)
-	if err != nil || !ready {
-		return err
-	}
-	snapshot, err := ExtractPromptSnapshot(req)
-	if err != nil {
-		s.enqueuer.recordSnapshotDrop(preparation.logFields, err)
-		return nil
-	}
 	select {
 	case s.enqueueSlots <- struct{}{}:
 	default:
@@ -200,19 +122,19 @@ func (s *PromptService) Enqueue(_ context.Context, req Request) error {
 	}
 	s.lifecycleMu.Lock()
 	background := s.background
-	if background == nil || !s.enqueueOpen {
-		s.lifecycleMu.Unlock()
+	s.lifecycleMu.Unlock()
+	if background == nil {
 		<-s.enqueueSlots
 		return errors.New("prompt audit service not started")
 	}
+	requestCopy := req.Clone()
 	s.enqueueWG.Add(1)
-	s.lifecycleMu.Unlock()
 	go func() {
 		defer s.enqueueWG.Done()
 		defer func() { <-s.enqueueSlots }()
 		ctx, cancel := context.WithTimeout(background, 2*time.Second)
 		defer cancel()
-		_ = s.enqueuer.enqueuePrepared(ctx, preparation, snapshot)
+		_ = s.enqueuer.Enqueue(ctx, requestCopy)
 	}()
 	return nil
 }
@@ -239,10 +161,6 @@ func (s *PromptService) Evaluate(ctx context.Context, req Request) (*PromptDecis
 		return &PromptDecision{Kind: DecisionAllow, AllowNextStage: true}, nil
 	}
 	if err != nil {
-		var guardErr *GuardError
-		if errors.As(err, &guardErr) {
-			return nil, guardErr
-		}
 		return nil, &GuardError{Code: ErrorCodeInvalidResponse, Cause: err}
 	}
 	return s.evaluator.Evaluate(ctx, cfg, snapshot)

@@ -5,9 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"time"
@@ -198,50 +196,22 @@ func DefaultStorageConfig() storageConfig {
 
 func ParseStorageConfig(raw string) (storageConfig, error) {
 	cfg := DefaultStorageConfig()
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
+	if strings.TrimSpace(raw) == "" {
 		return cfg, nil
 	}
-	if trimmed == "null" {
-		return storageConfig{}, errors.New("decode prompt audit config: top-level JSON null is not an object")
-	}
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return storageConfig{}, fmt.Errorf("decode prompt audit config: %w", err)
 	}
-	if err := rejectTrailingJSON(decoder); err != nil {
-		return storageConfig{}, fmt.Errorf("decode prompt audit config: %w", err)
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
-		return storageConfig{}, fmt.Errorf("decode prompt audit config: %w", err)
-	}
-	if _, present := fields["scanners"]; !present {
-		cfg.Scanners = append([]string(nil), AllScannerIDs...)
-	}
-	if err := normalizeStorageConfig(&cfg); err != nil {
-		return storageConfig{}, err
-	}
+	normalizeStorageConfig(&cfg)
 	if err := validateStorageConfig(cfg); err != nil {
 		return storageConfig{}, err
 	}
 	return cfg, nil
 }
 
-func rejectTrailingJSON(decoder *json.Decoder) error {
-	var trailing any
-	if err := decoder.Decode(&trailing); errors.Is(err, io.EOF) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	return errors.New("multiple JSON values")
-}
-
-func normalizeStorageConfig(cfg *storageConfig) error {
+func normalizeStorageConfig(cfg *storageConfig) {
 	if cfg == nil {
-		return nil
+		return
 	}
 	if cfg.ConfigVersion < 1 {
 		cfg.ConfigVersion = 1
@@ -255,10 +225,8 @@ func normalizeStorageConfig(cfg *storageConfig) error {
 	if cfg.QueueCapacity == 0 {
 		cfg.QueueCapacity = DefaultQueueCapacity
 	}
-	for _, scanner := range cfg.Scanners {
-		if _, ok := ScannerCatalog[NormalizeCategory(scanner)]; !ok {
-			return infraerrors.BadRequest("prompt_audit_invalid_scanner", "提示词审计风险分类无效")
-		}
+	if len(cfg.Scanners) == 0 {
+		cfg.Scanners = append([]string(nil), AllScannerIDs...)
 	}
 	cfg.Scanners = canonicalScannerIDs(cfg.Scanners)
 	cfg.GroupIDs = canonicalInt64s(cfg.GroupIDs)
@@ -284,7 +252,6 @@ func normalizeStorageConfig(cfg *storageConfig) error {
 			ep.InputLimit = DefaultInputLimit
 		}
 	}
-	return nil
 }
 
 func validateStorageConfig(cfg storageConfig) error {
@@ -305,11 +272,6 @@ func validateStorageConfig(cfg storageConfig) error {
 	}
 	if len(cfg.Scanners) == 0 {
 		return infraerrors.BadRequest("prompt_audit_scanners_required", "至少需要启用一个风险分类")
-	}
-	for _, scanner := range cfg.Scanners {
-		if _, ok := ScannerCatalog[NormalizeCategory(scanner)]; !ok {
-			return infraerrors.BadRequest("prompt_audit_invalid_scanner", "提示词审计风险分类无效")
-		}
 	}
 	seen := make(map[string]struct{}, len(cfg.Endpoints))
 	enabled := 0

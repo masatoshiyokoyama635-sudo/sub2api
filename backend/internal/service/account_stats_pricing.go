@@ -19,8 +19,8 @@ import (
 // totalCost 是本次请求的客户计费（倍率前），用于优先级 2。
 // serviceTier 是最终参与用户计费的 OpenAI 服务层级，用于优先级 3。
 // pricingAt 与本次客户计费使用同一时刻，避免跨峰谷请求的成本与售价错位。
-// reasoningEffort 是最终转发等级；Fable 5.1 max 默认按 3 倍额度消耗。
-func resolveAccountStatsCostAt(
+// reasoningEffort 是最终转发等级；按账号统计定价中配置的等级倍率计费。
+func resolveAccountStatsCost(
 	ctx context.Context,
 	channelService *ChannelService,
 	billingService *BillingService,
@@ -64,7 +64,7 @@ func resolveAccountStatsCostAt(
 
 	// 优先级 3：模型定价文件（LiteLLM）默认价格
 	if billingService != nil {
-		return tryModelFilePricingAt(ctx, billingService, upstreamModel, tokens, serviceTier, pricingAt, reasoningEffort)
+		return tryModelFilePricing(billingService, upstreamModel, tokens, serviceTier, pricingAt, reasoningEffort)
 	}
 
 	return nil
@@ -74,30 +74,20 @@ func resolveAccountStatsCostAt(
 // 与用户计费共用同一条定价管线，避免这里维护第二份"单价 × token 数"实现后，
 // 每加一个定价特性都要手工镜像一次。解析器不配置渠道或分组，保持优先级 3 的
 // 语义：只取模型定价文件，不引入自定义售价。
-func tryModelFilePricingAt(
-	ctx context.Context,
-	billingService *BillingService,
-	model string,
-	tokens UsageTokens,
-	serviceTier string,
-	pricingAt time.Time,
-	reasoningEfforts ...string,
-) *float64 {
+func tryModelFilePricing(billingService *BillingService, model string, tokens UsageTokens, serviceTier string, pricingAt time.Time, reasoningEfforts ...string) *float64 {
 	reasoningEffort := ""
 	if len(reasoningEfforts) > 0 {
 		reasoningEffort = reasoningEfforts[0]
 	}
-	resolver := NewModelPricingResolver(nil, billingService)
 	breakdown, err := billingService.CalculateCostUnified(CostInput{
-		Ctx:             ctx,
+		Ctx:             context.Background(),
 		Model:           model,
 		Tokens:          tokens,
-		RequestCount:    1,
 		RateMultiplier:  1,
 		ServiceTier:     normalizeBillingServiceTier(serviceTier),
 		ReasoningEffort: reasoningEffort,
 		PricingAt:       pricingAt,
-		Resolver:        resolver,
+		Resolver:        NewModelPricingResolver(nil, billingService),
 	})
 	if err != nil || breakdown == nil || breakdown.TotalCost <= 0 {
 		return nil
@@ -126,7 +116,7 @@ func tryCustomRules(
 		}
 		cost := calculateStatsCost(pricing, tokens, requestCount)
 		if cost != nil {
-			*cost *= maxReasoningEffortBillingMultiplier(model, reasoningEffort, nil)
+			*cost *= reasoningEffortBillingMultiplier(reasoningEffort, pricing.ReasoningEffortMultipliers)
 		}
 		return cost
 	}
@@ -202,7 +192,7 @@ func calculateStatsCost(pricing *ChannelModelPricing, tokens UsageTokens, reques
 		return nil
 	}
 	switch pricing.BillingMode {
-	case BillingModePerRequest, BillingModeImage:
+	case BillingModePerRequest, BillingModeImage, BillingModeVideo:
 		return calculatePerRequestStatsCost(pricing, requestCount)
 	default:
 		return calculateTokenStatsCost(pricing, tokens)
@@ -264,7 +254,7 @@ func calculateTokenStatsCost(pricing *ChannelModelPricing, tokens UsageTokens) *
 // applyAccountStatsCost resolves the account stats cost for a usage log entry.
 // It resolves the upstream model (falling back to the requested model) and calls
 // the 4-level priority chain via resolveAccountStatsCost.
-func applyAccountStatsCostAt(
+func applyAccountStatsCost(
 	ctx context.Context,
 	usageLog *UsageLog,
 	cs *ChannelService, bs *BillingService,
@@ -290,8 +280,7 @@ func applyAccountStatsCostAt(
 	if usageLog != nil && usageLog.ReasoningEffort != nil {
 		reasoningEffort = *usageLog.ReasoningEffort
 	}
-	usageLog.AccountStatsCost = resolveAccountStatsCostAt(
-		ctx, cs, bs, accountID, groupID, model, tokens, requestCount, totalCost, serviceTier, pricingAt,
-		reasoningEffort,
+	usageLog.AccountStatsCost = resolveAccountStatsCost(
+		ctx, cs, bs, accountID, groupID, model, tokens, requestCount, totalCost, serviceTier, pricingAt, reasoningEffort,
 	)
 }

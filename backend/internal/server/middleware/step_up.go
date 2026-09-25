@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -10,10 +11,6 @@ import (
 
 // StepUpAuthMiddleware 敏感操作 step-up 2FA 门控中间件类型。
 type StepUpAuthMiddleware gin.HandlerFunc
-
-// StrictStepUpAuthMiddleware 对高敏感控制面始终执行 step-up 门控，
-// 不受 step_up_enabled 开关影响，且拒绝 Admin API Key。
-type StrictStepUpAuthMiddleware gin.HandlerFunc
 
 // stepUpGrantChecker 抽象 TOTP step-up 授权检查能力（由 TotpService 实现）。
 type stepUpGrantChecker interface {
@@ -30,10 +27,13 @@ type stepUpSettingReader interface {
 	IsStepUpEnabled(ctx context.Context) bool
 }
 
-// StepUpSessionKey 计算 step-up 授权的会话键。
-// Step-up proof 必须绑定 refresh token family；无 sid 的旧 JWT 不得创建或消费 grant。
-func StepUpSessionKey(c *gin.Context, _ int64) string {
-	return c.GetString(ContextKeySessionID)
+// StepUpSessionKey 计算 step-up 授权的会话键：
+// 优先绑定当前会话（refresh token family），无会话 ID 的旧 token 退化为用户级键。
+func StepUpSessionKey(c *gin.Context, userID int64) string {
+	if sid := c.GetString(ContextKeySessionID); sid != "" {
+		return sid
+	}
+	return fmt.Sprintf("u%d", userID)
 }
 
 // NewStepUpAuthMiddleware 创建敏感操作 step-up 2FA 门控中间件。
@@ -51,14 +51,6 @@ func NewStepUpAuthMiddleware(
 	settingService *service.SettingService,
 ) StepUpAuthMiddleware {
 	return StepUpAuthMiddleware(stepUpAuth(totpService, userService, stepUpSettingsOrNil(settingService)))
-}
-
-// NewStrictStepUpAuthMiddleware 创建不受全局开关影响的高敏感 step-up 门控。
-func NewStrictStepUpAuthMiddleware(
-	totpService *service.TotpService,
-	userService *service.UserService,
-) StrictStepUpAuthMiddleware {
-	return StrictStepUpAuthMiddleware(stepUpAuth(totpService, userService, nil))
 }
 
 // stepUpSettingsOrNil 将可能为 nil 的具体指针归一化为接口，
@@ -133,10 +125,6 @@ func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader s
 	}
 
 	sessionKey := StepUpSessionKey(c, subject.UserID)
-	if sessionKey == "" {
-		AbortWithError(c, 401, "STEP_UP_SESSION_REQUIRED", "A session-bound JWT is required for step-up verification")
-		return false
-	}
 	granted, err := grantChecker.HasStepUpGrant(c.Request.Context(), subject.UserID, sessionKey)
 	if err != nil {
 		// 安全门控故障时选择 fail-closed。

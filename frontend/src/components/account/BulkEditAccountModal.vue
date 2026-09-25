@@ -133,6 +133,66 @@
         </div>
       </div>
 
+      <!-- OpenAI Excel / BPS protocol (OAuth only) -->
+      <div
+        v-if="allOpenAIOAuthOnly"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="mb-3 flex items-center justify-between gap-4">
+          <div class="flex-1">
+            <label
+              id="bulk-edit-openai-excel-bps-label"
+              class="input-label mb-0"
+              for="bulk-edit-openai-excel-bps-enabled"
+            >
+              {{ t('admin.accounts.openai.excelBPS') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.excelBPSDesc') }}
+            </p>
+          </div>
+          <input
+            v-model="enableOpenAIExcelBPS"
+            id="bulk-edit-openai-excel-bps-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-openai-excel-bps-body"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-openai-excel-bps-body"
+          :class="!enableOpenAIExcelBPS && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-openai-excel-bps-label"
+        >
+          <button
+            type="button"
+            data-testid="bulk-edit-openai-excel-bps-toggle"
+            role="switch"
+            :disabled="!enableOpenAIExcelBPS"
+            :aria-checked="openAIExcelBPSEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openAIExcelBPSEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="openAIExcelBPSEnabled = !openAIExcelBPSEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openAIExcelBPSEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <p
+          v-if="openAIExcelBPSEnabled && enableOpenAIExcelBPS"
+          class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+        >
+          {{ t('admin.accounts.openai.excelBPSNotice') }}
+        </p>
+      </div>
+
       <!-- OpenAI API long-context billing -->
       <div
         v-if="allOpenAIPassthroughCapable"
@@ -722,6 +782,16 @@
             aria-labelledby="bulk-edit-concurrency-label"
             @input="concurrency = Math.max(1, concurrency || 1)"
           />
+        </div>
+        <div>
+          <div class="mb-3 flex items-center justify-between">
+            <label class="input-label mb-0" for="bulk-edit-group-rate-multiplier-enabled">
+              {{ t('admin.accounts.groupBillingRateMultiplier') }}
+            </label>
+            <input v-model="enableGroupRateMultiplier" id="bulk-edit-group-rate-multiplier-enabled" type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+          </div>
+          <input v-model.number="groupRateMultiplier" id="bulk-edit-group-rate-multiplier" type="number" min="0" step="0.01" :disabled="!enableGroupRateMultiplier" class="input" :class="!enableGroupRateMultiplier && 'cursor-not-allowed opacity-50'" />
+          <p class="input-hint">{{ t('admin.accounts.groupBillingRateMultiplierHint') }}</p>
         </div>
         <div>
           <div class="mb-3 flex items-center justify-between">
@@ -1655,10 +1725,13 @@ const enableConcurrency = ref(false)
 const enableLoadFactor = ref(false)
 const enablePriority = ref(false)
 const enableRateMultiplier = ref(false)
+const enableGroupRateMultiplier = ref(false)
+const groupRateMultiplier = ref(1)
 const enableStatus = ref(false)
 const enableGroups = ref(false)
 const enableOpenAIPassthrough = ref(false)
 const enableOpenAIFlattenNamespaces = ref(false)
+const enableOpenAIExcelBPS = ref(false)
 const enableOpenAILongContextBilling = ref(false)
 const enableOpenAIEndpointCapabilities = ref(false)
 const enableOpenAIResponsesMode = ref(false)
@@ -1695,6 +1768,7 @@ const groupIds = ref<number[]>([])
 const openaiPassthroughEnabled = ref(false)
 // Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
+const openAIExcelBPSEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>([
   'chat_completions',
@@ -1786,7 +1860,8 @@ const openAIEndpointCapabilityOptions = computed<
   Array<{ value: OpenAIEndpointCapability; label: string }>
 >(() => [
   { value: 'chat_completions', label: openAITextEndpointCapabilityLabel.value },
-  { value: 'embeddings', label: t('admin.accounts.openai.capabilityEmbeddings') }
+  { value: 'embeddings', label: t('admin.accounts.openai.capabilityEmbeddings') },
+  { value: 'seedance', label: 'Seedance (Ark)' }
 ])
 const openAITextGenerationCapabilityEnabled = computed(() =>
   openAIEndpointCapabilities.value.includes('chat_completions')
@@ -1796,9 +1871,9 @@ const openAIResponsesModeApplicable = computed(
 )
 
 const normalizeOpenAIEndpointCapabilities = (values: OpenAIEndpointCapability[]) => {
-  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings']
+  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings', 'seedance']
   const selected = allowed.filter((value) => values.includes(value))
-  return selected.length > 0 ? selected : allowed
+  return selected.length > 0 ? selected : ['chat_completions', 'embeddings'] as OpenAIEndpointCapability[]
 }
 
 const toggleOpenAIEndpointCapability = (
@@ -1958,6 +2033,9 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
   if (enableRateMultiplier.value) {
     updates.rate_multiplier = rateMultiplier.value
   }
+  if (enableGroupRateMultiplier.value) {
+    updates.group_rate_multiplier = groupRateMultiplier.value
+  }
 
   if (enableStatus.value) {
     updates.status = status.value
@@ -1989,6 +2067,13 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.openai_responses_flatten_namespaces = openaiFlattenNamespacesEnabled.value
   }
 
+  // Excel/BPS is an opt-in bulk field. Sending false explicitly clears the
+  // existing flag; leaving the field disabled omits it and preserves it.
+  if (enableOpenAIExcelBPS.value && allOpenAIOAuthOnly.value) {
+    const extra = ensureExtra()
+    extra.openai_excel_bps = openAIExcelBPSEnabled.value
+  }
+
   if (applyOpenAILongContextBilling) {
     const extra = ensureExtra()
     extra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
@@ -1996,7 +2081,7 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
 
   if (applyOpenAIEndpointCapabilities) {
     credentials.openai_capabilities =
-      openAIEndpointCapabilities.value.length === 2
+      openAIEndpointCapabilities.value.length === 2 && !openAIEndpointCapabilities.value.includes('seedance')
         ? null
         : [...openAIEndpointCapabilities.value]
     credentialsChanged = true
@@ -2203,6 +2288,7 @@ const handleSubmit = async () => {
     enableBaseUrl.value ||
     enableOpenAIPassthrough.value ||
     enableOpenAIFlattenNamespaces.value ||
+    enableOpenAIExcelBPS.value ||
     (enableOpenAILongContextBilling.value && allOpenAIPassthroughCapable.value) ||
     (enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value) ||
     (enableOpenAIResponsesMode.value && allOpenAIAPIKey.value) ||
@@ -2215,6 +2301,7 @@ const handleSubmit = async () => {
     enableLoadFactor.value ||
     enablePriority.value ||
     enableRateMultiplier.value ||
+    enableGroupRateMultiplier.value ||
     enableStatus.value ||
     enableGroups.value ||
     enableOpenAIWSMode.value ||
@@ -2365,6 +2452,7 @@ watch(
       enableGroups.value = false
       enableOpenAIPassthrough.value = false
       enableOpenAIFlattenNamespaces.value = false
+      enableOpenAIExcelBPS.value = false
       enableOpenAILongContextBilling.value = false
       enableOpenAIEndpointCapabilities.value = false
       enableOpenAIResponsesMode.value = false
@@ -2383,6 +2471,7 @@ watch(
       baseUrl.value = ''
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
+      openAIExcelBPSEnabled.value = false
       openAILongContextBillingEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openAIResponsesMode.value = 'auto'

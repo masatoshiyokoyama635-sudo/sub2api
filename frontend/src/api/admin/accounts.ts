@@ -3,7 +3,11 @@
  * Handles AI platform account management for administrators
  */
 
-import { apiClient } from '../client'
+import { apiClient, buildApiUrl } from '../client'
+import { ADMIN_UI_REQUEST_HEADER } from '../adminUIRequest'
+import type { CodexHarvestRuntime } from './codexHarvest'
+export { getCodexHarvestControls, saveCodexHarvestControls, getCodexHarvestNodes, resetCodexHarvestNodes } from './codexHarvest'
+import type { OpenAIReferralRefreshResult, OpenAIReferralSendResult } from '@/types/openaiReferrals'
 import type {
   Account,
   AccountListItem,
@@ -28,7 +32,9 @@ import type {
   OllamaCloudUsageSettings,
   OllamaCloudUsageState,
   GrokMediaEligibilityMode,
-  GrokMediaEligibilityState
+  GrokMediaEligibilityState,
+  OpenCodeGoUsageSettings,
+  OpenCodeGoUsageState
 } from '@/types'
 
 /**
@@ -918,7 +924,14 @@ export interface OpenAIQuotaUsage {
   rate_limit?: OpenAIRateLimit | null
   additional_rate_limits?: OpenAIAdditionalRateLimit[]
   rate_limit_reset_credits?: OpenAIRateLimitResetCredits | null
+  credits?: OpenAICredits | null
   fetched_at: number
+}
+
+export interface OpenAICredits {
+  has_credits: boolean
+  unlimited: boolean
+  balance: string | null
 }
 
 export interface OpenAIQuotaResetCredit {
@@ -948,6 +961,7 @@ export interface OpenAIQuotaResetResult {
 /** Usage payload plus whether the reset-credit snapshot was persisted. */
 export interface OpenAIQuotaRefreshResult extends OpenAIQuotaUsage {
   cache_persisted: boolean
+  credits_cache_persisted?: boolean
 }
 
 /**
@@ -962,6 +976,23 @@ export interface OpenAIQuotaRefreshResult extends OpenAIQuotaUsage {
 export async function refreshOpenAIQuota(id: number): Promise<OpenAIQuotaRefreshResult> {
   const { data } = await apiClient.post<OpenAIQuotaRefreshResult>(
     `/admin/openai/accounts/${id}/quota/refresh`
+  )
+  return data
+}
+
+export async function refreshOpenAIReferrals(id: number): Promise<OpenAIReferralRefreshResult> {
+  const { data } = await apiClient.post<OpenAIReferralRefreshResult>(
+    `/admin/openai/accounts/${id}/referrals/refresh`
+  )
+  return data
+}
+
+export async function sendOpenAIReferralInvite(
+  id: number,
+  input: { email: string; program_id: string; confirmed: boolean }
+): Promise<OpenAIReferralSendResult> {
+  const { data } = await apiClient.post<OpenAIReferralSendResult>(
+    `/admin/openai/accounts/${id}/referrals/invite`, input, { timeout: 90_000 }
   )
   return data
 }
@@ -1071,6 +1102,257 @@ export async function refreshOllamaCloudUsage(id: number): Promise<OllamaCloudUs
   return data
 }
 
+export interface CodexHarvestFlowTicket {
+  transport?: string
+  gateway?: string
+  edge_ip?: string
+  model: string
+  length?: number
+  ready: boolean
+  remaining_seconds: number
+  blocked: boolean
+  expires_at?: string
+  standby_expires_at?: string
+  standby?: boolean
+  cookie_count?: number
+  cookie_expires_at?: string
+  probe?: {
+    result?: string
+    http_status?: number
+    checked_at?: string
+    next_probe_at?: string
+  }
+}
+
+export interface CodexHarvestFlowAccount {
+  id: number
+  name: string
+  status: string
+  schedulable: boolean
+  skip_harvest?: boolean
+  in_scope?: boolean
+  availability?: string
+  recover_at?: string
+  tickets: CodexHarvestFlowTicket[]
+  ready_count: number
+  blocked_count: number
+}
+
+export interface CodexHarvestFlowStage {
+  id: string
+  status: 'ok' | 'warn' | 'fail' | 'idle' | string
+  detail?: string
+  at?: string
+  node?: string
+  model?: string
+  http_status?: number
+  length?: number
+  blocks?: number
+  expected_length?: number
+  expected_blocks?: number
+}
+
+export interface CodexHarvestFlowEvent {
+  id: string
+  at: string
+  stage: string
+  kind: string
+  account_id?: number
+  account_name?: string
+  model?: string
+  node?: string
+  http_status?: number
+  length?: number
+  blocks?: number
+  expected_length?: number
+  expected_blocks?: number
+  accepted?: boolean
+  standby?: boolean
+  result?: string
+  reason?: string
+  detail?: string
+}
+
+export interface CodexHarvestFlowSnapshot {
+  generated_at: string
+  harvest: {
+    enabled: boolean
+    fail_closed: boolean
+    strategy: string
+    scope_mode?: string
+    scope_error?: boolean
+    account_policy?: string
+    group_ids?: number[]
+    models: string[]
+    target_length: number
+    probe_interval_seconds: number
+    cooldown_seconds: number
+    max_probes_per_round: number
+    refresh_before_seconds?: number
+    harvest_proxy?: string
+  }
+  sidecar: {
+    mode?: 'mihomo' | 'external' | 'unconfigured'
+    reachable: boolean
+    source?: string
+    controller?: string
+    group?: string
+    type?: string
+    now?: string
+    all_count?: number
+    error?: string
+    observed_at?: string
+  }
+  stages: CodexHarvestFlowStage[]
+  accounts: CodexHarvestFlowAccount[]
+  counts: {
+    probe_hit: number
+    probe_miss: number
+    ticket_accept: number
+    ticket_reject: number
+    select_ok: number
+    select_skip: number
+    select_fail: number
+    tickets_ready: number
+    tickets_blocked: number
+  }
+  events: CodexHarvestFlowEvent[]
+  runtime?: CodexHarvestRuntime
+}
+
+export async function getCodexHarvestFlow(): Promise<CodexHarvestFlowSnapshot> {
+  const { data } = await apiClient.get<CodexHarvestFlowSnapshot>('/admin/accounts/codex-harvest-flow')
+  return data
+}
+
+export async function updateCodexSkipHarvest(id: number, skipHarvest: boolean): Promise<{ account_id: number; skip_harvest: boolean }> {
+  const { data } = await apiClient.put<{ account_id: number; skip_harvest: boolean }>(`/admin/accounts/${id}/codex-skip-harvest`, {
+    skip_harvest: skipHarvest
+  })
+  return data
+}
+
+export async function getOpenCodeGoUsageSettings(): Promise<OpenCodeGoUsageSettings> {
+  const { data } = await apiClient.get<OpenCodeGoUsageSettings>('/admin/accounts/opencode-go-usage/settings')
+  return data
+}
+
+export async function updateOpenCodeGoUsageSettings(
+  settings: OpenCodeGoUsageSettings
+): Promise<OpenCodeGoUsageSettings> {
+  const { data } = await apiClient.put<OpenCodeGoUsageSettings>(
+    '/admin/accounts/opencode-go-usage/settings',
+    settings
+  )
+  return data
+}
+
+export async function getOpenCodeGoUsage(id: number): Promise<OpenCodeGoUsageState> {
+  const { data } = await apiClient.get<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage`)
+  return data
+}
+
+export async function setOpenCodeGoUsageAutoRefresh(id: number, enabled: boolean): Promise<OpenCodeGoUsageState> {
+  const { data } = await apiClient.put<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage/auto-refresh`, {
+    enabled
+  })
+  return data
+}
+
+export interface ManualHarvestRequest {
+  collect_lanes?: number
+  models?: string[]
+  probe_interval_seconds: number
+  rate_limit_cooldown_seconds: number
+  max_attempts: number
+  node_switch_rule: string
+  stop_on_success: boolean
+}
+
+export interface ManualHarvestProgress {
+  attempt?: number
+  max_attempts?: number
+  model?: string
+  node?: string
+  http_status?: number
+  length?: number
+  blocks?: number
+  expected_length?: number
+  expected_blocks?: number
+  result?: string
+  level?: string
+  message?: string
+  detail?: string
+  tickets_stored?: number
+  done?: boolean
+}
+
+export async function streamManualCodexHarvest(
+  accountId: number,
+  body: ManualHarvestRequest,
+  onProgress: (progress: ManualHarvestProgress) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+    [ADMIN_UI_REQUEST_HEADER]: '1'
+  }
+  const token = localStorage.getItem('auth_token')
+  if (token) headers.Authorization = `Bearer ${token}`
+  const res = await fetch(buildApiUrl(`/admin/accounts/${accountId}/manual-harvest`), {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify(body),
+    signal
+  })
+  if (res.status === 401) {
+    const error = new Error('HTTP 401') as Error & { status: number }
+    error.status = 401
+    throw error
+  }
+  if (!res.ok || !res.body) {
+    let detail = ''
+    try {
+      detail = (await res.text()).slice(0, 200)
+    } catch {
+      detail = ''
+    }
+    throw new Error(detail ? `HTTP ${res.status} - ${detail}` : `HTTP ${res.status}`)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const frames = buffer.split('\n\n')
+    buffer = frames.pop() || ''
+    for (const frame of frames) {
+      if (!frame.startsWith('data: ')) continue
+      try {
+        onProgress(JSON.parse(frame.slice(6)) as ManualHarvestProgress)
+      } catch {
+        // ignore a malformed SSE frame
+      }
+    }
+  }
+  if (buffer.startsWith('data: ')) {
+    try {
+      onProgress(JSON.parse(buffer.slice(6)) as ManualHarvestProgress)
+    } catch {
+      // ignore a trailing malformed SSE frame
+    }
+  }
+}
+
+export async function refreshOpenCodeGoUsage(id: number): Promise<OpenCodeGoUsageState> {
+  const { data } = await apiClient.post<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage/refresh`)
+  return data
+}
+
 export const accountsAPI = {
   list,
   listWithEtag,
@@ -1134,7 +1416,15 @@ export const accountsAPI = {
   saveOllamaCloudUsageSession,
   deleteOllamaCloudUsageSession,
   setOllamaCloudUsageAutoRefresh,
-  refreshOllamaCloudUsage
+  refreshOllamaCloudUsage,
+  getCodexHarvestFlow,
+  updateCodexSkipHarvest,
+  streamManualCodexHarvest,
+  getOpenCodeGoUsageSettings,
+  updateOpenCodeGoUsageSettings,
+  getOpenCodeGoUsage,
+  setOpenCodeGoUsageAutoRefresh,
+  refreshOpenCodeGoUsage
 }
 
 export default accountsAPI

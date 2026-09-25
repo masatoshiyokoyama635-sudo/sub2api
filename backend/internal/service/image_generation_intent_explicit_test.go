@@ -35,26 +35,6 @@ func TestIsExplicitImageGenerationIntent_DetectsNativeTool(t *testing.T) {
 		"native image_generation tool IS explicit intent")
 }
 
-func TestIsExplicitImageGenerationIntent_DetectsNativeAdditionalTool(t *testing.T) {
-	body := []byte(`{
-		"model": "gpt-5.5",
-		"input": [{"type":"additional_tools","tools":[{"type":"image_generation","model":"gpt-image-2"}]}],
-		"tool_choice": "auto"
-	}`)
-
-	assert.True(t, IsExplicitImageGenerationIntent("/v1/responses", "gpt-5.5", body),
-		"native image_generation inside input.additional_tools IS explicit intent")
-}
-
-func TestIsExplicitImageGenerationIntent_RejectsDuplicateKeyParserMismatch(t *testing.T) {
-	assert.True(t, IsExplicitImageGenerationIntent("/v1/responses", "gpt-5.5", []byte(`{
-		"model":"gpt-5.5","model":"gpt-image-2","input":"draw"
-	}`)))
-	assert.True(t, IsExplicitImageGenerationIntent("/v1/responses", "gpt-5.5", []byte(`{
-		"model":"gpt-5.5","tools":[],"tools":[{"type":"image_generation"}],"input":"draw"
-	}`)))
-}
-
 func TestIsExplicitImageGenerationIntent_DetectsImageModel(t *testing.T) {
 	assert.True(t, IsExplicitImageGenerationIntent("/v1/responses", "gpt-image-2", nil),
 		"image model IS explicit intent")

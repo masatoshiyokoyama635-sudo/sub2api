@@ -5,8 +5,9 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
+	"net/http"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/ent"
@@ -24,10 +25,10 @@ import (
 )
 
 type Application struct {
-	Server        *server.HTTPServer
+	Server        *http.Server
 	PromptAudit   *securityaudit.PromptService
 	PluginManager *service.PluginManager
-	Cleanup       func() error
+	Cleanup       func()
 }
 
 func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
@@ -98,6 +99,7 @@ func provideCleanup(
 	accountExpiry *service.AccountExpiryService,
 	cnProviderBalanceCheck *service.CNProviderBalanceCheckService,
 	codexVersionSync *service.OpenAICodexVersionSyncService,
+	claudeCodeVersionSync *service.ClaudeCodeVersionSyncService,
 	proxyExpiry *service.ProxyExpiryService,
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
@@ -116,6 +118,7 @@ func provideCleanup(
 	grokOAuth *service.GrokOAuthService,
 	openAIGateway *service.OpenAIGatewayService,
 	scheduledTestRunner *service.ScheduledTestRunnerService,
+	accountOps *service.AccountOpsService,
 	backupSvc *service.BackupService,
 	paymentOrderExpiry *service.PaymentOrderExpiryService,
 	channelMonitorRunner *service.ChannelMonitorRunner,
@@ -123,14 +126,20 @@ func provideCleanup(
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	ollamaCloudUsage *service.OllamaCloudUsageService,
+	opencodeGoUsage *service.OpenCodeGoUsageService,
 	auditLog *service.AuditLogService,
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
 	promptAudit *securityaudit.PromptService,
 	pluginManager *service.PluginManager,
-) func() error {
-	return func() error {
+) func() {
+	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+
+		type cleanupStep struct {
+			name string
+			fn   func() error
+		}
 
 		// 应用层清理步骤可并行执行，基础设施资源（Redis/Ent）最后按顺序关闭。
 		parallelSteps := []cleanupStep{
@@ -171,10 +180,10 @@ func provideCleanup(
 				return nil
 			}},
 			{"PromptAuditService", func() error {
-				if promptAudit == nil {
-					return nil
+				if promptAudit != nil {
+					return promptAudit.Shutdown(ctx)
 				}
-				return promptAudit.Shutdown(ctx)
+				return nil
 			}},
 			{"OpsScheduledReportService", func() error {
 				if opsScheduledReport != nil {
@@ -266,6 +275,10 @@ func provideCleanup(
 				codexVersionSync.Stop()
 				return nil
 			}},
+			{"ClaudeCodeVersionSyncService", func() error {
+				claudeCodeVersionSync.Stop()
+				return nil
+			}},
 			{"ProxyExpiryService", func() error {
 				proxyExpiry.Stop()
 				return nil
@@ -320,9 +333,24 @@ func provideCleanup(
 				}
 				return nil
 			}},
+			{"ExcelBPSImages", func() error {
+				return openAIGateway.CloseExcelBPSImages()
+			}},
 			{"OpenAIWSPool", func() error {
 				if openAIGateway != nil {
 					openAIGateway.CloseOpenAIWSPool()
+				}
+				return nil
+			}},
+			{"OpenAICodexTicketHarvester", func() error {
+				if openAIGateway != nil {
+					openAIGateway.StopOpenAICodexTicketHarvester()
+				}
+				return nil
+			}},
+			{"AccountOpsService", func() error {
+				if accountOps != nil {
+					accountOps.Stop()
 				}
 				return nil
 			}},
@@ -374,6 +402,12 @@ func provideCleanup(
 				}
 				return nil
 			}},
+			{"OpenCodeGoUsageService", func() error {
+				if opencodeGoUsage != nil {
+					opencodeGoUsage.Stop()
+				}
+				return nil
+			}},
 		}
 
 		infraSteps := []cleanupStep{
@@ -391,23 +425,43 @@ func provideCleanup(
 			}},
 		}
 
-		appErr := runParallelCleanupSteps(parallelSteps)
-		if err := ctx.Err(); err != nil {
-			appErr = errors.Join(appErr, err)
-		}
-		if appErr != nil {
-			return appErr
+		runParallel := func(steps []cleanupStep) {
+			var wg sync.WaitGroup
+			for i := range steps {
+				step := steps[i]
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if err := step.fn(); err != nil {
+						log.Printf("[Cleanup] %s failed: %v", step.name, err)
+						return
+					}
+					log.Printf("[Cleanup] %s succeeded", step.name)
+				}()
+			}
+			wg.Wait()
 		}
 
-		infraErr := runSequentialCleanupSteps(ctx, infraSteps)
-		if err := ctx.Err(); err != nil {
-			infraErr = errors.Join(infraErr, err)
-		}
-		if infraErr != nil {
-			return infraErr
+		runSequential := func(steps []cleanupStep) {
+			for i := range steps {
+				step := steps[i]
+				if err := step.fn(); err != nil {
+					log.Printf("[Cleanup] %s failed: %v", step.name, err)
+					continue
+				}
+				log.Printf("[Cleanup] %s succeeded", step.name)
+			}
 		}
 
-		log.Printf("[Cleanup] All cleanup steps completed")
-		return nil
+		runParallel(parallelSteps)
+		runSequential(infraSteps)
+
+		// Check if context timed out
+		select {
+		case <-ctx.Done():
+			log.Printf("[Cleanup] Warning: cleanup timed out after 10 seconds")
+		default:
+			log.Printf("[Cleanup] All cleanup steps completed")
+		}
 	}
 }

@@ -30,7 +30,7 @@
       </label>
       <div class="relative">
         <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-dark-500">
-          ¥
+          $
         </span>
         <input
           type="text"
@@ -88,8 +88,12 @@ function selectAmount(amt: number) {
 }
 
 function handleInput(e: Event) {
-  const val = (e.target as HTMLInputElement).value
-  if (!AMOUNT_PATTERN.test(val)) return
+  const input = e.target as HTMLInputElement
+  const val = input.value
+  if (!AMOUNT_PATTERN.test(val)) {
+    input.value = customText.value
+    return
+  }
   customText.value = val
   if (val === '') {
     emit('update:modelValue', null)

@@ -58,22 +58,13 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	// groups: OpenAI Live 与 Fast 强制策略都默认关闭，管理员显式开启后才生效。
 	requireColumn(t, tx, "groups", "allow_live", "boolean", 0, false)
 	requireColumn(t, tx, "groups", "force_openai_fast", "boolean", 0, false)
+	requireColumn(t, tx, "groups", "stream_only", "boolean", 0, false)
 	requireColumn(t, tx, "groups", "free_openai_fast", "boolean", 0, false)
-	requireColumn(t, tx, "groups", "max_reasoning_effort_over_limit", "character varying", 20, false)
-	requireColumnDefaultContains(t, tx, "groups", "force_openai_fast", "false")
-	requireColumnDefaultContains(t, tx, "groups", "free_openai_fast", "false")
-	requireColumnDefaultContains(t, tx, "groups", "max_reasoning_effort_over_limit", "downgrade")
 
-	// Channel pricing supports distinct one-hour cache-write prices at both
-	// model and interval levels, including account-stat pricing snapshots.
-	for _, table := range []string{
-		"channel_model_pricing",
-		"channel_pricing_intervals",
-		"channel_account_stats_model_pricing",
-		"channel_account_stats_pricing_intervals",
-	} {
-		requireNumericColumn(t, tx, table, "cache_write_1h_price", 20, 12, true)
-	}
+	// pelican_showcase_items: 鹈鹕测智用户展示快照，按分组 + 生成时间倒序读取和清理。
+	requireColumn(t, tx, "pelican_showcase_items", "response_text", "text", 0, false)
+	requireColumn(t, tx, "pelican_showcase_items", "generated_at", "timestamp with time zone", 0, false)
+	requireIndex(t, tx, "pelican_showcase_items", "idx_pelican_showcase_items_group_generated")
 
 	// api_keys: key length should be 128
 	requireColumn(t, tx, "api_keys", "key", "character varying", 128, false)
@@ -355,34 +346,6 @@ WHERE table_schema = 'public'
 	for _, fragment := range fragments {
 		require.Contains(t, columnDefault.String, fragment, "expected default for %s.%s to contain %q", table, column, fragment)
 	}
-}
-
-func requireNumericColumn(t *testing.T, tx *sql.Tx, table, column string, precision, scale int, nullable bool) {
-	t.Helper()
-
-	var row struct {
-		DataType  string
-		Precision sql.NullInt64
-		Scale     sql.NullInt64
-		Nullable  string
-	}
-
-	err := tx.QueryRowContext(context.Background(), `
-SELECT
-  data_type,
-  numeric_precision,
-  numeric_scale,
-  is_nullable
-FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND table_name = $1
-  AND column_name = $2
-`, table, column).Scan(&row.DataType, &row.Precision, &row.Scale, &row.Nullable)
-	require.NoError(t, err, "query numeric column for %s.%s", table, column)
-	require.Equal(t, "numeric", row.DataType, "data_type mismatch for %s.%s", table, column)
-	require.Equal(t, int64(precision), row.Precision.Int64, "precision mismatch for %s.%s", table, column)
-	require.Equal(t, int64(scale), row.Scale.Int64, "scale mismatch for %s.%s", table, column)
-	require.Equal(t, nullable, row.Nullable == "YES", "nullable mismatch for %s.%s", table, column)
 }
 
 func requireColumn(t *testing.T, tx *sql.Tx, table, column, dataType string, maxLen int, nullable bool) {

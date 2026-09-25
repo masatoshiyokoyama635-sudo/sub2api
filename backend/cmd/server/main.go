@@ -7,7 +7,6 @@ import (
 	_ "embed"
 	"errors"
 	"flag"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -19,6 +18,7 @@ import (
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/mihomo"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/setup"
@@ -60,7 +60,29 @@ func main() {
 	// Parse command line flags
 	setupMode := flag.Bool("setup", false, "Run setup wizard in CLI mode")
 	showVersion := flag.Bool("version", false, "Show version information")
+	migrateMihomo := flag.String("migrate-mihomo", "", "Stage legacy Mihomo into the specified Sub2API data directory (root deployment only)")
+	checkMihomo := flag.String("check-managed-mihomo", "", "Check managed Mihomo in the specified data directory")
 	flag.Parse()
+	if *checkMihomo != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := mihomo.CheckManaged(ctx, *checkMihomo); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *migrateMihomo != "" {
+		if os.Geteuid() != 0 {
+			log.Fatal("Mihomo migration requires root")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := mihomo.PrepareLegacy(ctx, *migrateMihomo, "/etc/mihomo-codex/config.yaml", "/var/lib/mihomo-codex/providers/airport.yaml", "/usr/local/bin/mihomo"); err != nil {
+			log.Fatalf("Mihomo migration failed: %v", err)
+		}
+		log.Print("Mihomo migration staged; original configuration retained")
+		return
+	}
 
 	if *showVersion {
 		log.Printf("Sub2API %s (commit: %s, built: %s)\n", Version, Commit, Date)
@@ -92,9 +114,7 @@ func main() {
 	}
 
 	// Normal server mode
-	if err := runMainServer(); err != nil {
-		log.Printf("Server exited with error: %v", err)
-	}
+	runMainServer()
 }
 
 func runSetupServer() {
@@ -134,61 +154,13 @@ func runSetupServer() {
 	}
 }
 
-const (
-	httpGracefulShutdownTimeout = 5 * time.Second
-	httpForcedShutdownTimeout   = 5 * time.Second
-)
-
-type shutdownHTTPServer interface {
-	BeginShutdown()
-	Shutdown(context.Context) error
-	Close() error
-	WaitForServe(context.Context) error
-	WaitForHandlers(context.Context) error
-}
-
-func shutdownHTTPThenCleanup(
-	server shutdownHTTPServer,
-	cleanup func() error,
-	gracefulTimeout time.Duration,
-	forcedTimeout time.Duration,
-) error {
-	if server == nil {
-		return errors.New("HTTP server unavailable during shutdown")
-	}
-
-	server.BeginShutdown()
-	gracefulCtx, cancelGraceful := context.WithTimeout(context.Background(), gracefulTimeout)
-	shutdownErr := server.Shutdown(gracefulCtx)
-	cancelGraceful()
-
-	var closeErr error
-	if shutdownErr != nil {
-		closeErr = server.Close()
-	}
-
-	forcedCtx, cancelForced := context.WithTimeout(context.Background(), forcedTimeout)
-	serveErr := server.WaitForServe(forcedCtx)
-	handlerErr := server.WaitForHandlers(forcedCtx)
-	cancelForced()
-
-	httpErr := errors.Join(shutdownErr, closeErr, serveErr, handlerErr)
-	if serveErr != nil || handlerErr != nil {
-		return httpErr
-	}
-	if cleanup == nil {
-		return httpErr
-	}
-	return errors.Join(httpErr, cleanup())
-}
-
-func runMainServer() error {
+func runMainServer() {
 	cfg, err := config.LoadForBootstrap()
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		log.Fatalf("Failed to load config: %v", err)
 	}
 	if err := logger.Init(logger.OptionsFromConfig(cfg.Log)); err != nil {
-		return fmt.Errorf("failed to initialize logger: %w", err)
+		log.Fatalf("Failed to initialize logger: %v", err)
 	}
 	if cfg.RunMode == config.RunModeSimple {
 		log.Println("⚠️  WARNING: Running in SIMPLE mode - billing and quota checks are DISABLED")
@@ -201,8 +173,9 @@ func runMainServer() error {
 
 	app, err := initializeApplication(buildInfo)
 	if err != nil {
-		return fmt.Errorf("failed to initialize application: %w", err)
+		log.Fatalf("Failed to initialize application: %v", err)
 	}
+	defer app.Cleanup()
 	if app.PluginManager != nil {
 		if err := app.PluginManager.Start(context.Background()); err != nil {
 			log.Printf("Plugin manager started in degraded state: %v", err)
@@ -218,42 +191,29 @@ func runMainServer() error {
 		}
 	}
 
-	serverErr := make(chan error, 1)
+	// 启动服务器
 	go func() {
-		err := app.Server.ListenAndServe()
-		if errors.Is(err, http.ErrServerClosed) {
-			err = nil
+		if err := app.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("Failed to start server: %v", err)
 		}
-		serverErr <- err
 	}()
 
 	log.Printf("Server started on %s", app.Server.Addr)
 
+	// 等待中断信号
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(quit)
+	<-quit
 
-	var serveErr error
-	select {
-	case <-quit:
-		log.Println("Shutting down server...")
-	case serveErr = <-serverErr:
-		if serveErr != nil {
-			serveErr = fmt.Errorf("failed to start server: %w", serveErr)
-		}
-		log.Println("HTTP server stopped; shutting down application...")
-	}
+	log.Println("Shutting down server...")
 
-	shutdownErr := shutdownHTTPThenCleanup(
-		app.Server,
-		app.Cleanup,
-		httpGracefulShutdownTimeout,
-		httpForcedShutdownTimeout,
-	)
-	if shutdownErr != nil {
-		return errors.Join(serveErr, fmt.Errorf("server shutdown failed: %w", shutdownErr))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := app.Server.Shutdown(ctx); err != nil {
+		log.Printf("Server forced to shutdown: %v", err)
 	}
 
 	log.Println("Server exited")
-	return serveErr
+	mihomo.CloseAll()
 }

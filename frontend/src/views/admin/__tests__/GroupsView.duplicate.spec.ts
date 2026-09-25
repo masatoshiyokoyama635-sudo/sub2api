@@ -11,9 +11,9 @@ const {
   duplicateGroup,
   updateGroup,
   getModelAllowlistCandidates,
-  getLiveCapability,
   getUsageSummary,
   getCapacitySummary,
+  getLiveCapability,
   showSuccess,
   showError
 } = vi.hoisted(() => ({
@@ -21,9 +21,9 @@ const {
   duplicateGroup: vi.fn(),
   updateGroup: vi.fn(),
   getModelAllowlistCandidates: vi.fn(),
-  getLiveCapability: vi.fn(),
   getUsageSummary: vi.fn(),
   getCapacitySummary: vi.fn(),
+  getLiveCapability: vi.fn(),
   showSuccess: vi.fn(),
   showError: vi.fn()
 }))
@@ -36,9 +36,9 @@ vi.mock('@/api/admin', () => ({
       list: listGroups,
       duplicate: duplicateGroup,
       getModelAllowlistCandidates,
-      getLiveCapability,
       getUsageSummary,
       getCapacitySummary,
+      getLiveCapability,
       getAll: vi.fn(),
       create: vi.fn(),
       update: updateGroup,
@@ -185,9 +185,9 @@ describe('GroupsView duplicate action', () => {
       duplicateGroup,
       updateGroup,
       getModelAllowlistCandidates,
-      getLiveCapability,
       getUsageSummary,
       getCapacitySummary,
+      getLiveCapability,
       showSuccess,
       showError
     ]) {
@@ -208,9 +208,9 @@ describe('GroupsView duplicate action', () => {
       status: 'inactive'
     })
     getModelAllowlistCandidates.mockResolvedValue([])
-    getLiveCapability.mockResolvedValue({ supported: false })
     getUsageSummary.mockResolvedValue([])
     getCapacitySummary.mockResolvedValue([])
+    getLiveCapability.mockResolvedValue({ supported: false })
   })
 
   afterEach(() => {
@@ -322,6 +322,65 @@ describe('GroupsView duplicate action', () => {
 
     expect(updateGroup).toHaveBeenCalledTimes(1)
     expect(showError).toHaveBeenCalledWith('group name already exists')
+    wrapper.unmount()
+  })
+
+  it('loads, edits, and saves custom reasoning multipliers for group pricing', async () => {
+    const group = {
+      ...sourceGroup,
+      model_pricing: [{
+        platform: 'openai', models: ['example-model'], billing_mode: 'token',
+        input_price: 3e-6, output_price: 15e-6, cache_write_price: null, cache_read_price: null,
+        image_input_price: null, image_output_price: null, per_request_price: null,
+        reasoning_effort_multipliers: { high: 1.5, max: 3 }, intervals: [], time_pricing: null,
+      }],
+    }
+    listGroups.mockResolvedValue({ items: [group], total: 1, page: 1, page_size: 20, pages: 1 })
+    updateGroup.mockResolvedValue(group)
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'common.edit')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get<HTMLInputElement>('[data-reasoning-effort="high"]').element.value).toBe('1.5')
+    await wrapper.get('[data-reasoning-effort="high"]').setValue('0.5')
+    await wrapper.get('[data-reasoning-effort="max"]').setValue('')
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+    expect(updateGroup).toHaveBeenCalledWith(42, expect.objectContaining({
+      model_pricing: [expect.objectContaining({ reasoning_effort_multipliers: { high: 0.5 } })],
+    }))
+    wrapper.unmount()
+  })
+
+  it('blocks saving an invalid group reasoning multiplier and allows clearing it', async () => {
+    const group = {
+      ...sourceGroup,
+      model_pricing: [{
+        platform: 'openai', models: ['example-model'], billing_mode: 'token',
+        input_price: 3e-6, output_price: 15e-6, cache_write_price: null, cache_read_price: null,
+        image_input_price: null, image_output_price: null, per_request_price: null,
+        reasoning_effort_multipliers: { high: 1.5 }, intervals: [], time_pricing: null,
+      }],
+    }
+    listGroups.mockResolvedValue({ items: [group], total: 1, page: 1, page_size: 20, pages: 1 })
+    updateGroup.mockResolvedValue(group)
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'common.edit')!.trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-reasoning-effort="high"]').setValue('0')
+    await wrapper.get('#edit-group-form').trigger('submit')
+    expect(updateGroup).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith(expect.stringContaining('reasoningEffortMultiplierPositive'))
+
+    await wrapper.get('[data-testid="reasoning-effort-multipliers"] button').trigger('click')
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+    expect(updateGroup).toHaveBeenCalledWith(42, expect.objectContaining({
+      model_pricing: [expect.objectContaining({ reasoning_effort_multipliers: null })],
+    }))
     wrapper.unmount()
   })
 

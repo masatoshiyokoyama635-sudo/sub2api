@@ -320,50 +320,57 @@ func isKnownGrokFreeAccount(account *Account) bool {
 	if account == nil || !account.IsGrokOAuth() {
 		return false
 	}
+	// Live access-token JWT wins over stale billing/credential snapshots
+	// so a downgrade to free is visible as soon as the AT is refreshed.
+	if jwtTier := xai.SubscriptionTierFromJWT(account.GetCredential("access_token")); jwtTier != "" {
+		return isGrokFreeSubscriptionTier(jwtTier)
+	}
+	freeSignal := false
+	paidSignal := false
+	inferredFreeSignal := false
 	if billing, err := grokBillingSnapshotFromExtra(account.Extra); err == nil && billing != nil {
-		freeSignal := false
 		if tier := strings.TrimSpace(billing.Plan); tier != "" {
-			freeSignal = isGrokFreeSubscriptionTier(tier)
-		}
-		if freeSignal {
-			return true
-		}
-		if !billing.Partial && len(billing.FailedWindows) == 0 {
-			paidSignal := billing.UsagePercent != nil || billing.UsedPercent != nil ||
-				(billing.MonthlyLimitCents != nil && *billing.MonthlyLimitCents > 0)
-			if tier := strings.TrimSpace(billing.Plan); tier != "" {
-				paidSignal = paidSignal || !isGrokUnknownSubscriptionTier(tier)
-			} else if strings.TrimSpace(billing.MonthlyUpdatedAt) != "" ||
-				(billing.StatusCode >= http.StatusOK && billing.StatusCode < http.StatusMultipleChoices) {
+			if isGrokFreeSubscriptionTier(tier) {
 				freeSignal = true
+			} else if !isGrokUnknownSubscriptionTier(tier) {
+				paidSignal = true
 			}
-			if paidSignal {
-				return false
-			}
-			if freeSignal {
-				return true
-			}
+		}
+		// Usage % or a monthly dollar cap is evidence of a paid plan.
+		if billing.UsagePercent != nil || billing.UsedPercent != nil ||
+			(billing.MonthlyLimitCents != nil && *billing.MonthlyLimitCents > 0) {
+			paidSignal = true
+		}
+		// Empty plan + successful monthly observation → inferred free (no paid plan/limit).
+		if strings.TrimSpace(billing.MonthlyUpdatedAt) != "" ||
+			(billing.StatusCode >= http.StatusOK && billing.StatusCode < http.StatusMultipleChoices &&
+				!billing.Partial && len(billing.FailedWindows) == 0) {
+			inferredFreeSignal = true
 		}
 	}
 	if snapshot, err := grokQuotaSnapshotFromExtra(account.Extra); err == nil && snapshot != nil {
 		if tier := strings.TrimSpace(snapshot.SubscriptionTier); tier != "" {
 			if isGrokFreeSubscriptionTier(tier) {
-				return true
-			}
-			if !isGrokUnknownSubscriptionTier(tier) {
-				return false
+				freeSignal = true
+			} else if !isGrokUnknownSubscriptionTier(tier) {
+				paidSignal = true
 			}
 		}
 		if snapshot.Tokens != nil && snapshot.Tokens.Limit != nil &&
 			xai.IsGrokFreeRolling24hTokenLimit(*snapshot.Tokens.Limit) {
-			return true
+			inferredFreeSignal = true
 		}
 	}
-	// The persisted tier is only a hint when billing and quota observations are inconclusive.
+	// Only credentials subscription_tier is authoritative here (not plan_type / extra keys).
 	if tier := strings.TrimSpace(account.GetCredential("subscription_tier")); tier != "" {
-		return isGrokFreeSubscriptionTier(tier)
+		if isGrokFreeSubscriptionTier(tier) {
+			freeSignal = true
+		} else if !isGrokUnknownSubscriptionTier(tier) {
+			paidSignal = true
+		}
 	}
-	return false
+	// Explicit paid evidence always wins over an inferred Free signal.
+	return !paidSignal && (freeSignal || inferredFreeSignal)
 }
 
 func isGrokFreeSubscriptionTier(tier string) bool {

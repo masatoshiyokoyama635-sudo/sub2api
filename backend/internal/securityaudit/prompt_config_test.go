@@ -6,13 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"strconv"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
@@ -32,64 +28,6 @@ func (prefixEncryptor) Decrypt(value string) (string, error) {
 // unit tests may persist endpoint tokens.
 func testTotpKeyConfig() *config.Config {
 	return &config.Config{Totp: config.TotpConfig{EncryptionKeyConfigured: true}}
-}
-
-type failingDecryptor struct{}
-
-func (failingDecryptor) Encrypt(value string) (string, error) { return "enc:" + value, nil }
-func (failingDecryptor) Decrypt(string) (string, error)       { return "", errors.New("decrypt failed") }
-
-type sequencedSettingRead struct {
-	values  map[string]string
-	err     error
-	started chan struct{}
-	release chan struct{}
-}
-
-type sequencedSettingRepository struct {
-	staticSettingRepository
-	mu    sync.Mutex
-	reads []sequencedSettingRead
-}
-
-func (r *sequencedSettingRepository) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
-	r.mu.Lock()
-	if len(r.reads) == 0 {
-		r.mu.Unlock()
-		return nil, errors.New("unexpected settings read")
-	}
-	read := r.reads[0]
-	r.reads = r.reads[1:]
-	r.mu.Unlock()
-	close(read.started)
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-read.release:
-	}
-	if read.err != nil {
-		return nil, read.err
-	}
-	result := make(map[string]string, len(keys))
-	for _, key := range keys {
-		result[key] = read.values[key]
-	}
-	return result, nil
-}
-
-func promptAuditStorageJSON(t *testing.T, version int64, enabled, blocking, endpointEnabled bool, token string) string {
-	t.Helper()
-	storage := DefaultStorageConfig()
-	storage.ConfigVersion = version
-	storage.Enabled = enabled
-	storage.BlockingEnabled = blocking
-	storage.Endpoints = []StorageEndpoint{{
-		ID: "guard", Name: "Guard", Protocol: "openai_compatible", BaseURL: "https://guard.example.test",
-		Model: DefaultGuardModel, TokenCiphertext: token, TimeoutMS: 1000, InputLimit: 1000, Enabled: endpointEnabled,
-	}}
-	raw, err := json.Marshal(storage)
-	require.NoError(t, err)
-	return string(raw)
 }
 
 func TestDefaultConfigIsOff(t *testing.T) {
@@ -270,66 +208,24 @@ func TestConfigManagerUndecryptableTokenStillFailsClosedForBlockingIntent(t *tes
 func TestBuildNextStoragePreserveReplaceAndClearToken(t *testing.T) {
 	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
 	current := DefaultStorageConfig()
-	current.Endpoints = []StorageEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080/v1/", Model: DefaultGuardModel, TokenCiphertext: "enc:old", TimeoutMS: 1000, InputLimit: 1000}}
+	current.Endpoints = []StorageEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080", Model: DefaultGuardModel, TokenCiphertext: "enc:old", TimeoutMS: 1000, InputLimit: 1000}}
 	base := UpdateConfigRequest{ExpectedConfigVersion: 1, Strategy: "priority", WorkerCount: 1, QueueCapacity: 10, Scanners: []string{"PII"}, AllGroups: true,
-		Endpoints: []UpdateEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: " http://127.0.0.1:8080/ ", TimeoutMS: 1000, InputLimit: 1000}}}
-
-	t.Run("semantically equivalent normalized URL preserves token", func(t *testing.T) {
-		preserved, err := manager.buildNextStorage(current, base, 9)
-		require.NoError(t, err)
-		require.Equal(t, "http://127.0.0.1:8080", preserved.Endpoints[0].BaseURL)
-		require.Equal(t, "enc:old", preserved.Endpoints[0].TokenCiphertext)
-	})
-
-	t.Run("changed URL without an old token succeeds empty", func(t *testing.T) {
-		currentWithoutToken := current
-		currentWithoutToken.Endpoints = append([]StorageEndpoint(nil), current.Endpoints...)
-		currentWithoutToken.Endpoints[0].TokenCiphertext = ""
-		changedReq := base
-		changedReq.Endpoints = append([]UpdateEndpoint(nil), base.Endpoints...)
-		changedReq.Endpoints[0].BaseURL = "https://guard.example.test/v1"
-
-		changed, err := manager.buildNextStorage(currentWithoutToken, changedReq, 9)
-		require.NoError(t, err)
-		require.Equal(t, "https://guard.example.test", changed.Endpoints[0].BaseURL)
-		require.Empty(t, changed.Endpoints[0].TokenCiphertext)
-	})
-
-	t.Run("changed URL without token disposition fails closed", func(t *testing.T) {
-		changedReq := base
-		changedReq.Endpoints = append([]UpdateEndpoint(nil), base.Endpoints...)
-		changedReq.Endpoints[0].BaseURL = "https://guard.example.test/v1"
-
-		_, err := manager.buildNextStorage(current, changedReq, 9)
-		require.Error(t, err)
-		require.True(t, infraerrors.IsBadRequest(err))
-		require.Equal(t, "prompt_audit_token_required_for_base_url_change", infraerrors.Reason(err))
-		require.Equal(t, "更改审计节点地址时必须提供新令牌或明确清除旧令牌", infraerrors.Message(err))
-	})
-
-	t.Run("changed URL with replacement token succeeds", func(t *testing.T) {
-		replacedReq := base
-		replacedReq.Endpoints = append([]UpdateEndpoint(nil), base.Endpoints...)
-		replacedReq.Endpoints[0].BaseURL = "https://guard.example.test/v1/"
-		replacedReq.Endpoints[0].Token = "new"
-
-		replaced, err := manager.buildNextStorage(current, replacedReq, 9)
-		require.NoError(t, err)
-		require.Equal(t, "https://guard.example.test", replaced.Endpoints[0].BaseURL)
-		require.Equal(t, "enc:new", replaced.Endpoints[0].TokenCiphertext)
-	})
-
-	t.Run("changed URL with clear token succeeds empty", func(t *testing.T) {
-		clearedReq := base
-		clearedReq.Endpoints = append([]UpdateEndpoint(nil), base.Endpoints...)
-		clearedReq.Endpoints[0].BaseURL = "https://guard.example.test/v1/"
-		clearedReq.Endpoints[0].ClearToken = true
-
-		cleared, err := manager.buildNextStorage(current, clearedReq, 9)
-		require.NoError(t, err)
-		require.Equal(t, "https://guard.example.test", cleared.Endpoints[0].BaseURL)
-		require.Empty(t, cleared.Endpoints[0].TokenCiphertext)
-	})
+		Endpoints: []UpdateEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080", TimeoutMS: 1000, InputLimit: 1000}}}
+	preserved, err := manager.buildNextStorage(current, base, 9)
+	require.NoError(t, err)
+	require.Equal(t, "enc:old", preserved.Endpoints[0].TokenCiphertext)
+	replacedReq := base
+	replacedReq.Endpoints = append([]UpdateEndpoint(nil), base.Endpoints...)
+	replacedReq.Endpoints[0].Token = "new"
+	replaced, err := manager.buildNextStorage(current, replacedReq, 9)
+	require.NoError(t, err)
+	require.Equal(t, "enc:new", replaced.Endpoints[0].TokenCiphertext)
+	clearedReq := base
+	clearedReq.Endpoints = append([]UpdateEndpoint(nil), base.Endpoints...)
+	clearedReq.Endpoints[0].ClearToken = true
+	cleared, err := manager.buildNextStorage(current, clearedReq, 9)
+	require.NoError(t, err)
+	require.Empty(t, cleared.Endpoints[0].TokenCiphertext)
 }
 
 // Without a fixed encryption key the per-boot auto-generated key would make a
@@ -421,21 +317,6 @@ func (errorSettingRepository) GetMultiple(context.Context, []string) (map[string
 	return nil, errors.New("settings unavailable")
 }
 
-type lifecycleBlockingSettingRepository struct {
-	staticSettingRepository
-	started chan struct{}
-	release <-chan struct{}
-}
-
-func (r lifecycleBlockingSettingRepository) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
-	close(r.started)
-	<-r.release
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return r.staticSettingRepository.GetMultiple(ctx, keys)
-}
-
 type switchableSettingRepository struct {
 	staticSettingRepository
 	loadErr error
@@ -446,104 +327,6 @@ func (r *switchableSettingRepository) GetMultiple(ctx context.Context, keys []st
 		return nil, r.loadErr
 	}
 	return r.staticSettingRepository.GetMultiple(ctx, keys)
-}
-
-func TestConfigManagerStoppedShutdownReturnsSavedError(t *testing.T) {
-	shutdownErr := errors.New("config shutdown failed")
-	manager := &ConfigManager{state: promptLifecycleStopped, shutdownErr: shutdownErr}
-
-	require.ErrorIs(t, manager.Shutdown(context.Background()), shutdownErr)
-}
-
-func TestConfigManagerStartAndShutdownAreSerialized(t *testing.T) {
-	loadStarted := make(chan struct{})
-	loadRelease := make(chan struct{})
-	repo := lifecycleBlockingSettingRepository{
-		staticSettingRepository: staticSettingRepository{values: map[string]string{
-			SettingKeyPromptAuditConfig: "",
-			SettingKeyRiskControl:       "false",
-		}},
-		started: loadStarted,
-		release: loadRelease,
-	}
-	manager := NewConfigManager(nil, repo, nil, prefixEncryptor{}, testTotpKeyConfig())
-	startDone := make(chan error, 1)
-	go func() { startDone <- manager.Start(context.Background()) }()
-	<-loadStarted
-
-	shutdownDone := make(chan error, 1)
-	shutdownAttempted := make(chan struct{})
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), time.Second)
-	defer cancelShutdown()
-	go func() {
-		close(shutdownAttempted)
-		shutdownDone <- manager.Shutdown(shutdownCtx)
-	}()
-	<-shutdownAttempted
-
-	shutdownReturnedBeforeStart := false
-	select {
-	case <-shutdownDone:
-		shutdownReturnedBeforeStart = true
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(loadRelease)
-	startErr := <-startDone
-	if !shutdownReturnedBeforeStart {
-		require.NoError(t, <-shutdownDone)
-	}
-
-	require.ErrorIs(t, startErr, context.Canceled)
-	require.False(t, shutdownReturnedBeforeStart, "Shutdown must not complete while Start is still installing reload loops")
-	secondCtx, cancelSecond := context.WithTimeout(context.Background(), time.Second)
-	defer cancelSecond()
-	require.NoError(t, manager.Shutdown(secondCtx))
-}
-
-func TestConfigManagerShutdownTimeoutIsTerminalAndSecondShutdownCanFinish(t *testing.T) {
-	manager := NewConfigManager(nil, staticSettingRepository{values: map[string]string{
-		SettingKeyPromptAuditConfig: "",
-		SettingKeyRiskControl:       "false",
-	}}, nil, prefixEncryptor{}, testTotpKeyConfig())
-	require.NoError(t, manager.Start(context.Background()))
-
-	release := make(chan struct{})
-	manager.wg.Add(1)
-	go func() {
-		defer manager.wg.Done()
-		<-release
-	}()
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancelShutdown()
-	shutdownDone := make(chan error, 1)
-	go func() { shutdownDone <- manager.Shutdown(shutdownCtx) }()
-
-	var shutdownErr error
-	returnedAtDeadline := false
-	select {
-	case shutdownErr = <-shutdownDone:
-		returnedAtDeadline = true
-	case <-time.After(100 * time.Millisecond):
-	}
-	startCtx, cancelStart := context.WithCancel(context.Background())
-	cancelStart()
-	startErr := manager.Start(startCtx)
-	manager.lifecycleMu.Lock()
-	restartInstalled := manager.state == promptLifecycleStarting || manager.state == promptLifecycleRunning
-	manager.lifecycleMu.Unlock()
-	close(release)
-	if !returnedAtDeadline {
-		shutdownErr = <-shutdownDone
-	}
-	secondCtx, cancelSecond := context.WithTimeout(context.Background(), time.Second)
-	defer cancelSecond()
-	secondErr := manager.Shutdown(secondCtx)
-
-	require.True(t, returnedAtDeadline, "Shutdown must honor its timeout instead of waiting indefinitely")
-	require.ErrorIs(t, shutdownErr, context.DeadlineExceeded)
-	require.False(t, restartInstalled, "Start must not install a new run once shutdown has begun")
-	require.Error(t, startErr, "Start must remain disabled once shutdown has begun")
-	require.NoError(t, secondErr, "a later Shutdown must finish draining the original run")
 }
 
 func TestConfigManagerStartupLoadFailureDoesNotBlockWhenBlockingNotIntended(t *testing.T) {
@@ -601,11 +384,11 @@ func TestConfigManagerUntrustedClearsOnSuccessfulDisable(t *testing.T) {
 	disabled.BlockingEnabled = false
 	active, err := ActiveFromStorage(disabled, true, manager.encryptor)
 	require.NoError(t, err)
-	manager.installMu.Lock()
-	manager.installActiveSnapshotLocked(disabled, active, true)
-	manager.installMu.Unlock()
+	manager.expected.Store(disabled.ConfigVersion)
+	manager.expectedBlocking.Store(false)
+	manager.snapshot.Store(&activeConfigSnapshot{storage: disabled, active: active, loadedAt: manager.clock.Now()})
+	manager.configUntrusted.Store(false)
 
-	require.False(t, manager.configUntrusted.Load())
 	require.False(t, manager.BlockingActivationDegraded())
 	require.Equal(t, ModeOff, manager.EffectiveMode())
 
@@ -627,252 +410,6 @@ func TestConfigManagerUntrustedWithoutBlockingDoesNotForceBlockingMode(t *testin
 	require.Equal(t, ModeOff, manager.EffectiveMode(), "async intent + untrusted must not force blocking unavailable")
 }
 
-func TestConfigManagerInvalidStoredRiskControlOnlyBlocksForPreviouslyObservedBlockingIntent(t *testing.T) {
-	tests := []struct {
-		name         string
-		observeBlock bool
-		wantMode     Mode
-		wantDegraded bool
-	}{
-		{name: "no trusted blocking intent", wantMode: ModeOff},
-		{name: "previous blocking intent", observeBlock: true, wantMode: ModeBlocking, wantDegraded: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			manager := NewConfigManager(nil, staticSettingRepository{values: map[string]string{
-				SettingKeyPromptAuditConfig: promptAuditStorageJSON(t, 1, false, false, false, ""),
-				SettingKeyRiskControl:       "TRUE",
-			}}, nil, prefixEncryptor{}, testTotpKeyConfig())
-			if tt.observeBlock {
-				manager.observeExpectedState(`{"enabled":true,"blocking_enabled":true,"config_version":2}`, true)
-			}
-
-			err := manager.Start(context.Background())
-			require.Error(t, err)
-			require.Equal(t, tt.wantDegraded, manager.BlockingActivationDegraded())
-			require.Equal(t, tt.wantMode, manager.EffectiveMode())
-			require.NoError(t, manager.Shutdown(context.Background()))
-		})
-	}
-}
-
-func TestConfigManagerStartupDecryptFailureKeepsConfigVisibleAndDisablesEndpoint(t *testing.T) {
-	tests := []struct {
-		name            string
-		riskControl     bool
-		enabled         bool
-		blocking        bool
-		endpointEnabled bool
-		wantMode        Mode
-		wantDegraded    bool
-	}{
-		{name: "blocking", riskControl: true, enabled: true, blocking: true, endpointEnabled: true, wantMode: ModeBlocking},
-		{name: "async", riskControl: true, enabled: true, blocking: false, endpointEnabled: true, wantMode: ModeAsync},
-		{name: "risk control off", riskControl: false, enabled: true, blocking: true, endpointEnabled: true, wantMode: ModeOff},
-		{name: "audit disabled", riskControl: true, enabled: false, blocking: false, endpointEnabled: false, wantMode: ModeOff},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			repo := staticSettingRepository{values: map[string]string{
-				SettingKeyPromptAuditConfig: promptAuditStorageJSON(t, 9, tt.enabled, tt.blocking, tt.endpointEnabled, "corrupt"),
-				SettingKeyRiskControl:       strconv.FormatBool(tt.riskControl),
-			}}
-			manager := NewConfigManager(nil, repo, nil, failingDecryptor{}, testTotpKeyConfig())
-			err := manager.Start(context.Background())
-			require.NoError(t, err)
-			require.Equal(t, tt.wantDegraded, manager.BlockingActivationDegraded())
-			require.Equal(t, tt.wantMode, manager.EffectiveMode())
-			_, _, _, loadError := manager.RuntimeState()
-			require.Empty(t, loadError)
-			active, ok := manager.Active()
-			require.True(t, ok)
-			require.Len(t, active.Endpoints, 1)
-			require.True(t, active.Endpoints[0].TokenInvalid)
-			require.False(t, active.Endpoints[0].Enabled)
-			require.NoError(t, manager.Shutdown(context.Background()))
-		})
-	}
-}
-
-func TestConfigManagerConcurrentReloadCannotInstallOlderReadAfterNewerRead(t *testing.T) {
-	oldStarted, oldRelease := make(chan struct{}), make(chan struct{})
-	newStarted, newRelease := make(chan struct{}), make(chan struct{})
-	repo := &sequencedSettingRepository{reads: []sequencedSettingRead{
-		{values: map[string]string{
-			SettingKeyPromptAuditConfig: promptAuditStorageJSON(t, 7, true, false, true, "enc:old"),
-			SettingKeyRiskControl:       "true",
-		}, started: oldStarted, release: oldRelease},
-		{values: map[string]string{
-			SettingKeyPromptAuditConfig: promptAuditStorageJSON(t, 8, true, false, true, "enc:new"),
-			SettingKeyRiskControl:       "true",
-		}, started: newStarted, release: newRelease},
-	}}
-	manager := NewConfigManager(nil, repo, nil, prefixEncryptor{}, testTotpKeyConfig())
-	errorsCh := make(chan error, 2)
-	go func() { errorsCh <- manager.Reload(context.Background()) }()
-	<-oldStarted
-	go func() { errorsCh <- manager.Reload(context.Background()) }()
-	<-newStarted
-	close(newRelease)
-	require.NoError(t, <-errorsCh)
-	close(oldRelease)
-	require.NoError(t, <-errorsCh)
-
-	active, ok := manager.Active()
-	require.True(t, ok)
-	require.Equal(t, int64(8), active.ConfigVersion)
-	require.Equal(t, "new", active.Endpoints[0].Token)
-	expected, activeVersion, _, loadError := manager.RuntimeState()
-	require.Equal(t, int64(8), expected)
-	require.Equal(t, int64(8), activeVersion)
-	require.Empty(t, loadError)
-}
-
-func TestConfigManagerSaveFenceRejectsOlderReloadSuccess(t *testing.T) {
-	oldStarted, oldRelease := make(chan struct{}), make(chan struct{})
-	saveStarted, saveRelease := make(chan struct{}), make(chan struct{})
-	close(saveRelease)
-	repo := &sequencedSettingRepository{reads: []sequencedSettingRead{
-		{values: map[string]string{
-			SettingKeyPromptAuditConfig: promptAuditStorageJSON(t, 1, true, false, true, "enc:old"),
-			SettingKeyRiskControl:       "true",
-		}, started: oldStarted, release: oldRelease},
-		{values: map[string]string{SettingKeyRiskControl: "true"}, started: saveStarted, release: saveRelease},
-	}}
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-	manager := NewConfigManager(db, repo, nil, prefixEncryptor{}, testTotpKeyConfig())
-	manager.clock = fixedClock{}
-	old := promptAuditStorageJSON(t, 1, true, false, true, "enc:old")
-	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(\$1\)`).WithArgs(promptAuditConfigLockKey).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(`SELECT value FROM settings WHERE key=\$1 FOR UPDATE`).WithArgs(SettingKeyPromptAuditConfig).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(old))
-	mock.ExpectExec(`INSERT INTO settings`).WithArgs(SettingKeyPromptAuditConfig, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectCommit()
-	manager.snapshot.Store(&activeConfigSnapshot{
-		storage: DefaultStorageConfig(),
-		active:  ActiveConfig{RiskControlEnabled: true, Enabled: true, AllGroups: true, ConfigVersion: 1}, loadedAt: fixedClock{}.Now(),
-	})
-	manager.expected.Store(1)
-	manager.expectedRiskControl.Store(true)
-	manager.riskControlKnown.Store(true)
-
-	reloadErr := make(chan error, 1)
-	go func() { reloadErr <- manager.Reload(context.Background()) }()
-	<-oldStarted
-	request := UpdateConfigRequest{
-		ExpectedConfigVersion: 1, Enabled: true, BlockingEnabled: true, Strategy: "priority", WorkerCount: 1,
-		QueueCapacity: 10, Scanners: []string{"pii"}, AllGroups: true,
-		Endpoints: []UpdateEndpoint{{ID: "guard", Name: "Guard", Protocol: "openai_compatible", BaseURL: "https://guard.example.test", TimeoutMS: 1000, InputLimit: 1000, Enabled: true, Token: "replacement"}},
-	}
-	_, err = manager.Save(context.Background(), request, 7)
-	require.NoError(t, err)
-	<-saveStarted
-	close(oldRelease)
-	require.NoError(t, <-reloadErr)
-
-	active, ok := manager.Active()
-	require.True(t, ok)
-	require.Equal(t, int64(2), active.ConfigVersion)
-	require.Equal(t, "replacement", active.Endpoints[0].Token)
-	expected, activeVersion, _, loadError := manager.RuntimeState()
-	require.Equal(t, int64(2), expected)
-	require.Equal(t, int64(2), activeVersion)
-	require.Empty(t, loadError)
-	require.False(t, manager.configUntrusted.Load())
-	require.True(t, manager.expectedBlocking.Load())
-	require.Equal(t, ModeBlocking, manager.EffectiveMode())
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestConfigManagerSaveFenceRejectsOlderReloadFailureState(t *testing.T) {
-	oldStarted, oldRelease := make(chan struct{}), make(chan struct{})
-	saveStarted, saveRelease := make(chan struct{}), make(chan struct{})
-	close(saveRelease)
-	repo := &sequencedSettingRepository{reads: []sequencedSettingRead{
-		{values: map[string]string{
-			SettingKeyPromptAuditConfig: `{"enabled":true,"blocking_enabled":true,"config_version":1,"unknown":true}`,
-			SettingKeyRiskControl:       "true",
-		}, started: oldStarted, release: oldRelease},
-		{values: map[string]string{SettingKeyRiskControl: "true"}, started: saveStarted, release: saveRelease},
-	}}
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-	manager := NewConfigManager(db, repo, nil, prefixEncryptor{}, testTotpKeyConfig())
-	manager.clock = fixedClock{}
-	old := promptAuditStorageJSON(t, 1, true, false, true, "enc:old")
-	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(\$1\)`).WithArgs(promptAuditConfigLockKey).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(`SELECT value FROM settings WHERE key=\$1 FOR UPDATE`).WithArgs(SettingKeyPromptAuditConfig).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(old))
-	mock.ExpectExec(`INSERT INTO settings`).WithArgs(SettingKeyPromptAuditConfig, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectCommit()
-	manager.snapshot.Store(&activeConfigSnapshot{
-		storage: DefaultStorageConfig(),
-		active:  ActiveConfig{RiskControlEnabled: true, Enabled: true, AllGroups: true, ConfigVersion: 1}, loadedAt: fixedClock{}.Now(),
-	})
-	manager.expected.Store(1)
-	manager.expectedRiskControl.Store(true)
-	manager.riskControlKnown.Store(true)
-
-	reloadErr := make(chan error, 1)
-	go func() { reloadErr <- manager.Reload(context.Background()) }()
-	<-oldStarted
-	request := UpdateConfigRequest{
-		ExpectedConfigVersion: 1, Enabled: false, BlockingEnabled: false, Strategy: "priority", WorkerCount: 1,
-		QueueCapacity: 10, Scanners: []string{"pii"}, AllGroups: true,
-	}
-	_, err = manager.Save(context.Background(), request, 7)
-	require.NoError(t, err)
-	<-saveStarted
-	close(oldRelease)
-	require.Error(t, <-reloadErr)
-
-	expected, activeVersion, _, loadError := manager.RuntimeState()
-	require.Equal(t, int64(2), expected)
-	require.Equal(t, int64(2), activeVersion)
-	require.Empty(t, loadError)
-	require.True(t, manager.riskControlKnown.Load())
-	require.False(t, manager.expectedBlocking.Load())
-	require.False(t, manager.configUntrusted.Load())
-	require.Equal(t, ModeOff, manager.EffectiveMode())
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestConfigManagerLatestFailedReloadPreservesPreviouslyObservedBlockingIntent(t *testing.T) {
-	oldStarted, oldRelease := make(chan struct{}), make(chan struct{})
-	newStarted, newRelease := make(chan struct{}), make(chan struct{})
-	repo := &sequencedSettingRepository{reads: []sequencedSettingRead{
-		{values: map[string]string{
-			SettingKeyPromptAuditConfig: promptAuditStorageJSON(t, 7, true, false, true, "enc:old"),
-			SettingKeyRiskControl:       "false",
-		}, started: oldStarted, release: oldRelease},
-		{err: errors.New("database unavailable"), started: newStarted, release: newRelease},
-	}}
-	manager := NewConfigManager(nil, repo, nil, prefixEncryptor{}, testTotpKeyConfig())
-	manager.snapshot.Store(&activeConfigSnapshot{
-		active:   ActiveConfig{RiskControlEnabled: true, Enabled: true, BlockingEnabled: false, ConfigVersion: 6},
-		storage:  DefaultStorageConfig(),
-		loadedAt: fixedClock{}.Now(),
-	})
-	manager.observeExpectedState(`{"enabled":true,"blocking_enabled":true,"config_version":8}`, true)
-	errorsCh := make(chan error, 2)
-	go func() { errorsCh <- manager.Reload(context.Background()) }()
-	<-oldStarted
-	go func() { errorsCh <- manager.Reload(context.Background()) }()
-	<-newStarted
-	close(newRelease)
-	require.Error(t, <-errorsCh)
-	close(oldRelease)
-	require.NoError(t, <-errorsCh)
-
-	require.True(t, manager.configUntrusted.Load())
-	require.False(t, manager.riskControlKnown.Load())
-	require.True(t, manager.BlockingActivationDegraded())
-	require.Equal(t, ModeBlocking, manager.EffectiveMode())
-}
-
 func TestParseLegacyConfigDefaultsMissingFieldsWithoutEnablingBlocking(t *testing.T) {
 	storage, err := ParseStorageConfig(`{"enabled":false,"config_version":9}`)
 	require.NoError(t, err)
@@ -882,200 +419,6 @@ func TestParseLegacyConfigDefaultsMissingFieldsWithoutEnablingBlocking(t *testin
 	require.Equal(t, DefaultQueueCapacity, storage.QueueCapacity)
 	require.Equal(t, AllScannerIDs, storage.Scanners)
 	require.True(t, storage.AllGroups)
-}
-
-func TestParseStorageConfigRejectsUnknownFieldsTrailingJSONAndUnknownScanners(t *testing.T) {
-	tests := []struct {
-		name string
-		raw  string
-	}{
-		{name: "unknown top-level field", raw: `{"enabled":false,"config_version":9,"blockng_enabled":true}`},
-		{name: "unknown endpoint field", raw: `{"enabled":false,"config_version":9,"endpoints":[{"id":"guard","name":"Guard","base_url":"https://guard.example.test","timeout_ms":1000,"input_limit":1000,"enabeld":true}]}`},
-		{name: "trailing object", raw: `{"enabled":false,"config_version":9} {"enabled":true}`},
-		{name: "trailing scalar", raw: `{"enabled":false,"config_version":9} true`},
-		{name: "top-level null", raw: `null`},
-		{name: "unknown scanner", raw: `{"enabled":false,"config_version":9,"scanners":["pii","made_up"]}`},
-		{name: "explicit empty scanners", raw: `{"enabled":false,"config_version":9,"scanners":[]}`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := ParseStorageConfig(tt.raw)
-			require.Error(t, err)
-		})
-	}
-}
-
-type postCommitRiskControlFailureRepository struct{ staticSettingRepository }
-
-func (postCommitRiskControlFailureRepository) GetMultiple(context.Context, []string) (map[string]string, error) {
-	return nil, errors.New("risk control unavailable after commit")
-}
-
-func TestConfigManagerSaveRiskControlFailureAdvancesBlockingFence(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-	manager := NewConfigManager(db, postCommitRiskControlFailureRepository{}, nil, prefixEncryptor{}, testTotpKeyConfig())
-	manager.clock = fixedClock{}
-	old := promptAuditStorageJSON(t, 1, true, false, true, "enc:old")
-	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(\$1\)`).WithArgs(promptAuditConfigLockKey).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(`SELECT value FROM settings WHERE key=\$1 FOR UPDATE`).WithArgs(SettingKeyPromptAuditConfig).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(old))
-	mock.ExpectExec(`INSERT INTO settings`).WithArgs(SettingKeyPromptAuditConfig, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectCommit()
-	manager.snapshot.Store(&activeConfigSnapshot{
-		storage: DefaultStorageConfig(),
-		active:  ActiveConfig{RiskControlEnabled: true, Enabled: true, AllGroups: true, ConfigVersion: 1}, loadedAt: fixedClock{}.Now(),
-	})
-	manager.expected.Store(1)
-	manager.expectedRiskControl.Store(true)
-
-	request := UpdateConfigRequest{
-		ExpectedConfigVersion: 1, Enabled: true, BlockingEnabled: true, Strategy: "priority", WorkerCount: 1,
-		QueueCapacity: 10, Scanners: []string{"pii"}, AllGroups: true,
-		Endpoints: []UpdateEndpoint{{ID: "guard", Name: "Guard", Protocol: "openai_compatible", BaseURL: "https://guard.example.test", TimeoutMS: 1000, InputLimit: 1000, Enabled: true, Token: "replacement"}},
-	}
-	_, err = manager.Save(context.Background(), request, 7)
-
-	require.Error(t, err)
-	expected, active, _, loadError := manager.RuntimeState()
-	require.Equal(t, int64(2), expected)
-	require.Equal(t, int64(1), active)
-	require.NotEmpty(t, loadError)
-	require.True(t, manager.configUntrusted.Load())
-	require.True(t, manager.expectedBlocking.Load())
-	require.True(t, manager.BlockingActivationDegraded())
-	require.Equal(t, ModeBlocking, manager.EffectiveMode())
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestConfigManagerSaveWithUndecryptableTokenInstallsDisabledEndpoint(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-	settings := staticSettingRepository{values: map[string]string{SettingKeyRiskControl: "true"}}
-	manager := NewConfigManager(db, settings, nil, failingDecryptor{}, testTotpKeyConfig())
-	manager.clock = fixedClock{}
-	old := promptAuditStorageJSON(t, 1, true, false, true, "enc:old")
-	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(\$1\)`).WithArgs(promptAuditConfigLockKey).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(`SELECT value FROM settings WHERE key=\$1 FOR UPDATE`).WithArgs(SettingKeyPromptAuditConfig).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(old))
-	mock.ExpectExec(`INSERT INTO settings`).WithArgs(SettingKeyPromptAuditConfig, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectCommit()
-
-	manager.snapshot.Store(&activeConfigSnapshot{
-		storage:  DefaultStorageConfig(),
-		active:   ActiveConfig{RiskControlEnabled: true, Enabled: true, AllGroups: true, ConfigVersion: 1},
-		loadedAt: fixedClock{}.Now(),
-	})
-	manager.expected.Store(1)
-	manager.expectedRiskControl.Store(true)
-	request := UpdateConfigRequest{
-		ExpectedConfigVersion: 1, Enabled: true, BlockingEnabled: true, StorePassEvents: false,
-		Strategy: "priority", WorkerCount: 1, QueueCapacity: 10, Scanners: []string{"pii"}, AllGroups: true,
-		Endpoints: []UpdateEndpoint{{ID: "guard", Name: "Guard", Protocol: "openai_compatible", BaseURL: "https://guard.example.test", TimeoutMS: 1000, InputLimit: 1000, Enabled: true, Token: "replacement"}},
-	}
-
-	_, err = manager.Save(context.Background(), request, 7)
-
-	require.NoError(t, err)
-	expected, active, _, loadError := manager.RuntimeState()
-	require.Equal(t, int64(2), expected)
-	require.Equal(t, int64(2), active)
-	require.Empty(t, loadError)
-	require.False(t, manager.configUntrusted.Load())
-	require.True(t, manager.expectedBlocking.Load())
-	require.False(t, manager.BlockingActivationDegraded())
-	require.Equal(t, ModeBlocking, manager.EffectiveMode())
-	activeConfig, ok := manager.Active()
-	require.True(t, ok)
-	require.Len(t, activeConfig.Endpoints, 1)
-	require.True(t, activeConfig.Endpoints[0].TokenInvalid)
-	require.False(t, activeConfig.Endpoints[0].Enabled)
-	repo := &fakeJobRepository{}
-	payload := &fakePayloadStore{values: map[int64]string{51: "do not dispatch after failed activation"}}
-	scannerCalls := 0
-	runner := NewRunner(manager, repo, payload, PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
-		scannerCalls++
-		return integrationResult(EventPass), nil
-	}), NewAtomicMetrics())
-	err = runner.processJob(context.Background(), 0, ActiveConfig{RiskControlEnabled: true, Enabled: true, AllGroups: true, ConfigVersion: 1}, workerJob(1, 3))
-	require.Error(t, err)
-	require.Zero(t, scannerCalls)
-	require.Equal(t, "audit_disabled", repo.failedCode)
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestConfigManagerNewerUndecryptableAsyncReloadInstallsDisabledEndpoint(t *testing.T) {
-	values := map[string]string{
-		SettingKeyPromptAuditConfig: promptAuditStorageJSON(t, 8, true, false, true, "corrupt"),
-		SettingKeyRiskControl:       "true",
-	}
-	manager := NewConfigManager(nil, staticSettingRepository{values: values}, nil, failingDecryptor{}, testTotpKeyConfig())
-	old := ActiveConfig{RiskControlEnabled: true, Enabled: true, BlockingEnabled: false, ConfigVersion: 7}
-	manager.snapshot.Store(&activeConfigSnapshot{active: old, storage: DefaultStorageConfig(), loadedAt: fixedClock{}.Now()})
-	manager.expected.Store(7)
-	manager.expectedRiskControl.Store(true)
-
-	require.NoError(t, manager.Reload(context.Background()))
-	require.False(t, manager.configUntrusted.Load())
-	require.False(t, manager.BlockingActivationDegraded())
-	require.Equal(t, ModeAsync, manager.EffectiveMode())
-	active, ok := manager.Active()
-	require.True(t, ok)
-	require.Equal(t, int64(8), active.ConfigVersion)
-	require.Len(t, active.Endpoints, 1)
-	require.True(t, active.Endpoints[0].TokenInvalid)
-	require.False(t, active.Endpoints[0].Enabled)
-}
-
-func TestConfigManagerNewerUninterpretableAsyncReloadKeepsOlderAsyncSnapshot(t *testing.T) {
-	manager := &ConfigManager{}
-	trusted := ActiveConfig{RiskControlEnabled: true, Enabled: true, BlockingEnabled: false, ConfigVersion: 7}
-	manager.snapshot.Store(&activeConfigSnapshot{active: trusted, storage: DefaultStorageConfig(), loadedAt: fixedClock{}.Now()})
-	manager.expected.Store(7)
-	manager.expectedRiskControl.Store(true)
-	manager.observeExpectedState(`{"enabled":true,"blocking_enabled":false,"config_version":8,"future_mode":"blocking_v2"}`, true)
-	manager.markConfigUntrusted()
-
-	require.False(t, manager.BlockingActivationDegraded())
-	require.Equal(t, ModeAsync, manager.EffectiveMode())
-}
-
-func TestConfigManagerUnknownConfigOnlyFailsClosedForExplicitBlockingIntent(t *testing.T) {
-	tests := []struct {
-		name         string
-		raw          string
-		wantMode     Mode
-		wantDegraded bool
-	}{
-		{name: "cold start unknown async schema", raw: `{"enabled":true,"blocking_enabled":false,"config_version":12,"future_mode":"blocking_v2"}`, wantMode: ModeOff},
-		{name: "cold start malformed JSON", raw: `{"config_version":12,"future_mode":"blocking_v2"`, wantMode: ModeOff},
-		{name: "cold start unknown blocking schema", raw: `{"enabled":true,"blocking_enabled":true,"config_version":12,"future_mode":"blocking_v2"}`, wantMode: ModeBlocking, wantDegraded: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			manager := NewConfigManager(nil, staticSettingRepository{values: map[string]string{
-				SettingKeyPromptAuditConfig: tt.raw,
-				SettingKeyRiskControl:       "true",
-			}}, nil, prefixEncryptor{}, testTotpKeyConfig())
-
-			require.Error(t, manager.Start(context.Background()))
-			require.Equal(t, tt.wantDegraded, manager.BlockingActivationDegraded())
-			require.Equal(t, tt.wantMode, manager.EffectiveMode())
-			require.NoError(t, manager.Shutdown(context.Background()))
-		})
-	}
-
-	manager := &ConfigManager{}
-	trusted := ActiveConfig{RiskControlEnabled: true, Enabled: true, BlockingEnabled: false, ConfigVersion: 7}
-	manager.snapshot.Store(&activeConfigSnapshot{active: trusted, storage: DefaultStorageConfig(), loadedAt: fixedClock{}.Now()})
-	manager.expected.Store(7)
-	manager.observeExpectedState(`{"enabled":true,"blocking_enabled":false,"config_version":8,"future_mode":"blocking_v2"}`, true)
-	manager.markConfigUntrusted()
-
-	require.False(t, manager.BlockingActivationDegraded())
-	require.Equal(t, ModeAsync, manager.EffectiveMode())
 }
 
 func TestUpdateConfigStrictBoundsAndKnownValues(t *testing.T) {

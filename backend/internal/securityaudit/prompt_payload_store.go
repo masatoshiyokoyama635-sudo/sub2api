@@ -31,9 +31,6 @@ func (s *RedisPayloadStore) Set(ctx context.Context, jobID int64, scanText strin
 	if jobID <= 0 || scanText == "" {
 		return fmt.Errorf("prompt audit payload input invalid")
 	}
-	if len(scanText) > MaxPromptAuditPayloadBytes {
-		return newPromptAuditPayloadTooLargeError()
-	}
 	if ttl <= 0 || ttl > DefaultPayloadTTL {
 		ttl = DefaultPayloadTTL
 	}
@@ -44,14 +41,7 @@ func (s *RedisPayloadStore) Get(ctx context.Context, jobID int64) (string, error
 	if s == nil || s.client == nil {
 		return "", fmt.Errorf("prompt audit payload store unavailable")
 	}
-	value, err := s.client.Get(ctx, payloadKey(jobID)).Result()
-	if err != nil {
-		return "", err
-	}
-	if len(value) > MaxPromptAuditPayloadBytes {
-		return "", newPromptAuditPayloadTooLargeError()
-	}
-	return value, nil
+	return s.client.Get(ctx, payloadKey(jobID)).Result()
 }
 
 func (s *RedisPayloadStore) Delete(ctx context.Context, jobID int64) error {

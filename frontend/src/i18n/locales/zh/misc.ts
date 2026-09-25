@@ -31,7 +31,6 @@ export default {
     refresh: '刷新',
     sourceMode: '源码构建',
     sourceModeHint: '源码构建请使用 git pull 更新',
-    customModeHint: '自定义构建请拉取已验证的短 SHA 自定义镜像更新',
     updateNow: '立即更新',
     updating: '正在更新...',
     updateComplete: '更新完成',

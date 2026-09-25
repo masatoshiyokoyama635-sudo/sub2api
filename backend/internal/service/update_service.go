@@ -15,23 +15,25 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"golang.org/x/mod/semver"
 )
 
 var (
-	ErrNoUpdateAvailable                  = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
-	ErrRollbackVersionNotAllowed          = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
-	ErrCustomBuildOnlineUpdateUnsupported = infraerrors.Conflict("CUSTOM_BUILD_UPDATE_UNSUPPORTED", "custom builds must be updated with a verified custom image")
+	ErrNoUpdateAvailable         = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
+	ErrRollbackVersionNotAllowed = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
 )
 
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "Wei-Shaw/sub2api"
+	// Releases are maintained on the owner-controlled production fork. Keep the
+	// updater independent from the upstream repository so production installs
+	// see our release stream and can update to our fork's assets.
+	githubRepo = "ranxi2001/sub2api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
@@ -76,17 +78,6 @@ func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, versi
 		currentVersion: version,
 		buildType:      buildType,
 	}
-}
-
-func (s *UpdateService) supportsOfficialBinaryLifecycle() bool {
-	if s == nil || strings.TrimSpace(s.buildType) != "release" {
-		return false
-	}
-	version := strings.TrimSpace(s.currentVersion)
-	if !strings.HasPrefix(version, "v") {
-		version = "v" + version
-	}
-	return semver.IsValid(version) && semver.Prerelease(version) == "" && semver.Build(version) == ""
 }
 
 // UpdateInfo contains update information
@@ -175,10 +166,6 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 // PerformUpdate downloads and applies the update
 // Uses atomic file replacement pattern for safe in-place updates
 func (s *UpdateService) PerformUpdate(ctx context.Context) error {
-	if !s.supportsOfficialBinaryLifecycle() {
-		return ErrCustomBuildOnlineUpdateUnsupported
-	}
-
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
 		return err
@@ -297,10 +284,6 @@ func (s *UpdateService) applyReleaseAssets(ctx context.Context, releaseAssets []
 
 // Rollback restores the previous version
 func (s *UpdateService) Rollback() error {
-	if !s.supportsOfficialBinaryLifecycle() {
-		return ErrCustomBuildOnlineUpdateUnsupported
-	}
-
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
@@ -327,10 +310,6 @@ func (s *UpdateService) Rollback() error {
 // strictly older than the current version (the current version itself is excluded),
 // newest first. Draft and prerelease entries are skipped.
 func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVersion, error) {
-	if !s.supportsOfficialBinaryLifecycle() {
-		return nil, ErrCustomBuildOnlineUpdateUnsupported
-	}
-
 	releases, err := s.fetchRollbackCandidates(ctx)
 	if err != nil {
 		return nil, err
@@ -351,10 +330,6 @@ func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVer
 // The target must be one of the versions returned by ListRollbackVersions;
 // anything else (including the current version) is rejected.
 func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) error {
-	if !s.supportsOfficialBinaryLifecycle() {
-		return ErrCustomBuildOnlineUpdateUnsupported
-	}
-
 	target := strings.TrimPrefix(strings.TrimSpace(version), "v")
 	if target == "" {
 		return ErrRollbackVersionNotAllowed
@@ -665,20 +640,33 @@ func (s *UpdateService) saveToCache(ctx context.Context, info *UpdateInfo) {
 	_ = s.cache.SetUpdateInfo(ctx, string(data), time.Duration(updateCacheTTL)*time.Second)
 }
 
-// compareVersions compares semantic versions. The custom -zz suffix identifies a
-// fork build of the same upstream release, so it is ignored for ordering only.
+// compareVersions compares two semantic versions
 func compareVersions(current, latest string) int {
-	return semver.Compare(canonicalUpdateVersion(current), canonicalUpdateVersion(latest))
+	currentParts := parseVersion(current)
+	latestParts := parseVersion(latest)
+
+	for i := 0; i < 3; i++ {
+		if currentParts[i] < latestParts[i] {
+			return -1
+		}
+		if currentParts[i] > latestParts[i] {
+			return 1
+		}
+	}
+	return 0
 }
 
-func canonicalUpdateVersion(version string) string {
-	canonical := strings.TrimSpace(version)
-	if !strings.HasPrefix(canonical, "v") {
-		canonical = "v" + canonical
+func parseVersion(v string) [3]int {
+	v = strings.TrimPrefix(v, "v")
+	if idx := strings.IndexByte(v, '-'); idx != -1 {
+		v = v[:idx]
 	}
-	canonical = strings.TrimSuffix(canonical, "-zz")
-	if semver.IsValid(canonical) {
-		return canonical
+	parts := strings.Split(v, ".")
+	result := [3]int{0, 0, 0}
+	for i := 0; i < len(parts) && i < 3; i++ {
+		if parsed, err := strconv.Atoi(parts[i]); err == nil {
+			result[i] = parsed
+		}
 	}
-	return "v0.0.0-invalid"
+	return result
 }

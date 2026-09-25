@@ -286,7 +286,7 @@
                     />
                   </svg>
                   <p class="text-xs text-blue-600 dark:text-blue-400">
-                    {{ t(isCustomBuild ? 'version.customModeHint' : 'version.sourceModeHint') }}
+                    {{ t('version.sourceModeHint') }}
                   </p>
                 </div>
               </div>
@@ -728,10 +728,8 @@ const activeManualCommand = computed(() =>
   manualTab.value === 'docker' ? dockerRollbackCommand.value : scriptRollbackCommand.value
 )
 
-// Only official release builds may replace themselves with official release assets.
-// Custom images must be updated by pulling a verified custom short-SHA image.
+// Only show update check for release builds (binary/docker deployment)
 const isReleaseBuild = computed(() => buildType.value === 'release')
-const isCustomBuild = computed(() => buildType.value === 'custom')
 
 function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value

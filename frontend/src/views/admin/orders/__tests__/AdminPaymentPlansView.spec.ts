@@ -82,7 +82,7 @@ describe('AdminPaymentPlansView', () => {
     })
   })
 
-  it('uses configured currency symbols and keeps legacy prices in CNY', async () => {
+  it('uses the configured currency symbol and keeps legacy prices in USD', async () => {
     const wrapper = mount(AdminPaymentPlansView, {
       global: {
         plugins: [createPinia()],
@@ -101,6 +101,6 @@ describe('AdminPaymentPlansView', () => {
 
     expect(wrapper.text()).toContain('¥499.00CNY')
     expect(wrapper.text()).toContain('¥599.00')
-    expect(wrapper.text()).toContain('¥10.00')
+    expect(wrapper.text()).toContain('$10.00')
   })
 })

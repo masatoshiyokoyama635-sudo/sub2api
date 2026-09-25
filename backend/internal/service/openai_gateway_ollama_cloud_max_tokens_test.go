@@ -332,20 +332,6 @@ func TestForwardAsRawChatCompletions_DeepseekOllamaCloudClampsMaxTokens(t *testi
 	require.Equal(t, "deepseek-v4-flash", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Equal(t, int64(65535), gjson.GetBytes(upstream.lastBody, "max_tokens").Int())
 
-	// The outbound URL builder accepts and normalizes a root trailing slash;
-	// the clamp must classify the same base URL identically.
-	trailingSlash := ollamaUpstreamTestAccount(PlatformDeepseek, 313)
-	trailingSlash.Credentials["api_protocol"] = APIProtocolChatCompletions
-	trailingSlash.Credentials["base_url"] = "https://ollama.com/"
-	trailingBody := []byte(`{"model":"deepseek-v4-flash","max_tokens":256000,"messages":[{"role":"user","content":"hi"}],"stream":false}`)
-	trailingUpstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
-	trailingSvc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: trailingUpstream}
-
-	_, err = trailingSvc.forwardAsRawChatCompletions(context.Background(), adaptiveProtocolTestContext("/v1/chat/completions", trailingBody), trailingSlash, trailingBody, "")
-	require.Error(t, err)
-	require.Equal(t, "https://ollama.com/v1/chat/completions", trailingUpstream.lastReq.URL.String())
-	require.Equal(t, int64(65535), gjson.GetBytes(trailingUpstream.lastBody, "max_tokens").Int())
-
 	// 官方 DeepSeek（api.deepseek.com）+ 残留 usage extra：字节级不变。
 	official := officialDeepSeekTestAccount(312)
 	official.Credentials["api_protocol"] = APIProtocolChatCompletions
@@ -403,18 +389,9 @@ func TestForwardResponsesClampsOllamaCloudMaxOutputTokens(t *testing.T) {
 		require.Equal(t, int64(65535), gjson.GetBytes(upstream.lastBody, "max_output_tokens").Int())
 	})
 
-	t.Run("root trailing slash native responses is clamped", func(t *testing.T) {
-		account := ollamaUpstreamTestAccount(PlatformDeepseek, 338)
-		account.Credentials["api_protocol"] = APIProtocolResponses
-		account.Credentials["base_url"] = "https://ollama.com/"
-		upstream, err := run(account, responsesBody)
-		require.Error(t, err)
-		require.Equal(t, "https://ollama.com/responses", upstream.lastReq.URL.String())
-		require.Equal(t, int64(65535), gjson.GetBytes(upstream.lastBody, "max_output_tokens").Int())
-	})
-
 	t.Run("openai platform force_responses is clamped", func(t *testing.T) {
 		account := ollamaUpstreamTestAccount(PlatformOpenAI, 332)
+		account.Status, account.Schedulable = StatusActive, true
 		account.Extra[openai_compat.ExtraKeyResponsesMode] = string(openai_compat.ResponsesSupportModeForceResponses)
 		upstream, err := run(account, responsesBody)
 		require.Error(t, err)
