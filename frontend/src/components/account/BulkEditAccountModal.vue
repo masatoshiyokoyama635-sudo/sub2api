@@ -133,6 +133,66 @@
         </div>
       </div>
 
+      <!-- OpenAI Excel / BPS protocol (OAuth only) -->
+      <div
+        v-if="allOpenAIOAuthOnly"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="mb-3 flex items-center justify-between gap-4">
+          <div class="flex-1">
+            <label
+              id="bulk-edit-openai-excel-bps-label"
+              class="input-label mb-0"
+              for="bulk-edit-openai-excel-bps-enabled"
+            >
+              {{ t('admin.accounts.openai.excelBPS') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.excelBPSDesc') }}
+            </p>
+          </div>
+          <input
+            v-model="enableOpenAIExcelBPS"
+            id="bulk-edit-openai-excel-bps-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-openai-excel-bps-body"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-openai-excel-bps-body"
+          :class="!enableOpenAIExcelBPS && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-openai-excel-bps-label"
+        >
+          <button
+            type="button"
+            data-testid="bulk-edit-openai-excel-bps-toggle"
+            role="switch"
+            :disabled="!enableOpenAIExcelBPS"
+            :aria-checked="openAIExcelBPSEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openAIExcelBPSEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="openAIExcelBPSEnabled = !openAIExcelBPSEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openAIExcelBPSEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <p
+          v-if="openAIExcelBPSEnabled && enableOpenAIExcelBPS"
+          class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+        >
+          {{ t('admin.accounts.openai.excelBPSNotice') }}
+        </p>
+      </div>
+
       <!-- OpenAI API long-context billing -->
       <div
         v-if="allOpenAIPassthroughCapable"
