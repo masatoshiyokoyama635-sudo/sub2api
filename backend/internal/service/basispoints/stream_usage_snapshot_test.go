@@ -37,10 +37,14 @@ func TestStreamUsageSnapshotRecordsOriginalBeforeRepair(t *testing.T) {
 	require.Len(t, usage, 1)
 	require.Equal(t, json.Number("10"), usage[0]["input_tokens"])
 	usage[0]["input_tokens"] = 999
-	usage[0]["input_tokens_details"].(object)["cached_tokens"] = 999
+	details, ok := usage[0]["input_tokens_details"].(object)
+	require.True(t, ok)
+	details["cached_tokens"] = 999
 	copy := snapshotter.UsageAttempts()
 	require.Equal(t, json.Number("10"), copy[0]["input_tokens"])
-	require.Equal(t, json.Number("2"), copy[0]["input_tokens_details"].(object)["cached_tokens"])
+	copyDetails, ok := copy[0]["input_tokens_details"].(object)
+	require.True(t, ok)
+	require.Equal(t, json.Number("2"), copyDetails["cached_tokens"])
 	require.NoError(t, body.Close())
 	require.Len(t, snapshotter.UsageAttempts(), 1, "unknown in-flight correction is not a billed attempt")
 }
