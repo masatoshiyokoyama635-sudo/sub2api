@@ -386,3 +386,13 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - [ ] 配置 JWT_SECRET 为固定值（避免容器重启后 session 失效）
 - [ ] 配置 TOTP_ENCRYPTION_KEY 为固定值（避免容器重启后 2FA 配置失效）
 - [ ] 根据需要配置自定义定价策略
+
+
+## v2.8.14 自定义候选（2026-09-26，本地验收完成）
+- 从本地 0c945929393537b09bd1a5bc131afe6e5c69e862 / 远端 91ce16a192863a1fdefd9db0b373643327c091e8 的相同源码树创建隔离候选；保留原工作区未提交记录，不访问或修改生产服务器。
+- 合入 ranxi v2.8.14 正式标签 e39898c680ecd69381e549ae54c97011107f1757；下载源码的 Git tree 与 API d8a7608319221628f33c73bc9a60a860ee7d9f52 完全一致。仅 docs/excel-bps.md 出现 add/add 冲突，已保留新功能并校正文档默认值为 128 槽 / 1024 MiB、可配置上限 512 槽。
+- 保留 AI Chat、AI Images、Canvas、BPS 图片安全校验、下游缓存创建计量转换与自定义 Docker workflow；接入 FUNCTION_CODE、429 冷却、可选 403 关闭、账号工具往返探测、采集修复与平均 TPS。没有新增数据库迁移。
+- 本地通过：全包 unit 编译、适用于 macOS 的完整 unit（仅排除现有 Linux 专用 TestFailedSubscriptionKeepsRunningPhase）、go vet、basispoints race、BPS/图片/请求采集/中间件/请求体定向回归、Custom Docker 后端回归；未过滤 unit 原始失败日志保留，Linux CI 将执行不排除的完整 unit。前端 typecheck、ESLint、363 个文件 / 2747 项 Vitest、生产构建通过；CI 同款 macOS shell 门禁通过。
+- 额外尝试的 Docker Compose simple-mode 门禁因本机无 Docker 失败，由 Linux CI 继续验收；install-github-token-test.sh 因 BSD head 不支持 -n -1 未能在本机执行，不计为通过。
+- 四角色证据沿用 .cache/update-v2.8.13/，历史已归档 history-v2.8.13/；本轮 VERSION 基线 2.8.13 → 修改 2.8.14 → 独立副本回滚 2.8.13，三次 cat 均退出 0、还原哈希等于基线。ROLLBACK.sh 仅恢复 VERSION 副本，不回滚数据库或应用。
+- 发布使用 Git Data API 创建远端既有提交的非 force 子提交；最终 Actions 与 GHCR digest 见 .cache/update-v2.8.14/ 的 publication.json 和后续验证记录，不能将本地验收等同于已部署。
