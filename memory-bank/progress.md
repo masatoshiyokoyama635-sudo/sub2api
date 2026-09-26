@@ -396,3 +396,12 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - 额外尝试的 Docker Compose simple-mode 门禁因本机无 Docker 失败，由 Linux CI 继续验收；install-github-token-test.sh 因 BSD head 不支持 -n -1 未能在本机执行，不计为通过。
 - 四角色证据沿用 .cache/update-v2.8.13/，历史已归档 history-v2.8.13/；本轮 VERSION 基线 2.8.13 → 修改 2.8.14 → 独立副本回滚 2.8.13，三次 cat 均退出 0、还原哈希等于基线。ROLLBACK.sh 仅恢复 VERSION 副本，不回滚数据库或应用。
 - 发布使用 Git Data API 创建远端既有提交的非 force 子提交；最终 Actions 与 GHCR digest 见 .cache/update-v2.8.14/ 的 publication.json 和后续验证记录，不能将本地验收等同于已部署。
+
+
+## v2.8.15 自定义候选（2026-09-26，本地验收完成）
+- 在 v2.8.14 已发布源码树 7227e66e0987c65aa7dda508073d0ffff073dc27 上创建隔离候选，合入 ranxi v2.8.15 正式标签 7fd73c1cb742a3f15844567d9695ebefc92ca4c6；下载源码 Git tree 与 GitHub API a1b4353cc71f0748317df5ab24991efcb8901e38 一致，无合并冲突。原工作区及未提交记录未改，不访问生产服务器。
+- 接入上游工具封装修复（同账号同模型最多两次）、图片 detail: original 与上下文诊断、质量判题仅参考/候选输入及新版客户端文档。图片中转及并发能力为已有上游能力，不标为本轮独家新增；保留已有 AI Chat / AI Images / Canvas、安全下载校验、缓存用量选项与自定义构建 workflow，没有新增数据库迁移。
+- 本轮额外防回归修复：畸形 CUSTOM/FUNCTION_CODE 封装纠错不能替换原操作；BPS 已完成尝试在请求取消时不丢 usage，全零终态不抹掉已有非零渐进用量；token 长上下文按每次上游尝试分档，内部纠错不重复收按次费用；repair 的模型权限拒绝 403 不误触发关闭协议；判题提示只允许等价单位换算而非无条件忽略单位。前四项有真实失败→通过回归；判题仅测试提示构造与数据边界，没有调用真实判题模型或声称模型判定已验证。
+- 最终源码冻结后重新执行后端门禁并校验验前/验后 hash：全包 unit 编译、macOS 支持的完整 unit（只排除已知 Linux 专用 TestFailedSubscriptionKeepsRunningPhase）、go vet、basispoints race、BPS/图片/usage/请求采集/中间件定向回归与 Docker 构建相关单测；Linux CI 将运行不排除的完整 unit 和 integration。前端 typecheck、lint、363 文件/2747 测试、生产构建及 6 项本地 shell 门禁通过。本机无 Docker 的 simple-mode 与 BSD head 不兼容门禁未作为本地通过证据。
+- 证据沿用 .cache/update-v2.8.13 四角色；本轮 VERSION 基线 2.8.14 → 修改 2.8.15 → 独立副本回滚 2.8.14，cat 均 exit 0，恢复 hash 一致；该回滚仅适用 VERSION 副本，不代表应用或数据库回滚。各防回归子事务的原始日志/差异/overlay回滚保存在 .cache/update-v2.8.15。
+- 仅以 Git Data API 在原远端 feature/chat-image-tools tip 上创建非 force 子提交；镜像与 Actions 的最终验收见 publication.json、image-verification.json、FINAL_RELEASE.json。发布不等同于部署，由用户执行已核验的一行命令。

@@ -179,7 +179,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	// OpenAI input_tokens 是总输入，包含缓存读取和缓存写入明细。
 	// 将三类 token 拆成互斥桶，避免缓存写入同时按普通输入和 cache_write 重复计费。
 	cacheCreationTokens := result.Usage.CacheCreationInputTokens
-	if account.IsExcelBPSCacheCreationAsInputEnabled() && result.UpstreamEndpoint == "/basispoints/api/responses" {
+	result.BasispointsCacheCreationAsInput = account.IsExcelBPSCacheCreationAsInputEnabled() && result.UpstreamEndpoint == "/basispoints/api/responses"
+	if result.BasispointsCacheCreationAsInput {
 		// Total input already includes cache creation. Retain those tokens in the
 		// ordinary input bucket without changing the original upstream usage.
 		cacheCreationTokens = 0
@@ -622,7 +623,8 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 			if candidate == "" {
 				continue
 			}
-			cost, err := s.calculateOpenAIRecordUsageTokenCost(
+			cost, err := s.calculateOpenAIRecordUsageAttemptCost(
+				result,
 				ctx,
 				apiKey,
 				candidate,
@@ -714,6 +716,63 @@ func isUsagePricingUnavailableError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "no pricing available") || strings.Contains(msg, "pricing not found")
+}
+
+// calculateOpenAIRecordUsageAttemptCost keeps token pricing thresholds scoped to
+// each upstream request. BPS tool corrections are separate model invocations but
+// remain one downstream request/usage row; non-token fees are charged only once.
+func (s *OpenAIGatewayService) calculateOpenAIRecordUsageAttemptCost(
+	result *OpenAIForwardResult,
+	ctx context.Context,
+	apiKey *APIKey,
+	billingModel string,
+	multiplier float64,
+	pricingAt time.Time,
+	tokens UsageTokens,
+	serviceTier string,
+	reasoningEffort string,
+	longContextBillingGate *bool,
+) (*CostBreakdown, error) {
+	calculate := func(usage UsageTokens) (*CostBreakdown, error) {
+		return s.calculateOpenAIRecordUsageTokenCost(ctx, apiKey, billingModel, multiplier,
+			pricingAt, usage, serviceTier, reasoningEffort, longContextBillingGate)
+	}
+	if result == nil || result.UpstreamEndpoint != "/basispoints/api/responses" || len(result.BasispointsUsageAttempts) <= 1 {
+		return calculate(tokens)
+	}
+	if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved != nil && resolved.Mode != BillingModeToken {
+		return calculate(tokens)
+	}
+	total := &CostBreakdown{}
+	for _, usage := range result.BasispointsUsageAttempts {
+		cacheCreation := usage.CacheCreationInputTokens
+		if result.BasispointsCacheCreationAsInput {
+			cacheCreation = 0
+		}
+		cost, err := calculate(UsageTokens{
+			InputTokens:          max(usage.InputTokens-usage.CacheReadInputTokens-cacheCreation, 0),
+			ImageInputTokens:     max(usage.ImageInputTokens-usage.ImageCacheReadTokens, 0),
+			ImageCacheReadTokens: usage.ImageCacheReadTokens,
+			OutputTokens:         usage.OutputTokens,
+			CacheCreationTokens:  cacheCreation,
+			CacheReadTokens:      usage.CacheReadInputTokens,
+			ImageOutputTokens:    usage.ImageOutputTokens,
+		})
+		if err != nil {
+			return nil, err
+		}
+		total.InputCost += cost.InputCost
+		total.ImageInputCost += cost.ImageInputCost
+		total.OutputCost += cost.OutputCost
+		total.ImageOutputCost += cost.ImageOutputCost
+		total.CacheCreationCost += cost.CacheCreationCost
+		total.CacheReadCost += cost.CacheReadCost
+		total.TotalCost += cost.TotalCost
+		total.ActualCost += cost.ActualCost
+		total.BillingMode = cost.BillingMode
+		total.LongContextBillingApplied = total.LongContextBillingApplied || cost.LongContextBillingApplied
+	}
+	return total, nil
 }
 
 func (s *OpenAIGatewayService) calculateOpenAIRecordUsageTokenCost(

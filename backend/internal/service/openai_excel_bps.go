@@ -249,12 +249,81 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	// BPS and Codex share quota. Refresh at the HTTP boundary even if the client
 	// disconnects or a later stream/protocol error prevents normal completion.
 	s.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, resp.Header)
-	converted := bridge.Stream(resp.Body)
-	defer func() { _ = converted.Close() }()
+	converted := bridge.StreamWithToolRepair(requestCtx, resp.Body, func(repairCtx context.Context, failed map[string]any, validation error) (map[string]any, error) {
+		correctedBody, err := basispoints.BuildToolRepairRequest(upstreamBody, failed, validation)
+		if err != nil {
+			return nil, err
+		}
+		repairReq, err := newExcelBPSRequest(repairCtx, correctedBody, token, accountID)
+		if err != nil {
+			return nil, err
+		}
+		repairResp, err := s.httpUpstream.Do(repairReq, proxyURL, account.ID, account.Concurrency)
+		if err != nil {
+			if repairCtx.Err() != nil {
+				return nil, repairCtx.Err()
+			}
+			return nil, fmt.Errorf("excel BPS correction connection failed")
+		}
+		defer func() { _ = repairResp.Body.Close() }()
+		stop := context.AfterFunc(repairCtx, func() { _ = repairResp.Body.Close() })
+		defer stop()
+		if repairResp.StatusCode < 200 || repairResp.StatusCode >= 300 {
+			raw, _ := io.ReadAll(io.LimitReader(repairResp.Body, 512<<10))
+			if repairResp.StatusCode == http.StatusTooManyRequests && s.rateLimitService != nil {
+				stateCtx, cancel := openAIAccountStateContext(repairCtx)
+				s.rateLimitService.handle429Cooldown(stateCtx, account, repairResp.Header, raw)
+				cancel()
+			}
+			if repairResp.StatusCode == http.StatusForbidden && gjson.GetBytes(raw, "error.code").String() != "basispoints_model_access_changed" {
+				s.disableExcelBPSOn403(repairCtx, account)
+			}
+			return nil, fmt.Errorf("excel BPS correction returned HTTP %d", repairResp.StatusCode)
+		}
+		s.UpdateCodexUsageSnapshotFromHeaders(repairCtx, account.ID, repairResp.Header)
+		upstreamBody = correctedBody
+		return basispoints.ReadToolRepairResponse(repairResp.Body)
+	})
 	// The bridge sees the body after group policy mapping. Keep the original
 	// client effort for usage display, and the BPS-normalized effort for billing.
 	requestedEffort := coalesceRequestedReasoningEffort(RequestedReasoningEffortFromContext(ctx), &bridge.RequestedEffort)
 	result := &OpenAIForwardResult{Model: originalModel, UpstreamModel: model, UpstreamEndpoint: "/basispoints/api/responses", Stream: stream, ReasoningEffort: &bridge.Effort, RequestedReasoningEffort: requestedEffort, RequestID: resp.Header.Get("x-request-id")}
+	result.BasispointsCacheCreationAsInput = account.IsExcelBPSCacheCreationAsInputEnabled()
+	defer func() {
+		_ = converted.Close()
+		if snapshotter, ok := converted.(basispoints.UsageSnapshotter); ok {
+			var total OpenAIUsage
+			for _, raw := range snapshotter.UsageAttempts() {
+				payload, err := json.Marshal(map[string]any{"usage": raw})
+				if err != nil {
+					continue
+				}
+				usage, ok := extractOpenAIUsageFromJSONBytes(payload)
+				if !ok {
+					continue
+				}
+				result.BasispointsUsageAttempts = append(result.BasispointsUsageAttempts, usage)
+				total.InputTokens += usage.InputTokens
+				total.ImageInputTokens += usage.ImageInputTokens
+				total.ImageCacheReadTokens += usage.ImageCacheReadTokens
+				total.OutputTokens += usage.OutputTokens
+				total.CacheCreationInputTokens += usage.CacheCreationInputTokens
+				total.CacheReadInputTokens += usage.CacheReadInputTokens
+				total.ImageOutputTokens += usage.ImageOutputTokens
+			}
+			if len(result.BasispointsUsageAttempts) > 0 {
+				if total == (OpenAIUsage{}) && openAIUsageHasTokens(&result.Usage) {
+					// Preserve progressive usage when the terminal reports only zeros.
+					// Its per-attempt split is unknown; bill the observed aggregate.
+					result.BasispointsUsageAttempts = nil
+				} else {
+					// The downstream terminal may already contain this sum. Replace,
+					// never add it again, including on cancellation and write errors.
+					result.Usage = total
+				}
+			}
+		}
+	}()
 	if stream {
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
@@ -272,7 +341,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	}
 	var completed []byte
 	terminal := ""
-	cacheCreationAsInput := account.IsExcelBPSCacheCreationAsInputEnabled()
+	cacheCreationAsInput := result.BasispointsCacheCreationAsInput
 	for scanner.Next(ctx, 0, heartbeat.C, keepalive) {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
@@ -282,7 +351,8 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			if cacheCreationAsInput {
 				payload, err = excelBPSDownstreamUsage(payload)
 				if err != nil {
-					return fail(http.StatusBadGateway, "basispoints_usage_invalid", "Excel BPS usage could not be normalized")
+					_, failure := fail(http.StatusBadGateway, "basispoints_usage_invalid", "Excel BPS usage could not be normalized")
+					return result, failure
 				}
 				line = "data: " + string(payload)
 			}
