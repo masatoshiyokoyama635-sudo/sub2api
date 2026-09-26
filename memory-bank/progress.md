@@ -405,3 +405,11 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - 最终源码冻结后重新执行后端门禁并校验验前/验后 hash：全包 unit 编译、macOS 支持的完整 unit（只排除已知 Linux 专用 TestFailedSubscriptionKeepsRunningPhase）、go vet、basispoints race、BPS/图片/usage/请求采集/中间件定向回归与 Docker 构建相关单测；Linux CI 将运行不排除的完整 unit 和 integration。前端 typecheck、lint、363 文件/2747 测试、生产构建及 6 项本地 shell 门禁通过。本机无 Docker 的 simple-mode 与 BSD head 不兼容门禁未作为本地通过证据。
 - 证据沿用 .cache/update-v2.8.13 四角色；本轮 VERSION 基线 2.8.14 → 修改 2.8.15 → 独立副本回滚 2.8.14，cat 均 exit 0，恢复 hash 一致；该回滚仅适用 VERSION 副本，不代表应用或数据库回滚。各防回归子事务的原始日志/差异/overlay回滚保存在 .cache/update-v2.8.15。
 - 仅以 Git Data API 在原远端 feature/chat-image-tools tip 上创建非 force 子提交；镜像与 Actions 的最终验收见 publication.json、image-verification.json、FINAL_RELEASE.json。发布不等同于部署，由用户执行已核验的一行命令。
+
+
+## v2.8.16 自定义候选（2026-09-26，本地验收完成）
+- 以已发布 v2.8.15 定制源码树 7994324e8de82507f6762b45058a8472a32b8d68 为基线，在独立 worktree 合入 ranxi v2.8.16 正式标签 010380d270819754f76e324ffeb576fa45eaee73；下载源树 c2b5bf3419976ae088242e2e6f1a788f47b54e8d 与 GitHub commit tree 一致。原工作区与未提交记录未修改，不访问生产。
+- 保留上游 FUNCTION_CMD、工具 schema/目录缓存及首次未知工具纠正、原生图片附件与限额配置、Mihomo 会话出口、BPS 429 状态隔离与 403 分组处理；保留原有 AI Chat/AI Images、图片安全存储和定制用量计费。新路径与旧定制的兼容修复及观察证据见本轮 candidate-review.json 和后端回归记录。没有把上游图片或并发能力描述为独家新增。
+- 本轮重新执行后端七项门禁、与云端同版本完整 lint、前端四项门禁和六项本地 shell 门禁；后端验前验后源码 hash 一致。macOS 全量 unit 只排除已知 Linux 专用 TestFailedSubscriptionKeepsRunningPhase，完整 Linux unit/integration 和容器 simple-mode 以本轮新 SHA 的 CI 为准。所有本地门禁退出 0 后才提交。
+- 四角色沿用 .cache/update-v2.8.13；VERSION 副本基线 2.8.15、修改 2.8.16、独立副本回滚 2.8.15，cat 均退出 0 且恢复 hash 相同。回滚脚本仅覆盖版本副本，不代表应用或数据库回滚。
+- Git Data API 仅创建既定远端 feature/chat-image-tools tip 的非 force 子提交，待全新 CI 与双架构镜像 digest 核验通过才提供部署命令。原生附件和真实代理池上游行为不在本地真实环境验收范围；生产部署仍由用户执行。
