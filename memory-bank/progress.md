@@ -422,3 +422,12 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - 本轮重新执行后端七项门禁、与云端同版本完整 lint、前端四项门禁和六项本地 shell 门禁；后端验前验后源码 hash 一致。macOS 全量 unit 只排除已知 Linux 专用 TestFailedSubscriptionKeepsRunningPhase，完整 Linux unit/integration 和容器 simple-mode 以本轮新 SHA 的 CI 为准。所有本地门禁退出 0 后才提交。
 - 四角色沿用 .cache/update-v2.8.13；VERSION 副本基线 2.8.16、修改 2.8.18、独立副本回滚 2.8.16，cat 均退出 0 且恢复 hash 相同。回滚脚本仅覆盖版本副本，不代表应用或数据库回滚。
 - Git Data API 仅创建既定远端 feature/chat-image-tools tip 的非 force 子提交，待全新 CI 与双架构镜像 digest 核验通过才提供部署命令。原生附件和真实代理池上游行为不在本地真实环境验收范围；生产部署仍由用户执行。
+
+
+## v2.8.19 自定义候选（2026-09-27，本地验收完成）
+- 用户确认上次已部署成功。本轮以已发布v2.8.18定制源码树 93533cdd496952121291648d17adc7d36489662c 为基线，独立worktree合入ranxi v2.8.19正式标签 08356987417f205cd704bf79180def20fcbbf445；下载源树与GitHub commit tree一致。原工作区与未提交记录未修改，不访问生产。
+- 合入账户质量检测/凭据守护、Mihomo来源管理与BPS代理后台预热、传输诊断、BPS历史与工具图片兼容。保留现有AI Chat/AI Images、图片中转和并发定制、用量计费及路由安全。具体差异与hash绑定见candidate-review.json和custom-preservation.json。
+- 2.8.18→2.8.19未新增数据库schema迁移。升级前仍备份应用数据库与部署配置；本轮未连接、备份或修改生产数据库。BPS会话代理重启后需等待后台预热出就绪出口，不改变账户业务出口设置。
+- 本轮后端七项门禁、完整lint、前端四项门禁和六项shell门禁均须通过且绑定验后源码。macOS已知Linux-only测试限制按backend证据列出，完整Linux unit/integration和容器检查以新SHA的CI为准。
+- 四角色沿用.cache/update-v2.8.13；VERSION副本基线2.8.18、修改2.8.19、独立副本回滚2.8.18，stdout/exit/hash实际记录。回滚脚本仅恢复版本副本，不是应用或数据库回滚。
+- 仅创建既定远端feature/chat-image-tools tip的非force子提交；全新CI及双架构镜像digest核验通过后再给部署镜像。生产部署由用户手动执行。
