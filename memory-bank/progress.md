@@ -413,3 +413,12 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - 本轮重新执行后端七项门禁、与云端同版本完整 lint、前端四项门禁和六项本地 shell 门禁；后端验前验后源码 hash 一致。macOS 全量 unit 只排除已知 Linux 专用 TestFailedSubscriptionKeepsRunningPhase，完整 Linux unit/integration 和容器 simple-mode 以本轮新 SHA 的 CI 为准。所有本地门禁退出 0 后才提交。
 - 四角色沿用 .cache/update-v2.8.13；VERSION 副本基线 2.8.15、修改 2.8.16、独立副本回滚 2.8.15，cat 均退出 0 且恢复 hash 相同。回滚脚本仅覆盖版本副本，不代表应用或数据库回滚。
 - Git Data API 仅创建既定远端 feature/chat-image-tools tip 的非 force 子提交，待全新 CI 与双架构镜像 digest 核验通过才提供部署命令。原生附件和真实代理池上游行为不在本地真实环境验收范围；生产部署仍由用户执行。
+
+
+## v2.8.18 自定义候选（2026-09-27，本地验收完成）
+- 以已发布 v2.8.16 定制源码树 352ae5076fd2298164c4d020320da665cce534e1 为基线，在独立 worktree 合入 ranxi v2.8.18 正式标签 c1008182bd1bb8f50ff95133fa486fb9d4676811；下载源树 11e55cbfd82ff607396b0d30cce6ddbea5bb7be0 与 GitHub commit tree 一致。原工作区与未提交记录未修改，不访问生产。
+- 累计合入 v2.8.17/18 的观察者账号管理、开通初始化及本人记录、BPS 401 状态、加密推理历史 400 一次同路由恢复和路由能力声明/403 时间标记；保留自定义 AI Chat/AI Images、安全存储及用量/取消/工具修复。唯一前端路由测试冲突保留双方用例；管理员导入旧测试新增显式认证状态 mock，业务权限代码不改，失败/修复/副本回滚证据见 frontend-fixture-verification.json。
+- 注意累计升级包含 2.8.17 的 252_user_observer_groups.sql：users.observer_group_ids JSONB NOT NULL DEFAULT []，部署前需备份数据库。不能因 2.8.18 单版说明无迁移而忽略跨版迁移；未连接、备份或修改生产数据库。
+- 本轮重新执行后端七项门禁、与云端同版本完整 lint、前端四项门禁和六项本地 shell 门禁；后端验前验后源码 hash 一致。macOS 全量 unit 只排除已知 Linux 专用 TestFailedSubscriptionKeepsRunningPhase，完整 Linux unit/integration 和容器 simple-mode 以本轮新 SHA 的 CI 为准。所有本地门禁退出 0 后才提交。
+- 四角色沿用 .cache/update-v2.8.13；VERSION 副本基线 2.8.16、修改 2.8.18、独立副本回滚 2.8.16，cat 均退出 0 且恢复 hash 相同。回滚脚本仅覆盖版本副本，不代表应用或数据库回滚。
+- Git Data API 仅创建既定远端 feature/chat-image-tools tip 的非 force 子提交，待全新 CI 与双架构镜像 digest 核验通过才提供部署命令。原生附件和真实代理池上游行为不在本地真实环境验收范围；生产部署仍由用户执行。

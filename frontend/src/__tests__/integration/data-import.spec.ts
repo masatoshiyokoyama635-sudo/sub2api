@@ -6,6 +6,10 @@ const showError = vi.fn()
 const showSuccess = vi.fn()
 const showWarning = vi.fn()
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ isObserver: false })
+}))
+
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError,
@@ -22,11 +26,15 @@ vi.mock('@/api/admin', () => ({
   }
 }))
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({
-    t: (key: string) => key
-  })
-}))
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  return {
+    ...actual,
+    useI18n: () => ({
+      t: (key: string) => key
+    })
+  }
+})
 
 const mountModal = () =>
   mount(ImportDataModal, {
