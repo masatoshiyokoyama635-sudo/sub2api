@@ -431,3 +431,12 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - 本轮后端七项门禁、完整lint、前端四项门禁和六项shell门禁均须通过且绑定验后源码。macOS已知Linux-only测试限制按backend证据列出，完整Linux unit/integration和容器检查以新SHA的CI为准。
 - 四角色沿用.cache/update-v2.8.13；VERSION副本基线2.8.18、修改2.8.19、独立副本回滚2.8.18，stdout/exit/hash实际记录。回滚脚本仅恢复版本副本，不是应用或数据库回滚。
 - 仅创建既定远端feature/chat-image-tools tip的非force子提交；全新CI及双架构镜像digest核验通过后再给部署镜像。生产部署由用户手动执行。
+
+
+## v2.8.20 自定义候选（2026-09-28，本地验收完成）
+- 上轮v2.8.19定制镜像已完成发布验收。本轮以已发布v2.8.19定制源码树 81bf6273296b04f56afea558e0fe54dfd426e3d7 为基线，独立worktree合入ranxi v2.8.20正式标签 f24ff9110db506948c1fab3d2cfd394b57eff974；下载源树与GitHub commit tree一致。原工作区与未提交记录未修改，不访问生产。
+- 合入OpenAI 2FA首次登录导入、质量规则批量编辑及BPS账号/模型局部429冷却与未输出前的跨账号failover修复。保留现有AI Chat/AI Images、图片中转和并发定制、用量计费及路由安全。具体差异与hash绑定见candidate-review.json和custom-preservation.json。
+- 2.8.19→2.8.20未新增数据库schema迁移。升级前仍备份应用数据库与部署配置；本轮未连接、备份或修改生产数据库。BPS冷却仅本进程内保存，重启清空且多实例不共享；已输出内容不重放。
+- 本轮后端七项门禁、完整lint、前端四项门禁和六项shell门禁均须通过且绑定验后源码。macOS已知Linux-only测试限制按backend证据列出，完整Linux unit/integration和容器检查以新SHA的CI为准。
+- 四角色沿用.cache/update-v2.8.13；VERSION副本基线2.8.19、修改2.8.20、独立副本回滚2.8.19，stdout/exit/hash实际记录。回滚脚本仅恢复版本副本，不是应用或数据库回滚。
+- 仅创建既定远端feature/chat-image-tools tip的非force子提交；全新CI及双架构镜像digest核验通过后再给部署镜像。生产部署由用户手动执行。
