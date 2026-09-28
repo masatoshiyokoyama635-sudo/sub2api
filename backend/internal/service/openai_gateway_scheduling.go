@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -532,11 +533,11 @@ func shouldAutoPauseOpenAIAccountByQuota(ctx context.Context, account *Account) 
 		utilization5h, has5h := resolveOpenAIQuotaUtilization(account.Extra, "5h", now)
 		utilization7d, has7d := resolveOpenAIQuotaUtilization(account.Extra, "7d", now)
 		if has5h && utilization5h >= config.Threshold5h {
-			notifyOpenAIAutoReset(account.ID)
+			notifyOpenAIAutoResetFromScheduler(account.ID)
 			return true, openAIQuotaAutoPauseDecision{window: "5h", threshold: config.Threshold5h, utilization: utilization5h, reason: "quota_auto_reset_pending_5h"}
 		}
 		if has7d && utilization7d >= config.Threshold7d {
-			notifyOpenAIAutoReset(account.ID)
+			notifyOpenAIAutoResetFromScheduler(account.ID)
 			return true, openAIQuotaAutoPauseDecision{window: "7d", threshold: config.Threshold7d, utilization: utilization7d, reason: "quota_auto_reset_pending_7d"}
 		}
 
@@ -550,7 +551,7 @@ func shouldAutoPauseOpenAIAccountByQuota(ctx context.Context, account *Account) 
 			if state != nil && state.Status == OpenAIAutoResetStatusAvailable && state.AvailableCount > 0 && !openAIAutoResetStateStale(state, now) {
 				return false, openAIQuotaAutoPauseDecision{}
 			}
-			notifyOpenAIAutoReset(account.ID)
+			notifyOpenAIAutoResetFromScheduler(account.ID)
 			if pauseReached5h {
 				return true, openAIQuotaAutoPauseDecision{window: "5h", threshold: pause5h, utilization: utilization5h, reason: "quota_auto_reset_credit_check_5h"}
 			}
@@ -665,8 +666,8 @@ func resolveAccountExtraNumber(extra map[string]any, keys ...string) (float64, b
 
 // resolveOpenAIQuotaUtilization returns the current utilization ratio (0..1) for the
 // given Codex usage window. ok=false means there is no usable signal to pause on:
-// either no snapshot exists, or the window has already rolled over so the cached
-// percentage is stale. The stale guard matters because a paused account stops
+// either no snapshot exists, the window has rolled over, or an old snapshot has
+// no known future reset. The stale guard matters because a paused account stops
 // receiving requests, so its snapshot is never refreshed from upstream headers —
 // without this check an old used_percent would keep the account paused forever even
 // after the real window reset.
@@ -678,12 +679,17 @@ func resolveOpenAIQuotaUtilization(extra map[string]any, window string, now time
 	if openAIQuotaWindowReset(extra, window, now) {
 		return 0, false
 	}
-	// 快照过于陈旧（账号长期未收到流量刷新）时，不再据此暂停。放行后下一次响应头
+	// 快照过于陈旧且没有明确的未来重置时间时，不再据此暂停。放行后下一次响应头
 	// 会刷新快照实现自愈，避免账号在错误/过期的 used% 上被永久跳过（issue #2994）。
-	if openAICodexSnapshotStaleForPause(extra, now) {
+	if openAICodexSnapshotStaleForPause(extra, now) && !openAIQuotaWindowResetPending(extra, window, now) {
 		return 0, false
 	}
 	return usedPercent / 100, true
+}
+
+func openAIQuotaWindowResetPending(extra map[string]any, window string, now time.Time) bool {
+	resetAt, ok := openAICodexWindowResetAt(extra, window)
+	return ok && now.Before(resetAt)
 }
 
 // openAICodexSnapshotStaleForPause reports whether the Codex usage snapshot is stale
@@ -915,6 +921,11 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsStickyHit(ctx 
 	if err != nil {
 		return nil, false, fmt.Errorf("query accounts failed: %w", err)
 	}
+	prefetchedRPMCtx, rpmErr := s.withOpenAIRPMPrefetch(ctx, accounts)
+	if rpmErr != nil {
+		return nil, false, rpmErr
+	}
+	ctx = prefetchedRPMCtx
 
 	// 3. 按优先级 + LRU 选择最佳账号
 	// Select by priority + LRU
@@ -1108,6 +1119,12 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 		if rateCmp := rateOrder.compare(a, b); rateCmp != 0 {
 			return rateCmp < 0
 		}
+		if a.Priority == b.Priority {
+			aRPM, bRPM := openAIRPMEffectiveLoad(ctx, a, 0), openAIRPMEffectiveLoad(ctx, b, 0)
+			if aRPM != bRPM {
+				return aRPM < bRPM
+			}
+		}
 		return s.isBetterAccount(a, b)
 	})
 	return eligible[0], compactBlocked, filterStats
@@ -1175,9 +1192,52 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		}
 	}
 	if s.concurrencyService == nil || !cfg.LoadBatchEnabled {
-		account, stickyHit, err := s.selectAccountForModelWithExclusionsStickyHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability, preferLowUpstreamRate)
-		if err != nil {
-			return nil, err
+		effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
+		var account *Account
+		var stickyHit bool
+		var headroomFallback *Account
+		rpmEligible := 0
+		rpmExhausted := 0
+		for {
+			var selectErr error
+			account, stickyHit, selectErr = s.selectAccountForModelWithExclusionsStickyHit(ctx, groupID, platform, sessionHash, requestedModel, effectiveExcludedIDs, requireCompact, stickyAccountID, requiredCapability, preferLowUpstreamRate)
+			if selectErr != nil && !errors.Is(selectErr, ErrNoAvailableAccounts) {
+				return nil, selectErr
+			}
+			if account == nil {
+				if headroomFallback != nil {
+					account = headroomFallback
+					stickyHit = false
+					break
+				}
+				if rpmEligible > 0 && rpmExhausted == rpmEligible {
+					return nil, fmt.Errorf("%w: all eligible OAuth accounts are at their per-minute limit", ErrOpenAIRPMExhausted)
+				}
+				if selectErr != nil {
+					return nil, selectErr
+				}
+				return nil, noAvailableOpenAISelectionError(requestedModel, false, openAISelectionFilterStats{}.summary(""))
+			}
+			allowed, rpmState, rpmErr := s.OpenAIRPMSchedulable(ctx, account, true)
+			if rpmErr != nil {
+				return nil, rpmErr
+			}
+			if account.IsOpenAIOAuth() {
+				rpmEligible++
+				if !allowed && rpmState.Current >= rpmState.Limit {
+					rpmExhausted++
+				}
+			}
+			if allowed {
+				break
+			}
+			if rpmState.Current < rpmState.Limit && headroomFallback == nil {
+				headroomFallback = account
+			}
+			if effectiveExcludedIDs == nil {
+				effectiveExcludedIDs = make(map[int64]struct{})
+			}
+			effectiveExcludedIDs[account.ID] = struct{}{}
 		}
 		result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
 		if err == nil && result != nil && result.Acquired {
@@ -1212,6 +1272,11 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	if len(accounts) == 0 {
 		return nil, noAvailableOpenAISelectionError(requestedModel, false, openAISelectionFilterStats{}.summary(""))
 	}
+	prefetchedRPMCtx, rpmErr := s.withOpenAIRPMPrefetch(ctx, accounts)
+	if rpmErr != nil {
+		return nil, rpmErr
+	}
+	ctx = prefetchedRPMCtx
 
 	isExcluded := func(accountID int64) bool {
 		if excludedIDs == nil {
@@ -1233,10 +1298,22 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			account, err := s.getSchedulableAccount(ctx, accountID)
 			if err == nil {
 				clearSticky := shouldClearStickySession(account, requestedModel)
+				stickyRPMAllowed := true
+				if !clearSticky && account != nil && account.IsOpenAIOAuth() {
+					// Movable sessions yield at 80%; the load-aware fallback still
+					// admits them below the hard ceiling when other capacity is scarce.
+					stickyRPMAllowed, _, err = s.OpenAIRPMSchedulable(ctx, account, true)
+					if err != nil {
+						return nil, err
+					}
+					if !stickyRPMAllowed {
+						stickySpillover = true
+					}
+				}
 				if clearSticky {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				}
-				if !clearSticky && isOpenAICompatibleAccountEligibleForRequest(ctx, account, groupID, platform, requestedModel, false, requiredCapability) {
+				if !clearSticky && stickyRPMAllowed && isOpenAICompatibleAccountEligibleForRequest(ctx, account, groupID, platform, requestedModel, false, requiredCapability) {
 					account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, groupID, platform, requestedModel, requireCompact, requiredCapability)
 					if account == nil {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -1294,6 +1371,8 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		return a
 	}
 	baseCandidateCount := 0
+	rpmEligible := 0
+	rpmExhausted := 0
 	filterStats := openAISelectionFilterStats{pool: len(accounts)}
 	candidates := make([]*Account, 0, len(accounts))
 	for i := range accounts {
@@ -1325,11 +1404,28 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			filterStats.exclude("channel_upstream_restricted")
 			continue
 		}
+		if acc.IsOpenAIOAuth() {
+			rpmEligible++
+			allowed, rpmState, rpmErr := s.OpenAIRPMSchedulable(ctx, acc, false)
+			if rpmErr != nil {
+				return nil, rpmErr
+			}
+			if !allowed {
+				if rpmState.Current >= rpmState.Limit {
+					rpmExhausted++
+				}
+				filterStats.exclude("oauth_rpm_exhausted")
+				continue
+			}
+		}
 		baseCandidateCount++
 		candidates = append(candidates, acc)
 	}
 
 	if len(candidates) == 0 {
+		if rpmEligible > 0 && rpmExhausted == rpmEligible {
+			return nil, fmt.Errorf("%w: all eligible OAuth accounts are at their per-minute limit", ErrOpenAIRPMExhausted)
+		}
 		return nil, noAvailableOpenAISelectionError(requestedModel, false, filterStats.summary(""))
 	}
 	rateOrder := openAILegacyUpstreamRateOrder{}
@@ -1384,6 +1480,15 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			}
 		})
 		shuffleWithinSortGroups(available)
+		// RPM is a capacity signal alongside concurrency. Keep the configured
+		// priority, and prefer accounts with lower combined utilization.
+		sort.SliceStable(available, func(i, j int) bool {
+			a, b := available[i], available[j]
+			if a.account.Priority != b.account.Priority {
+				return a.account.Priority < b.account.Priority
+			}
+			return openAIRPMEffectiveLoad(ctx, a.account, a.loadInfo.LoadRate) < openAIRPMEffectiveLoad(ctx, b.account, b.loadInfo.LoadRate)
+		})
 		if rateOrder.enabled {
 			sort.SliceStable(available, func(i, j int) bool {
 				return rateOrder.compare(available[i].account, available[j].account) < 0

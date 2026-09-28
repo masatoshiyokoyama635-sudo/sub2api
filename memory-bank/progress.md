@@ -440,3 +440,13 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - 本轮后端七项门禁、完整lint、前端四项门禁和六项shell门禁均须通过且绑定验后源码。macOS已知Linux-only测试限制按backend证据列出，完整Linux unit/integration和容器检查以新SHA的CI为准。
 - 四角色沿用.cache/update-v2.8.13；VERSION副本基线2.8.19、修改2.8.20、独立副本回滚2.8.19，stdout/exit/hash实际记录。回滚脚本仅恢复版本副本，不是应用或数据库回滚。
 - 仅创建既定远端feature/chat-image-tools tip的非force子提交；全新CI及双架构镜像digest核验通过后再给部署镜像。生产部署由用户手动执行。
+
+
+## v2.9.0 自定义候选（2026-09-28，本地验收完成）
+- 以已发布v2.8.20定制源码树 1d97fce61f4d54424d277d8fbf83abbd45aa4ca5 为基线，独立worktree合入ranxi v2.9.0正式标签 030c1fd776f1e4523728665c0a6127a0f4dbac33；下载源树与GitHub commit tree一致。原工作区与未提交记录未修改，不访问生产。
+- 合入分组定时测智、上游用量刷新与展示修复、设置页拆分、OAuth额度重置、2FA导入与凭据守护联动。保留AI Chat/AI Images、图片中转/并发、Canvas、CNY、BPS用量/取消及路由权限定制，具体hash绑定见candidate-review.json与custom-preservation.json。唯一data-import测试冲突按双方有效mock/测试语义保留，业务权限不为测试而弱化。
+- 新增253_pelican_group_tests.sql，创建分组计划/结果表及索引，迁移已有展示分组为暂停计划。升级前备份数据库与配置；旧版本回滚后展示分组需按官方说明重新选择。2FA导入提交的密码/长期密钥会保存到凭据守护配置，停用守护不删除凭据；本轮没有读取或操作真实账号/生产数据库。
+- 渠道图片输入/输出价格留空改为沿用目录价；显式填0继续保留0。空图片价卡升级后可能不再免费，升级前应核对期望定价。该行为来自本版上游model_pricing_resolver变更，未修改生产价卡。
+- 后端七项门禁、完整lint、前端四项门禁和六项shell门禁须全部通过且绑定验后源码。Darwin已知Linux-only限制如实列出，完整Linux unit/integration与容器检查由新SHA云端CI验证。
+- 四角色沿用.cache/update-v2.8.13；VERSION副本基线2.8.20、修改2.9.0、独立副本回滚2.8.20，stdout/exit/hash实际记录。回滚脚本仅恢复版本副本，不是应用或数据库回滚。
+- 非force发布至feature/chat-image-tools；新CI、双架构镜像digest与原备份部署逻辑验证通过后才给一键命令，生产部署仍由用户执行。
