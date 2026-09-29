@@ -2,7 +2,7 @@ export default {
   "twoFA": {
   "title": "2FA 登录导入",
   "label": "邮箱、密码与 2FA 首次登录",
-  "hint": "每行一条：账号----密码----2FA（兼容逗号分隔），最多 100 条。首次登录使用已配置的重登服务。导入后默认加入凭证运营，加密保存密码与 2FA，并开启巡检、自动重登；后续重登由本地 Worker 执行。需配置加密密钥与 Worker。",
+  "hint": "每行一条：账号----密码----2FA（兼容逗号分隔），最多 100 条。首次登录使用已配置的重登服务。导入后默认加入凭证运营，加密保存密码与 2FA，并开启巡检、自动重登；后续重登由本地 Worker 执行。可在此页面一键启用凭据加密；自动重登需配置 Worker。",
   "settings": "查看重登服务配置",
   "credentials": "登录凭据",
   "placeholder": "邮箱----密码----2FA 密钥",
@@ -99,5 +99,12 @@ export default {
   "statsBad": "异常账号",
   "statsRepaired": "本轮修复",
   "stateFixed": "状态自愈",
-  "scopeNote": "巡检只读取账号已有的 access_token 并用它调用测活接口，不会修改账号凭据；只有令牌失效且开启自动重登时才会写回新凭据。"
+  "scopeNote": "巡检只读取账号已有的 access_token 并用它调用测活接口，不会修改账号凭据；只有令牌失效且开启自动重登时才会写回新凭据。",
+  "managedBadge": "凭证运营托管",
+  "managedHint": "2FA 导入的账号会自动加入凭证运营，由凭证运营巡检和自动重登，这里只显示状态；需要重登或修改登录资料请到凭证运营。",
+  "managedPaused": "凭证运营中已暂停",
+  "managedReauth": "凭证运营重登",
+  "managedOpen": "去凭证运营",
+  "managedCredentialsHint": "另有 {count} 个账号的登录资料加密保存在凭证运营，不显示在这里。",
+  "managedLoadFailed": "暂时读不到凭证运营的账号，托管账号没有显示，稍后刷新重试。"
 }

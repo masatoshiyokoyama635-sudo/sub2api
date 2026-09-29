@@ -16,29 +16,40 @@ import (
 const SettingKeyOAuthAutoConfig = "smart_ops_oauth_auto_config"
 const AutoConfigConcurrencyExtraKey = "auto_config_concurrency"
 
-// The two switches are independent. First-time configuration owns only the
-// selected platform's new OAuth accounts; upgrades apply to selected groups.
+// Initial account fields, BPS defaults, model billing and concurrency upgrades are independent.
 type OAuthAutoConfig struct {
-	UpdatedAt        time.Time `json:"updated_at"`
-	Enabled          bool      `json:"enabled"`
-	Platform         string    `json:"platform"`
-	Priority         int       `json:"priority"`
-	LoadFactor       int       `json:"load_factor"`
-	Concurrency      int       `json:"concurrency"`
-	GroupIDs         []int64   `json:"group_ids"`
-	UpgradeEnabled   bool      `json:"upgrade_enabled"`
-	UpgradeGroupIDs  []int64   `json:"upgrade_group_ids"`
-	SuccessesPerStep int       `json:"successes_per_step"`
-	UpgradeStep      int       `json:"upgrade_step"`
-	MaxConcurrency   int       `json:"max_concurrency"`
-	CooldownSeconds  int       `json:"cooldown_seconds"`
-	Revision         string    `json:"revision"`
+	ModelMappings    []OAuthModelMappingRule `json:"model_mappings"`
+	ModelBilling     ModelBillingConfig      `json:"model_billing"`
+	ExcelBPS         ExcelBPSDefaults        `json:"excel_bps"`
+	UpdatedAt        time.Time               `json:"updated_at"`
+	Enabled          bool                    `json:"enabled"`
+	Platform         string                  `json:"platform"`
+	Priority         int                     `json:"priority"`
+	LoadFactor       int                     `json:"load_factor"`
+	Concurrency      int                     `json:"concurrency"`
+	GroupIDs         []int64                 `json:"group_ids"`
+	UpgradeEnabled   bool                    `json:"upgrade_enabled"`
+	UpgradeGroupIDs  []int64                 `json:"upgrade_group_ids"`
+	SuccessesPerStep int                     `json:"successes_per_step"`
+	UpgradeStep      int                     `json:"upgrade_step"`
+	MaxConcurrency   int                     `json:"max_concurrency"`
+	CooldownSeconds  int                     `json:"cooldown_seconds"`
+	Revision         string                  `json:"revision"`
 }
 
 func DefaultOAuthAutoConfig() OAuthAutoConfig {
-	return OAuthAutoConfig{Platform: PlatformOpenAI, Priority: 50, LoadFactor: 1, Concurrency: 3, GroupIDs: []int64{}, UpgradeGroupIDs: []int64{}, SuccessesPerStep: 20, UpgradeStep: 1, MaxConcurrency: 100, CooldownSeconds: 60}
+	return OAuthAutoConfig{ModelMappings: defaultOAuthModelMappings(PlatformOpenAI), ModelBilling: DefaultModelBillingConfig(), ExcelBPS: DefaultExcelBPSDefaults(), Platform: PlatformOpenAI, Priority: 50, LoadFactor: 1, Concurrency: 3, GroupIDs: []int64{}, UpgradeGroupIDs: []int64{}, SuccessesPerStep: 20, UpgradeStep: 1, MaxConcurrency: 100, CooldownSeconds: 60}
 }
 func ValidateOAuthAutoConfig(c OAuthAutoConfig) error {
+	if err := validateOAuthModelMappings(c.ModelMappings); err != nil {
+		return err
+	}
+	if err := validateModelBillingConfig(c.ModelBilling); err != nil {
+		return err
+	}
+	if err := validateExcelBPSDefaults(c.ExcelBPS); err != nil {
+		return err
+	}
 	bad := func(s string) error { return infraerrors.BadRequest("AUTO_CONFIG_INVALID", s) }
 	if !slices.Contains([]string{PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformGrok}, c.Platform) {
 		return bad("unsupported OAuth platform")
@@ -82,6 +93,8 @@ func GetOAuthAutoConfig(ctx context.Context, repo SettingRepository) (OAuthAutoC
 		return c, err
 	}
 	if raw != "" {
+		// Legacy settings keep their routing until mappings are explicitly saved.
+		c.ModelMappings = nil
 		if err = json.Unmarshal([]byte(raw), &c); err != nil {
 			return c, err
 		}
@@ -98,6 +111,9 @@ func (s *adminServiceImpl) ApplyOAuthAutoConfig(ctx context.Context, input *Crea
 	if input == nil {
 		return ErrAccountNilInput
 	}
+	// Imported/user-supplied markers must not fabricate automatic-configuration history.
+	input.Extra = maps.Clone(input.Extra)
+	delete(input.Extra, "auto_config_initial_revision")
 	if input.Type != AccountTypeOAuth || s.settingService == nil {
 		return nil
 	}
@@ -121,6 +137,7 @@ func (s *adminServiceImpl) ApplyOAuthAutoConfig(ctx context.Context, input *Crea
 			return infraerrors.BadRequest("AUTO_CONFIG_GROUP_INVALID", "automatic configuration group is unavailable for this platform")
 		}
 	}
+	applyOAuthModelMappings(input, c.ModelMappings)
 	input.Priority = c.Priority
 	lf := c.LoadFactor
 	input.LoadFactor = &lf
@@ -140,6 +157,9 @@ func (s *AccountOpsService) GetOAuthAutoConfig(ctx context.Context) (OAuthAutoCo
 func (s *AccountOpsService) SaveOAuthAutoConfig(ctx context.Context, c OAuthAutoConfig) (OAuthAutoConfig, error) {
 	s.autoConfigMu.Lock()
 	defer s.autoConfigMu.Unlock()
+	if c.ModelMappings == nil {
+		c.ModelMappings = []OAuthModelMappingRule{}
+	}
 	if err := ValidateOAuthAutoConfig(c); err != nil {
 		return c, err
 	}
@@ -166,6 +186,12 @@ func (s *AccountOpsService) SaveOAuthAutoConfig(ctx context.Context, c OAuthAuto
 			if g.Status != StatusActive {
 				return c, infraerrors.BadRequest("AUTO_CONFIG_GROUP_INVALID", "select active upgrade groups")
 			}
+		}
+	}
+	if c.ExcelBPS.AutoMoveOn403 {
+		validator := &adminServiceImpl{groupRepo: s.autoGroups}
+		if err := validator.validateExcelBPS403GroupSettings(ctx, &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: c.ExcelBPS.extra()}); err != nil {
+			return c, err
 		}
 	}
 	c.Revision = uuid.NewString()
@@ -200,6 +226,7 @@ type AutoConfigConcurrencyState struct {
 	Step          int        `json:"step"`
 	PausedUntil   time.Time  `json:"paused_until"`
 	LastUpgradeAt *time.Time `json:"last_upgrade_at,omitempty"`
+	LastFailureAt *time.Time `json:"last_failure_at,omitempty"`
 }
 
 // AdvanceConcurrency is pure. A fresh cycle starts after a rule/manual change.
@@ -212,6 +239,7 @@ func AdvanceConcurrency(state AutoConfigConcurrencyState, current int, c OAuthAu
 	state.Step = c.UpgradeStep
 	if !result.Success {
 		state.Successes = 0
+		state.LastFailureAt = &now
 		state.PausedUntil = now.Add(time.Duration(c.CooldownSeconds) * time.Second)
 		return state, current
 	}
@@ -224,6 +252,7 @@ func AdvanceConcurrency(state AutoConfigConcurrencyState, current int, c OAuthAu
 		state.Concurrency = current
 		state.Successes = 0
 		state.LastUpgradeAt = &now
+		state.LastFailureAt = nil
 		state.PausedUntil = now.Add(time.Duration(c.CooldownSeconds) * time.Second)
 	}
 	return state, current

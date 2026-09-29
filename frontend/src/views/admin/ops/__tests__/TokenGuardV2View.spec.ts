@@ -1,3 +1,8 @@
+
+vi.mock('@/api/admin/credentialEncryption', () => ({
+  getCredentialEncryption: vi.fn().mockResolvedValue({ configured: true, source: 'server_config' }),
+  initializeCredentialEncryption: vi.fn(),
+}))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 
@@ -387,5 +392,22 @@ describe('TokenGuardV2View', () => {
     await wrapper.get('#token-guard-v2-search').setValue('Account 2')
     expect(wrapper.get('tbody').text()).toContain('Account 2')
     expect(wrapper.findAll('tbody tr')).toHaveLength(7)
+  })
+})
+
+describe('managed re-login availability', () => {
+  it('separates encrypted credential readiness from a failed runtime', async () => {
+    const data = await api.listGuard()
+    api.listGuard.mockResolvedValue({
+      ...data, worker: { mode: 'managed', state: 'unavailable', reason: 'runtime_install_failed' }
+    })
+    wrapper = mount(TokenGuardV2View, {
+      global: { stubs: { AppLayout: { template: '<div><slot /></div>' }, Icon: true, SmartOpsNav: true } }
+    })
+    await flushPromises()
+    const runtime = wrapper.get('[data-testid="reauth-runtime-status"]')
+    expect(runtime.text()).toContain('tokenGuardV2.runtimeStates.unavailable')
+    expect(runtime.text()).toContain('tokenGuardV2.runtimeReasons.runtime_install_failed')
+    expect(runtime.text()).toContain('tokenGuardV2.runtimeManaged')
   })
 })

@@ -1591,7 +1591,7 @@ func (s *CRSSyncService) PreviewFromCRS(ctx context.Context, input SyncFromCRSIn
 func (s *CRSSyncService) createSyncedAccount(ctx context.Context, a *Account) error {
 	var groups []int64
 	if s.autoConfigure != nil {
-		input := &CreateAccountInput{Platform: a.Platform, Type: a.Type, Priority: a.Priority, Concurrency: a.Concurrency, LoadFactor: a.LoadFactor, Extra: a.Extra}
+		input := &CreateAccountInput{Platform: a.Platform, Type: a.Type, Priority: a.Priority, Concurrency: a.Concurrency, LoadFactor: a.LoadFactor, Extra: a.Extra, Credentials: a.Credentials}
 		if err := s.autoConfigure(ctx, input); err != nil {
 			return err
 		}
@@ -1599,13 +1599,17 @@ func (s *CRSSyncService) createSyncedAccount(ctx context.Context, a *Account) er
 		a.Concurrency = input.Concurrency
 		a.LoadFactor = input.LoadFactor
 		a.Extra = input.Extra
+		a.Credentials = input.Credentials
 		groups = input.GroupIDs
 	}
 	if err := s.accountRepo.Create(ctx, a); err != nil {
 		return err
 	}
 	if len(groups) > 0 {
-		return s.accountRepo.BindGroups(ctx, a.ID, groups)
+		if err := s.accountRepo.BindGroups(ctx, a.ID, groups); err != nil {
+			return err
+		}
 	}
+	recordAutoConfigInitial(ctx, s.accountRepo, a, groups)
 	return nil
 }

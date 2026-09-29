@@ -125,13 +125,16 @@ func ProvideOpenAIOAuthReauthService(
 	adminService AdminService,
 	accountRepo AccountRepository,
 	openaiOAuthService *OpenAIOAuthService,
-	secretEncryptor SecretEncryptor,
+	secretEncryptor OpenAICredentialEncryptor,
 	cfg *config.Config,
 	tokenCacheInvalidator TokenCacheInvalidator,
 	runtimeBlocker AccountRuntimeBlocker,
+	buildInfo BuildInfo,
 ) *OpenAIOAuthReauthService {
 	credentialUpdater, _ := accountRepo.(OpenAIOAuthReauthCredentialUpdater)
-	return NewOpenAIOAuthReauthService(repo, adminService, credentialUpdater, openaiOAuthService, secretEncryptor, cfg != nil && cfg.Totp.EncryptionKeyConfigured, tokenCacheInvalidator, runtimeBlocker)
+	svc := NewOpenAIOAuthReauthService(repo, adminService, credentialUpdater, openaiOAuthService, secretEncryptor, cfg != nil && cfg.Totp.EncryptionKeyConfigured, tokenCacheInvalidator, runtimeBlocker)
+	svc.configureWorker(cfg, buildInfo)
+	return svc
 }
 
 // ProvideTokenRefreshService creates and starts TokenRefreshService
@@ -662,8 +665,11 @@ func ProvideIdempotencyCleanupService(repo IdempotencyRepository, cfg *config.Co
 func ProvideScheduledTestService(
 	planRepo ScheduledTestPlanRepository,
 	resultRepo ScheduledTestResultRepository,
+	templateRepo QualityRuleTemplateRepository,
 ) *ScheduledTestService {
-	return NewScheduledTestService(planRepo, resultRepo)
+	svc := NewScheduledTestService(planRepo, resultRepo)
+	svc.templateRepo = templateRepo
+	return svc
 }
 
 // ProvideScheduledTestRunnerService creates and starts ScheduledTestRunnerService.

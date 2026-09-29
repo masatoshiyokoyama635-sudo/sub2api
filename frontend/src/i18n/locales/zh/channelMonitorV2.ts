@@ -2,6 +2,8 @@
 export default {
   channelMonitorV2: {
     "cards": {
+        "bucketDetails": "时段内采样详情",
+        "sampleDetails": "{time} · 可用率 {availability} · 缓存率 {cache} · 首 Token P50 {ttft}",
         "showCards": "卡片视图",
         "showAnalytics": "详细数据",
         "passive": "V2 被动用量 · 缓存率与可用率",
@@ -20,12 +22,16 @@ export default {
         }
     },
     "candy": {
+        "historyCount": "已记录 {count}/{limit} 次检测, 灰色表示未检测",
+        "notChecked": "未检测",
+        "disabled": "未开启检测",
+        "disabledHint": "该分组尚未开启降智检测, 可由管理员在渠道监控中配置.",
         "invalid": '请填写检测模型, 间隔必须是 1-1440 的整数分钟.',
         "title": "降智状态",
         "cadence": "每 {minutes} 分钟检测",
-        "window": "近 60 分钟 · 仅显示已检测记录",
+        "window": "近 24 小时 · 最近 {count} 次检测",
         "waiting": "等待检测",
-        "legend": "21 绿 · 其他黄 · 检测失败红",
+        "legend": "21 绿 · 其他黄 · 检测失败红 · 未检测灰",
         "states": {
             "correct": "正常",
             "incorrect": "答案异常",

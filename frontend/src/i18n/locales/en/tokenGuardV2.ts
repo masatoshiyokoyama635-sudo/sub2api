@@ -1,4 +1,40 @@
 export default {
+  runtimeTitle: 'Automatic re-login service',
+  runtimeManaged: 'Prepared and managed by the application. Password / 2FA needs no extra setup.',
+  runtimeExternal: 'Using the existing external re-login service.',
+  runtimeReasons: {
+    unsupported_platform: 'This platform does not support the built-in runtime yet.',
+    release_required: 'No published runtime matches this development build.',
+    runtime_install_failed: 'Runtime download, verification or preparation failed; it will retry.',
+    worker_start_failed: 'The re-login process could not start; it will retry.',
+    worker_exited: 'The re-login process exited; it will be restarted.',
+    external_not_configured: 'The existing external service connection is invalid.',
+    external_offline: 'The external re-login service has not connected.',
+    api_unreachable: 'The re-login process has not connected to the local API.'
+  },
+  runtimeStates: {
+    idle: 'Will be prepared automatically on first use',
+    preparing: 'Preparing the runtime; queued tasks will start when ready',
+    running: 'Ready and processing re-login tasks',
+    unavailable: 'Temporarily unavailable; the application will retry automatically',
+    stopped: 'Service is stopping'
+  },
+
+  encryption: {
+    "title": "Credential encryption",
+    "ready": "Enabled; login credentials can be saved",
+    "checking": "Checking encryption configuration…",
+    "required": "Enable credential encryption before saving passwords and account 2FA secrets",
+    "initialize": "Enable encryption",
+    "initializing": "Enabling…",
+    "retry": "Check again",
+    "description": "The server generates and persists a dedicated encryption key. It takes effect immediately without environment variables or a restart. Enter the account’s 2FA secret separately in the account form.",
+    "backupHint": "Back up secrets/credential-operations.key in the persistent data directory together with the database. Multiple instances must share this key file.",
+    "initializeFailed": "Could not enable encryption. Check persistent directory permissions. Existing keys are never replaced; restore the original file if it was lost.",
+    "loadFailed": "Could not read encryption status. Retry, or restore the original key file if it is damaged or missing.",
+    "editorHint": "Close this dialog and enable credential encryption at the top of the page before continuing."
+},
+  totpOptionalHint: "Optional only when account 2FA is disabled; otherwise enter its secret",
   title: 'Credential Operations',
   description: 'Stores a login method per OpenAI OAuth parent account, probes tokens automatically, and queues re-login after repeated authentication failures.',
   refresh: 'Refresh',
@@ -82,7 +118,7 @@ export default {
   mailboxMode: 'Email link',
   mailboxModeHint: 'Read the verification code from an email OTP API URL.',
   password: 'Login password',
-  totpSecret: 'TOTP secret',
+  totpSecret: 'Account 2FA (TOTP) secret',
   otpUrl: 'Email OTP API URL',
   keepSecret: 'Leave empty to keep the saved value',
   optional: 'Optional',

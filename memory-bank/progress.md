@@ -459,3 +459,12 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - 自动配置的首次模板/并发升级与优先调度默认关闭；本轮不替用户打开生产开关。相反新版2FA operations导入默认登记加密密码/TOTP并启用该账号巡检/自动重登，需固定加密key与独立Worker。旧guard target仍有旧配置契约，不宣称全部历史凭据已自动加密迁移；未访问真实账号或运行真实worker。
 - 所有本地门禁必须绑定最终源码；Darwin排除的Linux-only限制如实记录，完整Linux unit/integration与容器检查由新SHA CI验收。VERSION三态2.9.0→2.9.1→2.9.0已执行；四角色沿用.cache/update-v2.8.13，回滚脚本仅针对版本副本。
 - 非force发布feature/chat-image-tools；三workflow成功、双架构镜像digest和沿用备份部署命令验证后再交付，未部署生产。
+
+
+## v2.9.4 自定义候选（2026-09-30，本地验收完成）
+- 在独立managed worktree从已发布v2.9.1源码树 60a4750dba0a172206d22321740597490c44e5e3 合入ranxi v2.9.4提交 7dd10bfe4b635f226f0ddfa52cc65797697272d8；tar源码tree与GitHub提交tree完全一致。原工作区及未提交记录保持不变，生产由用户管理。
+- 保留AI Chat/Images、图片中转及并发、Canvas/CNY与BPS attempt/compaction用量、取消及防重计费定制。跨越v2.9.2/2.9.3/2.9.4的合并/兼容修复有新回归与最终源码hash绑定。
+- 新增迁移258_quality_observation_scope、259_account_auto_config_events、260_quality_rule_templates；旧镜像回退不撤销schema/已应用配置。模型用户token倍率默认关闭，账号成本、按次及搜索费用分开核验。
+- Linux凭证Worker独立运行包的版本、下载校验和持久目录/外部Worker边界已审阅；不是任意Python安全沙箱，也不替代部署命令的宿主python3。真实登录/生产迁移与恢复未执行。完整注意事项见本轮upgrade-notices.json。
+- 新本地门禁与独立review均绑定最终源码；Darwin限制如实保留，完整Linux unit/integration、lint、安全与镜像由新SHA CI验收。VERSION副本三态2.9.1→2.9.4→2.9.1已实跑，四角色沿用.cache/update-v2.8.13。
+- 非force发布feature/chat-image-tools；三workflow成功、双架构registry digest核验及46场景备份命令模拟验证后交付；不部署生产。

@@ -12,12 +12,21 @@
           <button class="btn btn-secondary inline-flex items-center gap-2" :disabled="loading" @click="load()">
             <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />{{ t('tokenGuardV2.refresh') }}
           </button>
-          <button class="btn btn-primary" @click="openCreate">{{ t('tokenGuardV2.addAccount') }}</button>
+          <button class="btn btn-primary" :disabled="!encryptionReady" @click="openCreate">{{ t('tokenGuardV2.addAccount') }}</button>
         </div>
       </header>
 
       <p v-if="error && !editorOpen" role="alert" class="error-banner">{{ error }}</p>
       <p v-if="notice" role="status" class="success-banner">{{ notice }}</p>
+
+      <CredentialEncryptionSetup class="mb-5" @ready="encryptionReady = $event" />
+
+      <section v-if="status.worker" class="mb-5 rounded-xl border border-gray-200 p-4 dark:border-gray-700" data-testid="reauth-runtime-status" role="status">
+        <strong>{{ t('tokenGuardV2.runtimeTitle') }}</strong>
+        <p>{{ t(`tokenGuardV2.runtimeStates.${runtimeState}`) }}</p>
+        <p v-if="runtimeReason">{{ t(`tokenGuardV2.runtimeReasons.${runtimeReason}`) }}</p>
+        <small>{{ t(status.worker.mode === 'external' ? 'tokenGuardV2.runtimeExternal' : 'tokenGuardV2.runtimeManaged') }}</small>
+      </section>
 
       <section class="summary-grid">
         <article class="summary-card"><span>{{ t('tokenGuardV2.monitored') }}</span><strong>{{ accounts.length }}</strong><small>{{ t('tokenGuardV2.intervalHint', { minutes: Math.round(status.probe_interval_seconds / 60) }) }}</small></article>
@@ -121,6 +130,7 @@
       <BaseDialog :show="editorOpen" :title="editing ? t('tokenGuardV2.editTitle') : t('tokenGuardV2.addTitle')" width="wide" @close="closeEditor">
         <form id="token-guard-v2-editor" class="editor-form" @submit.prevent="save">
           <p v-if="error" role="alert" class="error-banner">{{ error }}</p>
+          <p v-if="!encryptionReady" role="alert" class="error-banner">{{ t('tokenGuardV2.encryption.editorHint') }}</p>
           <div v-if="!editing" class="account-picker">
             <label class="search-box picker-search">
               <Icon name="search" size="sm" />
@@ -157,7 +167,7 @@
 
           <template v-if="draft.credential_mode === 'password_totp'">
             <label class="field-label">{{ t('tokenGuardV2.password') }}<input v-model="draft.password" class="input w-full" type="password" :placeholder="editing?.login_config?.password_configured ? t('tokenGuardV2.keepSecret') : ''" :required="!editing?.login_config?.password_configured" autocomplete="new-password" /></label>
-            <label class="field-label">{{ t('tokenGuardV2.totpSecret') }}<input v-model.trim="draft.totp_secret" class="input w-full" type="password" :placeholder="editing?.login_config?.totp_configured ? t('tokenGuardV2.keepSecret') : t('tokenGuardV2.optional')" autocomplete="off" /></label>
+            <label class="field-label">{{ t('tokenGuardV2.totpSecret') }}<input v-model.trim="draft.totp_secret" class="input w-full" type="password" :placeholder="editing?.login_config?.totp_configured ? t('tokenGuardV2.keepSecret') : t('tokenGuardV2.totpOptionalHint')" autocomplete="off" /></label>
             <label v-if="editing?.login_config?.totp_configured" class="check-row"><input v-model="draft.clear_totp" type="checkbox" />{{ t('tokenGuardV2.clearTotp') }}</label>
           </template>
           <label v-else class="field-label">{{ t('tokenGuardV2.otpUrl') }}<input v-model.trim="draft.otp_url" class="input w-full" type="url" :placeholder="editing?.login_config?.otp_url_masked ? `${editing.login_config.otp_url_masked} · ${t('tokenGuardV2.keepSecret')}` : 'https://mail.example.com/latest'" :required="editing?.login_config?.credential_mode !== 'email_otp_url' || !editing?.login_config?.otp_url_masked" /></label>
@@ -169,7 +179,7 @@
         </form>
         <template #footer>
           <button type="button" class="btn btn-secondary" :disabled="saving" @click="closeEditor">{{ t('tokenGuardV2.cancel') }}</button>
-          <button type="submit" form="token-guard-v2-editor" class="btn btn-primary" :disabled="saving || !draft.account_id">{{ saving ? t('tokenGuardV2.saving') : t('tokenGuardV2.save') }}</button>
+          <button type="submit" form="token-guard-v2-editor" class="btn btn-primary" :disabled="saving || !draft.account_id || !encryptionReady">{{ saving ? t('tokenGuardV2.saving') : t('tokenGuardV2.save') }}</button>
         </template>
       </BaseDialog>
     </div>
@@ -180,6 +190,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import CredentialEncryptionSetup from '@/components/account/CredentialEncryptionSetup.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { BaseDialog, Pagination } from '@/components/common'
@@ -206,6 +217,7 @@ import {
 } from '@/api/admin/accountTokenGuardV2'
 
 const { t } = useI18n()
+const encryptionReady = ref(false)
 const emptyStatus = (): TokenGuardV2Status => ({
   accounts: [],
   probe_interval_seconds: 1800,
@@ -264,6 +276,14 @@ const accountGroupNames = (account: AccountListItem) => groups.value
   .filter(group => account.group_ids?.includes(group.id))
   .map(group => group.name)
   .join(' ')
+const runtimeReason = computed(() => {
+  const reason = status.worker?.reason || ''
+  return ['unsupported_platform', 'release_required', 'runtime_install_failed', 'worker_start_failed', 'worker_exited', 'external_not_configured', 'external_offline', 'api_unreachable'].includes(reason) ? reason : ''
+})
+const runtimeState = computed(() => {
+  const state = status.worker?.state || 'idle'
+  return ['idle', 'preparing', 'running', 'unavailable', 'stopped'].includes(state) ? state : 'unavailable'
+})
 const accounts = computed(() => status.accounts)
 const enabledCount = computed(() => accounts.value.filter(item => item.enabled).length)
 const healthyCount = computed(() => accounts.value.filter(item => item.probe_state === 'ok').length)
@@ -422,7 +442,7 @@ async function saveRulesConfig() {
 }
 
 async function save() {
-  if (saving.value || !draft.account_id) return
+  if (saving.value || !draft.account_id || !encryptionReady.value) return
   saving.value = true; error.value = ''; notice.value = ''
   try {
     const payload = { ...draft }
@@ -480,7 +500,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 </script>
 
 <style scoped>
-.guard-v2 { max-width: 1660px; margin: auto; @apply text-gray-900 dark:text-gray-100; }
+.guard-v2 { @apply w-full min-w-0 text-gray-900 dark:text-gray-100; }
 .page-heading { @apply mb-6 flex flex-wrap items-center justify-between gap-4; }
 .eyebrow { @apply mb-1 text-[11px] font-semibold tracking-widest text-primary-600; }
 .page-heading h2 { @apply text-2xl font-semibold tracking-tight; }
