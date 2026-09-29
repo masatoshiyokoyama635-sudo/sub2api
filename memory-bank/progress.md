@@ -450,3 +450,12 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - 后端七项门禁、完整lint、前端四项门禁和六项shell门禁须全部通过且绑定验后源码。Darwin已知Linux-only限制如实列出，完整Linux unit/integration与容器检查由新SHA云端CI验证。
 - 四角色沿用.cache/update-v2.8.13；VERSION副本基线2.8.20、修改2.9.0、独立副本回滚2.8.20，stdout/exit/hash实际记录。回滚脚本仅恢复版本副本，不是应用或数据库回滚。
 - 非force发布至feature/chat-image-tools；新CI、双架构镜像digest与原备份部署逻辑验证通过后才给一键命令，生产部署仍由用户执行。
+
+
+## v2.9.1 自定义候选（2026-09-29，本地验收完成）
+- 基于已发布v2.9.0源码树 1cb7491440f9cbde50e3d938c9c4ea4926542b1d，独立worktree合入ranxi v2.9.1标签 ca5dd3cf5299df8778cdfa752430253ad4e071e8；源码tar tree与GitHub tree核验一致。原工作区与未提交记录未修改，生产仍由用户管理。
+- 合入凭证运营、可选账号自动配置/并发升级、优先调度及BPS历史压缩等变化，保留AI Chat/Images、图片并发、Canvas/CNY与用量/取消定制。唯一openai_excel_bps.go冲突需同时保留compact wrapper与原始attempt快照，并单独验证compact用量、unknown fallback和取消路径，实际补丁/回归见backend整合报告与candidate-review.json。
+- 新增254_channel_monitor_v2_candy、254_openai_oauth_reauth、254_quality_bps_coexist、255_account_token_guard_v2、256_openai_oauth_reauth_proxy_override、257_openai_oauth_reauth_proxy_source六个迁移文件；含质量规则唯一索引替换。回退二进制不会撤销schema或已应用的账号配置/并发，部署前先备份数据库与配置。
+- 自动配置的首次模板/并发升级与优先调度默认关闭；本轮不替用户打开生产开关。相反新版2FA operations导入默认登记加密密码/TOTP并启用该账号巡检/自动重登，需固定加密key与独立Worker。旧guard target仍有旧配置契约，不宣称全部历史凭据已自动加密迁移；未访问真实账号或运行真实worker。
+- 所有本地门禁必须绑定最终源码；Darwin排除的Linux-only限制如实记录，完整Linux unit/integration与容器检查由新SHA CI验收。VERSION三态2.9.0→2.9.1→2.9.0已执行；四角色沿用.cache/update-v2.8.13，回滚脚本仅针对版本副本。
+- 非force发布feature/chat-image-tools；三workflow成功、双架构镜像digest和沿用备份部署命令验证后再交付，未部署生产。

@@ -782,6 +782,11 @@ export default {
         excelBPSProxySourceIPPool: 'IP 管理代理池',
         excelBPSProxySourceIPPoolDesc: '使用「IP 管理」里全部启用且未过期的代理组成出口池，无需启动 Mihomo；绑定、选路、冷却和探测规则与 Mihomo 代理池相同。代理增删或启停约 15 秒内生效。',
         excelBPSMihomoDesc: '默认关闭。IP 质量差或出口不稳定会显著增加请求失败、流中断和等待时间，请谨慎开启。使用 Mihomo 代理池前需先完成配置并启动；使用 IP 管理代理池则无需启动 Mihomo。有会话标识时绑定出口，无标识时仅为本次请求临时分配，请求结束即释放。后台按已启用账号的并发数预热出口，先检查实际 BPS 接口；用户请求只从就绪池选择，数量不足时按负载复用，不在请求内探测冷节点。就绪池为空时快速返回预热未完成，健康会话保持原出口。普通节点首次断流冷却 5 分钟，重复断流最长冷却 30 分钟；动态代理首次 30 秒，最长 2 分钟，冷却后仍需通过探测。受影响会话会在进行中的请求结束后换出口。仅确认请求尚未发送时额外重试一次，已发送或已经开始输出的请求不重放，不回退直连。空闲 30 分钟释放绑定，重启后重新分配。动态 IP 供应商必须支持粘性出口；连通探测通过不代表长流一定稳定。关闭后恢复账号原代理。',
+        excelBPSAutoRecoverOn403: 'BPS 403 错误后自动探测是否恢复',
+        excelBPSAutoRecoverOn403Desc: '默认关闭，需同时开启 403 自动关闭协议。自动关闭后按下方间隔，使用此账号凭据及 BPS 模型、代理设置发起小额文本探测；失败后按相同间隔重试，收到完整成功响应后自动重新开启 BPS 并清除关闭标记。不会恢复之前调整的分组。关闭此选项可停止后续探测，探测会消耗少量上游额度。',
+        excelBPS403RecoveryInterval: '恢复探测间隔（分钟）',
+        excelBPS403RecoveryIntervalHint: '默认 60 分钟，可设置 1–10080 的整数，例如 30 或 360。首次探测和失败重试均使用此间隔；修改后从关闭时间或上次探测时间重新计算。',
+        excelBPS403RecoveryIntervalInvalid: '恢复探测间隔必须是 1–10080 之间的整数（分钟）',
         excelBPSAutoDisableOn403: '遇到 BPS 403 错误时自动关闭协议',
         excelBPSAutoMoveOn403: '遇到 BPS 403 错误时自动调整分组',
         excelBPSAutoMoveOn403Desc: '默认关闭. 触发条件与自动关闭协议相同, 两项可独立或同时勾选. 移入目标分组时会退出其他所有分组, 也可选择退出全部分组. 不禁用账号, 不重试当前请求. 目标分组失效或配置已变更时不调整分组. 自动调整后, 账号列表的名称下方显示「BPS 403疑似被封excel」标签, 再次调整该账号的分组后消失.',
@@ -804,11 +809,11 @@ export default {
         excelBPSModelsHint: '按账号映射后的模型名称匹配。仅勾选模型走 Excel / BPS；未选模型保留原 Codex、WS 和自动透传设置。不勾选任何模型时不使用 BPS。',
         excelBPSNotice: '保存后新开 Codex 会话。所选模型强制 HTTP/SSE，忽略 WS mode 与自动透传；仅支持 Responses、客户端工具和 HTTPS 图片链接，不支持 base64 图片。max / ultra 按 xhigh 发送，模型权限以上游为准。',
         autoBPS: '降智后自动开启 BPS',
-        autoBPSDesc: '每 30 分钟用状态探针检测一次（走正常协议，不经过 BPS），判定降智达到下面的条件时自动开启 BPS。这是一条质量运维规则，也可在 智能运维 → 质量运维 查看记录和修改。',
+        autoBPSDesc: "按下方配置的检测间隔用状态探针检测（默认每 2 分钟，走正常协议，不经过 BPS），达到条件时按勾选的选项自动开启 BPS。这是一条质量运维规则，也可在 智能运维 → 质量运维 查看记录和修改。",
         autoBPSLoading: '正在读取本账号的自动开启 BPS 规则…',
         autoBPSLoadFailed: '读取自动开启 BPS 规则失败：{error}。本次保存不会改动这条规则。',
         autoBPSPauseHint: '关闭后规则暂停检测，设置和记录都保留，再打开按原设置继续；已经开启的 BPS 不会被关闭。',
-        autoBPSRuleConflict: '本账号已有其他质量规则 #{id}。每个账号只能有一条质量规则，暂停的规则也会占用名额；请前往质量运维修改现有规则。',
+        autoBPSRuleConflict: '本账号已有 BPS 质量规则 #{id}，请前往质量运维修改。分组/调度规则可与 BPS 规则同时使用。',
         autoBPSManageRules: '管理质量规则',
         autoBPSSaveFailed: '账号已保存，但自动开启 BPS 规则没保存成功：{error}。可到 智能运维 → 质量运维 手动处理。',
         autoBPSCreateFailed: '账号已创建，但有 {count} 个账号没加上自动开启 BPS 规则：{error}。可到 智能运维 → 质量运维 为它们新建规则。',
@@ -1119,8 +1124,8 @@ export default {
 	    hint: '仅在实际用量达到阈值时使用最早到期的可用卡；默认关闭。无卡或失败时账号保持暂停。',
 	    threshold5h: '5h 自动用卡阈值(%)',
 	    threshold7d: '7d 自动用卡阈值(%)',
-	    thresholdHint: '两个窗口独立判断，任一达到自身阈值即触发。可填写 0.1–100，默认均为 100。',
-	    thresholdInvalid: '自动使用重置卡阈值必须在 0.1% 到 100% 之间。'
+	    thresholdHint: '填 0 表示忽略该窗口；启用的窗口任一达到自身阈值即触发。可填写 0 或 0.1–100，默认均为 100。例如 5h 填 0、7d 填 90，仅在 7d 用量达到 90% 时用卡。普通自动暂停规则不受影响。',
+	    thresholdInvalid: '自动使用重置卡阈值必须为 0（忽略该窗口），或在 0.1% 到 100% 之间。'
 	  },
       // Quota control (Anthropic OAuth/SetupToken only)
       quotaControl: {
