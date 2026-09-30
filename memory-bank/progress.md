@@ -468,3 +468,12 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - Linux凭证Worker独立运行包的版本、下载校验和持久目录/外部Worker边界已审阅；不是任意Python安全沙箱，也不替代部署命令的宿主python3。真实登录/生产迁移与恢复未执行。完整注意事项见本轮upgrade-notices.json。
 - 新本地门禁与独立review均绑定最终源码；Darwin限制如实保留，完整Linux unit/integration、lint、安全与镜像由新SHA CI验收。VERSION副本三态2.9.1→2.9.4→2.9.1已实跑，四角色沿用.cache/update-v2.8.13。
 - 非force发布feature/chat-image-tools；三workflow成功、双架构registry digest核验及46场景备份命令模拟验证后交付；不部署生产。
+
+
+## v2.9.6 自定义候选（2026-09-30，本地验收完成）
+- 从已发布v2.9.4源码树 4ff3b51fcbf63e01a51798d5ab56da3c9892ac7f 独立合入ranxi v2.9.6提交 9f7d96be367e795bd76e1f45c82bd5d4c563e0fa（含v2.9.5）；tar源码tree与GitHub提交tree完全一致。原工作区未提交记录与上轮候选保持不变。
+- 保留AI Chat/Images、图片中转及并发、Canvas/CNY、BPS attempt/compaction用量/取消/防重计费，以及已验证的worker -zz资源解析和测试隔离修复。本轮新门禁/独立review绑定最终源码。
+- 新增迁移261_pelican_group_test_costs、262_openai_oauth_reauth_engine；候选缓存保留实际成本倍率和显式零，共享Redis的所有应用/cache writer须统一升级后跨周期验证，单实例命令不能替代集群更新。
+- Session Studio仅管理员显式选择后发送相关凭据至配置HTTPS服务，旧账号默认local_worker；不自动切换引擎。Worker默认3个独立进程、并发1..16需评估总内存/出口并处理在途任务。真实外部服务/账号/生产迁移未执行。
+- 继续保留TOTP/file key及DATA_DIR持久化；部署命令只备份DB/.env/Compose/旧镜像，不是数据卷、Redis或credential文件key备份。内置Python不替代宿主python3。完整限制见本轮upgrade-notices.json。
+- VERSION副本三态2.9.4→2.9.6→2.9.4已实跑，四角色沿用.cache/update-v2.8.13。非force发布feature/chat-image-tools；三workflow成功、registry双架构/digest核验及46场景命令模拟验证后交付，不部署生产。
