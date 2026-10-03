@@ -245,7 +245,10 @@ type OpenAIForwardResult struct {
 	BasispointsUsageAttempts []OpenAIUsage
 	// BasispointsCacheCreationAsInput records the selected account's billing policy.
 	BasispointsCacheCreationAsInput bool
-	Model                           string // 原始模型（用于响应和日志显示）
+	// UsageUnavailable prevents a protocol without upstream usage from being
+	// recorded or billed as if it reported an authoritative zero-token result.
+	UsageUnavailable bool
+	Model            string // 原始模型（用于响应和日志显示）
 	// BillingModel is the model used for cost calculation.
 	// When non-empty, CalculateCost uses this instead of Model.
 	// This is set by the Anthropic Messages conversion path where
