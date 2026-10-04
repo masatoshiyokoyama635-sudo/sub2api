@@ -486,3 +486,12 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - Session Studio仅管理员显式选择后发送相关凭据至配置HTTPS服务，旧账号默认local_worker；不自动切换引擎。Worker默认3个独立进程、并发1..16需评估总内存/出口并处理在途任务。真实外部服务/账号/生产迁移未执行。
 - 继续保留TOTP/file key及DATA_DIR持久化；部署命令只备份DB/.env/Compose/旧镜像，不是数据卷、Redis或credential文件key备份。内置Python不替代宿主python3。完整限制见本轮upgrade-notices.json。
 - VERSION副本三态2.9.6→2.9.7→2.9.6已实跑，四角色沿用.cache/update-v2.8.13。非force发布feature/chat-image-tools；三workflow成功、registry双架构/digest核验及46场景命令模拟验证后交付，不部署生产。
+
+
+## v2.9.8 自定义候选（2026-10-04，本地验收完成）
+- 从已发布v2.9.7源码树 3319d5601c360e4327a62aa11f07d07e2cf81e6a 独立合入ranxi v2.9.8提交 a146fb98dd2da8cb4ae5eeeb8279e9767d379009（含v2.9.5）；tar源码tree与GitHub提交tree完全一致。原工作区未提交记录与上轮候选保持不变。
+- 保留AI Chat/Images、图片中转及并发、Canvas/CNY、BPS attempt/compaction用量/取消/防重计费，以及已验证的worker -zz资源解析和测试隔离修复。本轮新门禁/独立review绑定最终源码。
+- 新增迁移244_astra_gateway_history、249_astra_scheduling_states；网关借票、地区出口、Prism模型范围和readiness预算默认按开关/配置启用。候选缓存保留实际成本倍率和显式零，共享Redis的所有应用/cache writer及网关实例须统一升级后验证，单实例命令不能替代集群更新。
+- Session Studio仅管理员显式选择后发送相关凭据至配置HTTPS服务，旧账号默认local_worker；不自动切换引擎。Worker默认3个独立进程、并发1..16需评估总内存/出口并处理在途任务。真实外部服务/账号/生产迁移未执行。
+- 继续保留TOTP/file key及DATA_DIR持久化；部署命令只备份DB/.env/Compose/旧镜像，不是数据卷、Redis或credential文件key备份。内置Python不替代宿主python3。完整限制见本轮upgrade-notices.json。
+- VERSION副本三态2.9.7→2.9.8→2.9.7已实跑，四角色沿用.cache/update-v2.8.13。非force发布feature/chat-image-tools；三workflow成功、registry双架构/digest核验及46场景命令模拟验证后交付，不部署生产。
