@@ -512,3 +512,10 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - v2.9.10/11 无新增数据库 schema migration；用户错误/余额拒绝与渠道健康分离，Anthropic safeguard 403 不再自动停用账号，V1 监控等待 75/90 秒；Prism 适配器需同步更新。
 - OAuth 额度优先/API Key 后备默认关闭（7d 阈值 90%、额度数据 5 分钟内），新 OAuth 可复制质量规则快照；Prism multiplex 默认内存准入 750 MiB。
 - 后端 5 个定向门禁、前端 412 文件/3505 测试、Prism 83 项、Shell 6 项均通过；真实 PostgreSQL/Redis、provider/OAuth/browser、OVH 与生产部署未执行。
+
+
+## v2.10.0 自定义候选（2026-10-07，本地验收完成）
+- 从已发布 v2.9.11 源码树 d1c891178248e3465b73b8044a4c1c6b8c6ca619 合入 ranxi v2.10.0 提交 5ca3cca21eeaf4ca8a694a7f2f8f0ecd9575c549（8 commits/69 files）；上游无新增数据库 schema migration。
+- 保留 AI Chat/Images、图片中转/批量图片/并发、Canvas/CNY、BPS attempt/cache-creation/compaction/cancellation、防重计费及 gpt-6-astra 定制；静态入口 15/15、后端 BPS literal 检查通过。
+- 新增 OpenAI HTTP/SSE→WS 加速保护（默认关闭、15MiB 发送前阈值）、账号模型/reasoning 查询、nested reasoning 兼容、EasyPay 回调防重放、随机初始管理员凭据、credential-ops 孤儿清理、Codex model discovery；xlsx 升级到官方 0.20.3 并移除旧安全例外。
+- 后端 11 个定向门禁、前端 412 文件/3534 测试、Prism 83 项、Shell 6 项均通过；真实 PostgreSQL/Redis、provider/OAuth/browser、OVH 与生产部署未执行。
