@@ -504,3 +504,11 @@ VPS 上把 `/opt/sub2api/docker-compose.yml` 的 `sub2api` 镜像改为：
 - Session Studio仅管理员显式选择后发送相关凭据至配置HTTPS服务，旧账号默认local_worker；不自动切换引擎。Worker默认3个独立进程、并发1..16需评估总内存/出口并处理在途任务。真实外部服务/账号/生产迁移未执行。
 - 继续保留TOTP/file key及DATA_DIR持久化；部署命令只备份DB/.env/Compose/旧镜像，不是数据卷、Redis或credential文件key备份。内置Python不替代宿主python3。完整限制见本轮upgrade-notices.json。
 - VERSION副本三态2.9.8→2.9.9→2.9.8已实跑，四角色沿用.cache/update-v2.8.13。非force发布feature/chat-image-tools；三workflow成功、registry双架构/digest核验及46场景命令模拟验证后交付，不部署生产。
+
+
+## v2.9.11 自定义候选（2026-10-07，本地验收完成）
+- 从已发布 v2.9.9 源码树 98ede0e753cad08e97650d80d25c5f56aa507d22 合入 ranxi v2.9.11 提交 e6addfe4aff745c859f9bb50817bc468e0e1f4f7（覆盖 v2.9.10/v2.9.11，GitHub compare 38 commits/86 files）；原工作区未提交记录保持不变。
+- 保留 AI Chat/Images、图片中转/批量图片/并发、Canvas/CNY、BPS attempt/cache-creation/compaction/cancellation/防重计费及 gpt-6-astra 定制；静态入口 15/15 与关键文件逐字节检查通过。
+- v2.9.10/11 无新增数据库 schema migration；用户错误/余额拒绝与渠道健康分离，Anthropic safeguard 403 不再自动停用账号，V1 监控等待 75/90 秒；Prism 适配器需同步更新。
+- OAuth 额度优先/API Key 后备默认关闭（7d 阈值 90%、额度数据 5 分钟内），新 OAuth 可复制质量规则快照；Prism multiplex 默认内存准入 750 MiB。
+- 后端 5 个定向门禁、前端 412 文件/3505 测试、Prism 83 项、Shell 6 项均通过；真实 PostgreSQL/Redis、provider/OAuth/browser、OVH 与生产部署未执行。
