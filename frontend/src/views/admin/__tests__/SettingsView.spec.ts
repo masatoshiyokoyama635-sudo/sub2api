@@ -405,6 +405,7 @@ const baseSettingsResponse = {
   doc_url: "",
   home_content: "",
   compact_home_enabled: false,
+  excel_bps_enabled: true,
   excel_bps_image_mode: 'native',
   excel_bps_image_relay_enabled: true,
   excel_bps_image_base_url: '',
@@ -482,6 +483,7 @@ const baseSettingsResponse = {
   fallback_model_antigravity: "",
   grok_default_text_model: "grok-4.5",
   grok_cross_client_model_map_enabled: false,
+  grok_video_source_url_enabled: false,
   enable_identity_patch: false,
   identity_patch_prompt: "",
   ops_monitoring_enabled: false,
@@ -825,6 +827,33 @@ describe("admin SettingsView payment visible method controls", () => {
     wrapper.unmount();
   });
 
+  it("edits the support ticket card and sends a cleaned config", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      support_ticket_enabled: false,
+      support_ticket_config: { categories: ["账户与充值", "其他"], max_open_per_user: 5, notice: "" },
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const card = wrapper.get('[data-testid="support-ticket-settings"]');
+    expect(card.find('[data-testid="support-ticket-categories"]').exists()).toBe(false);
+    await wrapper.get("#support-ticket-enabled").setValue(true);
+    const inputs = () => wrapper.get('[data-testid="support-ticket-categories"]').findAll("input");
+    expect(inputs().map((input) => (input.element as HTMLInputElement).value)).toEqual(["账户与充值", "其他"]);
+    await wrapper.get('[data-testid="support-ticket-add-category"]').trigger("click");
+    await inputs()[2].setValue("  退款  ");
+    await wrapper.get('[data-testid="support-ticket-add-category"]').trigger("click");
+    await wrapper.get("#support-ticket-max-open").setValue("8");
+    await wrapper.get("#support-ticket-notice").setValue("工作时间 9–21 点");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings.mock.calls[0]?.[0]).toMatchObject({
+      support_ticket_enabled: true,
+      support_ticket_config: { categories: ["账户与充值", "其他", "退款"], max_open_per_user: 8, notice: "工作时间 9–21 点" },
+    });
+    wrapper.unmount();
+  });
+
   it("saves expanded image capacity and rejects values above each ceiling", async () => {
     getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay' });
     const wrapper = mountView();
@@ -907,6 +936,20 @@ describe("admin SettingsView payment visible method controls", () => {
     });
     expect(showError).not.toHaveBeenCalled();
     expect(showSuccess).toHaveBeenCalledWith('admin.settings.settingsSaved');
+    wrapper.unmount();
+  });
+
+  it("saves the BPS and Prism protocol switches", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    const tab = wrapper.findAll('button').find((node) => node.text().includes('admin.settings.tabs.features'));
+    await tab?.trigger('click');
+    const protocolSwitches = wrapper.get('[data-testid="protocol-feature-switches"]');
+    await protocolSwitches.get('input').setValue(false);
+    await protocolSwitches.findAll('input')[1].setValue(true);
+    await wrapper.find('form').trigger('submit.prevent');
+    await flushPromises();
+    expect(updateSettings.mock.calls[0]?.[0]).toMatchObject({ excel_bps_enabled: false, prism_browser_enabled: true });
     wrapper.unmount();
   });
 
@@ -1073,6 +1116,18 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings).not.toHaveBeenCalled();
     expect(showError).toHaveBeenLastCalledWith('admin.settings.features.excelBpsImages.invalidCapacity');
     wrapper.unmount();
+  });
+
+  it.each([false, true])("loads and toggles request timezone binding from %s", async (enabled) => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, openai_request_timezone_enabled: enabled });
+    const wrapper = mountView();
+    await flushPromises();
+    const toggle = wrapper.get<HTMLInputElement>("#request-timezone-enabled");
+    expect(toggle.element.checked).toBe(enabled);
+    await toggle.setValue(!enabled);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings.mock.calls[0]?.[0].openai_request_timezone_enabled).toBe(!enabled);
   });
 
   it("submits the Codex ticket harvest toggle", async () => {
@@ -2066,6 +2121,29 @@ describe("admin SettingsView payment visible method controls", () => {
     const payload = updateSettings.mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect(payload.grok_default_text_model).toBe("grok-custom-text");
     expect(payload.grok_cross_client_model_map_enabled).toBe(false);
+  });
+
+  it("loads and saves the Grok video source URL switch", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      grok_video_source_url_enabled: true,
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const sourceURLToggle = wrapper.get(
+      '[data-testid="grok-video-source-url-toggle"]',
+    );
+    expect((sourceURLToggle.element as HTMLInputElement).checked).toBe(true);
+
+    await sourceURLToggle.setValue(false);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    const payload = updateSettings.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(payload.grok_video_source_url_enabled).toBe(false);
   });
 
   it("loads and saves the OpenAI Responses first-token metric mode", async () => {

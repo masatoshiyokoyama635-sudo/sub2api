@@ -136,7 +136,13 @@ func ProvideOpenAIOAuthReauthService(
 	credentialUpdater, _ := accountRepo.(OpenAIOAuthReauthCredentialUpdater)
 	svc := NewOpenAIOAuthReauthService(repo, adminService, credentialUpdater, openaiOAuthService, secretEncryptor, cfg != nil && cfg.Totp.EncryptionKeyConfigured, tokenCacheInvalidator, runtimeBlocker)
 	svc.settings = settings
+	if admin, ok := adminService.(*adminServiceImpl); ok {
+		admin.excelOAuthReauth = svc
+	}
 	svc.configureWorker(cfg, buildInfo)
+	if gateway, ok := runtimeBlocker.(*OpenAIGatewayService); ok {
+		gateway.excelOAuthReauth = svc
+	}
 	return svc
 }
 
@@ -1048,6 +1054,8 @@ var ProviderSet = wire.NewSet(
 	ProvideIdempotencyCleanupService,
 	NewPelicanShowcaseService,
 	NewPelicanGroupTestService,
+	NewControlledExperimentGateway,
+	NewControlledExperimentService,
 	ProvideScheduledTestService,
 	ProvideScheduledTestRunnerService,
 	NewQualityJudgeService,
@@ -1068,6 +1076,7 @@ var ProviderSet = wire.NewSet(
 	ProvideChannelMonitorV2Service,
 	ProvideChannelMonitorV2Aggregator,
 	ProvideChannelMonitorV3Service,
+	NewSupportTicketService,
 	NewChannelMonitorRequestTemplateService,
 	ProvideUserPlatformQuotaUsageFlusher,
 )
@@ -1171,8 +1180,11 @@ func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.
 	return aggregator
 }
 
-func ProvideAccountOpsService(settings SettingRepository, repo AccountOpsRepository, email *EmailService, accounts AccountRepository, groups GroupRepository, cfg *config.Config) *AccountOpsService {
+func ProvideAccountOpsService(settings SettingRepository, repo AccountOpsRepository, email *EmailService, accounts AccountRepository, groups GroupRepository, cfg *config.Config, encryptor SecretEncryptor, usageCache *UsageCache, usageLogs UsageLogRepository, geminiQuota *GeminiQuotaService) *AccountOpsService {
 	svc := NewAccountOpsService(settings, repo, email)
+	svc.SetNotificationDependencies(accounts, encryptor, cfg.Totp.EncryptionKeyConfigured, cfg.Timezone)
+	svc.SetNotificationUsageCache(usageCache)
+	svc.SetNotificationQuotaReaders(usageLogs, geminiQuota)
 	svc.autoAccounts, _ = accounts.(AccountConcurrencyRepository)
 	svc.autoGroups = groups
 	svc.start(cfg.RunsBackgroundJobs())

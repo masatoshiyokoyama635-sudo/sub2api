@@ -24,6 +24,7 @@ import (
 
 // UpdateSettingsRequest 更新设置请求
 type UpdateSettingsRequest struct {
+	ExcelBPSEnabled                 *bool                            `json:"excel_bps_enabled"`
 	OpenAICodexTicketHarvestScope   *service.CodexTicketHarvestScope `json:"openai_codex_ticket_harvest_scope"`
 	OpenAICodexTicketStrictResponse *bool                            `json:"openai_codex_ticket_strict_response"`
 	OpenAICodexTicketFailClosed     *bool                            `json:"openai_codex_ticket_fail_closed"`
@@ -266,6 +267,7 @@ type UpdateSettingsRequest struct {
 	OpenAICodexUserAgent                   *string   `json:"openai_codex_user_agent"`
 	OpenAICodexClientVersion               *string   `json:"openai_codex_client_version"`
 	OpenAICodexVersionAutoSyncEnabled      *bool     `json:"openai_codex_version_auto_sync_enabled"`
+	OpenAIRequestTimezoneEnabled           *bool     `json:"openai_request_timezone_enabled"`
 	OpenAICodexTicketEnabled               *bool     `json:"openai_codex_ticket_enabled"`
 	OpenAICodexTicketHarvestProxyURL       string    `json:"openai_codex_ticket_harvest_proxy_url"`
 	OpenAICodexTicketUseSavedStaticProxy   bool      `json:"openai_codex_ticket_use_saved_static_proxy"`
@@ -359,6 +361,7 @@ type UpdateSettingsRequest struct {
 	GrokDefaultTextModel           *string `json:"grok_default_text_model"`
 	GrokCrossClientModelMapEnabled *bool   `json:"grok_cross_client_model_map_enabled"`
 	GrokDefaultBaseURLMode         *string `json:"grok_default_base_url_mode"`
+	GrokVideoSourceURLEnabled      *bool   `json:"grok_video_source_url_enabled"`
 
 	// Available Channels feature switch (user-facing)
 	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
@@ -377,6 +380,10 @@ type UpdateSettingsRequest struct {
 
 	// Plugin management menu visibility switch; plugin runtime is unaffected.
 	PluginManagementEnabled *bool `json:"plugin_management_enabled"`
+
+	// Support tickets switch + form config
+	SupportTicketEnabled *bool                        `json:"support_ticket_enabled"`
+	SupportTicket        *service.SupportTicketConfig `json:"support_ticket_config"`
 
 	// Affiliate (邀请返利) feature switch
 	AffiliateEnabled *bool `json:"affiliate_enabled"`
@@ -2016,6 +2023,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAICodexVersionAutoSyncEnabled
 		}(),
+		OpenAIRequestTimezoneEnabled: func() bool {
+			if req.OpenAIRequestTimezoneEnabled != nil {
+				return *req.OpenAIRequestTimezoneEnabled
+			}
+			return previousSettings.OpenAIRequestTimezoneEnabled
+		}(),
 		OpenAICodexTicketEnabled: func() bool {
 			if req.OpenAICodexTicketEnabled != nil {
 				return *req.OpenAICodexTicketEnabled
@@ -2195,6 +2208,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AccountQuotaNotifyEmails
 		}(),
+		ExcelBPSEnabled: func() bool {
+			if req.ExcelBPSEnabled != nil {
+				return *req.ExcelBPSEnabled
+			}
+			return previousSettings.ExcelBPSEnabled
+		}(),
 		ChannelMonitorEnabled: func() bool {
 			if req.ChannelMonitorEnabled != nil {
 				return *req.ChannelMonitorEnabled
@@ -2249,6 +2268,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.GrokDefaultBaseURLMode
 		}(),
+		GrokVideoSourceURLEnabled: func() bool {
+			if req.GrokVideoSourceURLEnabled != nil {
+				return *req.GrokVideoSourceURLEnabled
+			}
+			return previousSettings.GrokVideoSourceURLEnabled
+		}(),
 		AvailableChannelsEnabled: func() bool {
 			if req.AvailableChannelsEnabled != nil {
 				return *req.AvailableChannelsEnabled
@@ -2296,6 +2321,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.PluginManagementEnabled
 			}
 			return previousSettings.PluginManagementEnabled
+		}(),
+		SupportTicketEnabled: func() bool {
+			if req.SupportTicketEnabled != nil {
+				return *req.SupportTicketEnabled
+			}
+			return previousSettings.SupportTicketEnabled
+		}(),
+		SupportTicket: func() service.SupportTicketConfig {
+			if req.SupportTicket != nil {
+				return *req.SupportTicket
+			}
+			return previousSettings.SupportTicket
 		}(),
 		AffiliateEnabled: func() bool {
 			if req.AffiliateEnabled != nil {
@@ -2655,6 +2692,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexClientVersion:                               updatedSettings.OpenAICodexClientVersion,
 		OpenAICodexClientVersionSynced:                         updatedSettings.OpenAICodexClientVersionSynced,
 		OpenAICodexVersionAutoSyncEnabled:                      updatedSettings.OpenAICodexVersionAutoSyncEnabled,
+		OpenAIRequestTimezoneEnabled:                           updatedSettings.OpenAIRequestTimezoneEnabled,
 		OpenAICodexTicketEnabled:                               updatedSettings.OpenAICodexTicketEnabled,
 		OpenAICodexTicketHarvestProxyURL:                       service.MaskProxyURL(updatedSettings.OpenAICodexTicketHarvestProxyURL),
 		OpenAICodexTicketStaticProxyURL:                        service.MaskProxyURL(updatedSettings.OpenAICodexTicketStaticProxyURL),
@@ -2738,6 +2776,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentAlipayMobilePrecreateDeepLink:                   updatedPaymentCfg.AlipayMobilePrecreateDeepLink,
 
 		ChannelMonitorEnabled:                updatedSettings.ChannelMonitorEnabled,
+		ExcelBPSEnabled:                      updatedSettings.ExcelBPSEnabled,
 		ChannelMonitorMode:                   updatedSettings.ChannelMonitorMode,
 		ChannelMonitorDefaultIntervalSeconds: updatedSettings.ChannelMonitorDefaultIntervalSeconds,
 		ChannelMonitorHideThroughput:         updatedSettings.ChannelMonitorHideThroughput,
@@ -2747,6 +2786,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		GrokDefaultTextModel:           updatedSettings.GrokDefaultTextModel,
 		GrokCrossClientModelMapEnabled: updatedSettings.GrokCrossClientModelMapEnabled,
 		GrokDefaultBaseURLMode:         updatedSettings.GrokDefaultBaseURLMode,
+		GrokVideoSourceURLEnabled:      updatedSettings.GrokVideoSourceURLEnabled,
 
 		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
 		PelicanShowcaseEnabled:   updatedSettings.PelicanShowcaseEnabled,
@@ -2757,6 +2797,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ModelPlazaRequireAuth:   updatedSettings.ModelPlazaRequireAuth,
 		ModelPlazaDescription:   updatedSettings.ModelPlazaDescription,
 		PluginManagementEnabled: updatedSettings.PluginManagementEnabled,
+
+		SupportTicketEnabled: updatedSettings.SupportTicketEnabled,
+		SupportTicket:        updatedSettings.SupportTicket,
 
 		AffiliateEnabled: updatedSettings.AffiliateEnabled,
 
