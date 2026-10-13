@@ -119,7 +119,7 @@ db=$(docker ps --no-trunc -q --filter "label=com.docker.compose.project=$project
 # Requiring them avoids guessing YAML values or backing up POSTGRES_DB when the
 # actual application uses a different database. Credentials stay in containers.
 db_env=': "${DATABASE_HOST:?explicit DATABASE_HOST is required}" "${DATABASE_PORT:?explicit DATABASE_PORT is required}" "${DATABASE_USER:?explicit DATABASE_USER is required}" "${DATABASE_PASSWORD:?explicit DATABASE_PASSWORD is required}" "${DATABASE_DBNAME:?explicit DATABASE_DBNAME is required}" "${DATABASE_SSLMODE:?explicit DATABASE_SSLMODE is required}"; export PGHOST="$DATABASE_HOST" PGPORT="$DATABASE_PORT" PGUSER="$DATABASE_USER" PGPASSWORD="$DATABASE_PASSWORD" PGDATABASE="$DATABASE_DBNAME" PGSSLMODE="$DATABASE_SSLMODE" PGCONNECT_TIMEOUT=15; '
-db_identity_command="${db_env}"'psql -X -A -t -F "|" -v ON_ERROR_STOP=1 -w -c "SELECT current_database(), inet_server_addr()::text, inet_server_port();"'
+db_identity_command="${db_env}"'psql -X -A -t -F "|" -v ON_ERROR_STOP=1 -w -c "SELECT current_database(), host(inet_server_addr()), inet_server_port();"'
 app_database_identity=$(docker exec "$app" sh -ec "$db_identity_command")
 runtime_key_command='printf "%s\000%s\000" "${JWT_SECRET-}" "${TOTP_ENCRYPTION_KEY-}" | sha256sum'
 runtime_key_fingerprint=$(docker exec "$app" sh -ec "$runtime_key_command")
