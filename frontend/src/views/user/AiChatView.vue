@@ -75,7 +75,7 @@
               </div>
               <div>
                 <label for="chat-model" class="input-label">{{ t('aiChat.model') }}</label>
-                <input id="chat-model" v-model.trim="model" class="input" placeholder="gpt-5.5" />
+                <input id="chat-model" v-model.trim="model" class="input" placeholder="gpt-6.1-sol" />
               </div>
               <button class="btn btn-secondary w-full" :disabled="loading" @click="loadCredentials">
                 <Icon name="refresh" size="sm" class="mr-2" />
@@ -202,7 +202,7 @@ const {
   loadCredentials
 } = useGatewayCredentials()
 
-const model = ref('gpt-5.5')
+const model = ref('gpt-6.1-sol')
 const prompt = ref('')
 const messages = ref<ChatMessage[]>([])
 const submitting = ref(false)

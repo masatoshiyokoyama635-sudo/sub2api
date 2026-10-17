@@ -4520,7 +4520,7 @@
               </h2>
             </div>
             <div class="p-6 space-y-4">
-                <RequestTimezoneSettings v-model="form.openai_request_timezone_enabled" />
+                <RequestTimezoneSettings v-model="form.openai_request_timezone_enabled" v-model:auto="form.openai_request_timezone_auto" />
                 <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-600" data-testid="codex-management-links">
                   <p class="text-sm text-gray-500 dark:text-gray-400">{{ localText('自动打票、模型与票据策略在「打票全流程」管理；采票出口、订阅与节点在「IP 管理」管理。', 'Manage automatic harvesting, models and ticket policies in Harvest Flow; manage exits, subscriptions and nodes in IP Management.') }}</p>
                   <div class="mt-3 flex flex-wrap gap-2">
@@ -6432,6 +6432,46 @@
               </div>
               <label class="toggle">
                 <input v-model="form.usage_show_long_context_badge" type="checkbox" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.cache_rate.label') }}
+                </label>
+                <p class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.cache_rate.description') }}
+                </p>
+              </div>
+              <label class="toggle">
+                <input
+                  v-model="form.usage_show_cache_rate"
+                  data-testid="usage-show-cache-rate"
+                  type="checkbox"
+                  @change="form.usage_show_cache_rate_to_users = form.usage_show_cache_rate && form.usage_show_cache_rate_to_users"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="flex items-center justify-between" :class="form.usage_show_cache_rate ? '' : 'opacity-60'">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.cache_rate_to_users.label') }}
+                </label>
+                <p class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.cache_rate_to_users.description') }}
+                </p>
+              </div>
+              <label class="toggle">
+                <input
+                  v-model="form.usage_show_cache_rate_to_users"
+                  data-testid="usage-show-cache-rate-to-users"
+                  type="checkbox"
+                  :disabled="!form.usage_show_cache_rate"
+                />
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -10379,7 +10419,8 @@ const form = reactive<SettingsForm>({
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
   openai_codex_client_version_synced: "",
   openai_codex_version_auto_sync_enabled: true,
-  openai_request_timezone_enabled: false,
+  openai_request_timezone_enabled: true,
+  openai_request_timezone_auto: true,
   claude_code_client_version: "",
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
   claude_code_client_version_synced: "",
@@ -10424,6 +10465,8 @@ const form = reactive<SettingsForm>({
   allow_user_view_error_requests: false,
   // 使用详情中长上下文计费 x2 徽标展示（默认开启）
   usage_show_long_context_badge: true,
+  usage_show_cache_rate: true,
+  usage_show_cache_rate_to_users: false,
   request_capture_enabled: false,
   request_capture_quota_mib: 1024,
   request_capture_retention_days: 7,
@@ -12108,6 +12151,7 @@ async function saveSettings() {
       openai_codex_version_auto_sync_enabled:
         form.openai_codex_version_auto_sync_enabled,
       openai_request_timezone_enabled: form.openai_request_timezone_enabled,
+      openai_request_timezone_auto: form.openai_request_timezone_auto,
       claude_code_client_version: form.claude_code_client_version?.trim() || "",
       claude_code_version_auto_sync_enabled:
         form.claude_code_version_auto_sync_enabled,
@@ -12240,6 +12284,8 @@ async function saveSettings() {
       affiliate_enabled: form.affiliate_enabled,
       allow_user_view_error_requests: form.allow_user_view_error_requests,
       usage_show_long_context_badge: form.usage_show_long_context_badge,
+      usage_show_cache_rate: form.usage_show_cache_rate,
+      usage_show_cache_rate_to_users: form.usage_show_cache_rate_to_users,
       request_capture_enabled: form.request_capture_enabled,
       request_capture_quota_mib: form.request_capture_quota_mib,
       request_capture_retention_days: form.request_capture_retention_days,

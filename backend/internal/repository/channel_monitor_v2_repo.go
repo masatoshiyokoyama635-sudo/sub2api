@@ -219,7 +219,7 @@ func (r *channelMonitorV2Repository) GetDimensions(ctx context.Context, filter s
 		Models:    []service.ChannelMonitorV2Dimension{},
 	}
 	for value, count := range platformCounts {
-		result.Platforms = append(result.Platforms, service.ChannelMonitorV2Dimension{Value: value, Label: value, RequestCount: count})
+		result.Platforms = append(result.Platforms, service.ChannelMonitorV2Dimension{Value: value, Label: service.ChannelMonitorV2PlatformLabel(value), RequestCount: count})
 	}
 	for value, meta := range modelCounts {
 		result.Models = append(result.Models, service.ChannelMonitorV2Dimension{Value: value, Label: channelMonitorV2ModelLabel(value), Platform: meta.platform, RequestCount: meta.count})
@@ -227,7 +227,9 @@ func (r *channelMonitorV2Repository) GetDimensions(ctx context.Context, filter s
 	for id, value := range groupCounts {
 		result.Groups = append(result.Groups, service.ChannelMonitorV2GroupDimension{ID: id, Name: value.name, Platform: value.platform, RequestCount: value.count})
 	}
-	sort.Slice(result.Platforms, func(i, j int) bool { return result.Platforms[i].RequestCount > result.Platforms[j].RequestCount })
+	sort.Slice(result.Platforms, func(i, j int) bool {
+		return channelMonitorV2PlatformLess(cfg, result.Platforms[i].Value, result.Platforms[j].Value)
+	})
 	sort.Slice(result.Models, func(i, j int) bool { return result.Models[i].RequestCount > result.Models[j].RequestCount })
 	sort.Slice(result.Groups, func(i, j int) bool { return result.Groups[i].RequestCount > result.Groups[j].RequestCount })
 	return result, rows.Err()
@@ -366,6 +368,8 @@ func (r *channelMonitorV2Repository) GetModels(ctx context.Context, filter servi
 		applyIgnoredErrors(&metrics, ignoredByPM[key])
 		items = append(items, service.ChannelMonitorV2ModelRow{Platform: parts[0], Model: parts[1], Metrics: metrics, Health: service.ChannelMonitorV2HealthForWithThresholds(metrics, cfg.HealthThresholds)})
 	}
+	// Model ranking stays by request volume. Platform display order applies to
+	// filters, cards, and the matrix, not this table.
 	sort.Slice(items, func(i, j int) bool { return items[i].Metrics.RequestCount > items[j].Metrics.RequestCount })
 	return &service.ChannelMonitorV2List[service.ChannelMonitorV2ModelRow]{Coverage: *coverage, Items: items}, nil
 }
@@ -502,7 +506,7 @@ func (r *channelMonitorV2Repository) GetMatrix(ctx context.Context, filter servi
 	sort.Slice(result.Items, func(i, j int) bool {
 		a, b := result.Items[i], result.Items[j]
 		if a.Platform != b.Platform {
-			return a.Platform < b.Platform
+			return channelMonitorV2PlatformLess(cfg, a.Platform, b.Platform)
 		}
 		if a.GroupName != b.GroupName {
 			return a.GroupName < b.GroupName
@@ -512,6 +516,11 @@ func (r *channelMonitorV2Repository) GetMatrix(ctx context.Context, filter servi
 		}
 		return a.Model < b.Model
 	})
+	if filter.IncludeRecentSamples && groupBy == service.ChannelMonitorV2GroupByPlatformGroup {
+		if err := r.attachRecentSampleBuckets(ctx, result, filter, cfg, admin); err != nil {
+			return nil, err
+		}
+	}
 	return result, nil
 }
 
@@ -1202,7 +1211,20 @@ func channelMonitorV2Where(filter service.ChannelMonitorV2Filter, cfg service.Ch
 		args = append(args, pq.Array(groups))
 		conditions = append(conditions, fmt.Sprintf("%s.group_id = ANY($%d)", alias, len(args)))
 	}
+	// Historical rollups keep a deleted group's id and name. The settings page
+	// only lists live groups, so status queries must drop soft-deleted ones too.
+	// group_id 0 is a platform-level row and has no groups record.
+	conditions = append(conditions, fmt.Sprintf("(%s.group_id <= 0 OR %s.group_id IN (SELECT id FROM groups WHERE deleted_at IS NULL))", alias, alias))
 	return "WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func channelMonitorV2PlatformLess(cfg service.ChannelMonitorV2Config, a, b string) bool {
+	ia := service.ChannelMonitorV2PlatformIndex(cfg, a)
+	ib := service.ChannelMonitorV2PlatformIndex(cfg, b)
+	if ia != ib {
+		return ia < ib
+	}
+	return a < b
 }
 
 func channelMonitorV2EnabledPlatforms(cfg service.ChannelMonitorV2Config) []string {

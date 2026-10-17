@@ -269,6 +269,7 @@ type UpdateSettingsRequest struct {
 	OpenAICodexClientVersion               *string   `json:"openai_codex_client_version"`
 	OpenAICodexVersionAutoSyncEnabled      *bool     `json:"openai_codex_version_auto_sync_enabled"`
 	OpenAIRequestTimezoneEnabled           *bool     `json:"openai_request_timezone_enabled"`
+	OpenAIRequestTimezoneAuto              *bool     `json:"openai_request_timezone_auto"`
 	OpenAICodexTicketEnabled               *bool     `json:"openai_codex_ticket_enabled"`
 	OpenAICodexTicketHarvestProxyURL       string    `json:"openai_codex_ticket_harvest_proxy_url"`
 	OpenAICodexTicketUseSavedStaticProxy   bool      `json:"openai_codex_ticket_use_saved_static_proxy"`
@@ -418,6 +419,8 @@ type UpdateSettingsRequest struct {
 
 	AllowUserViewErrorRequests    *bool   `json:"allow_user_view_error_requests"`
 	UsageShowLongContextBadge     *bool   `json:"usage_show_long_context_badge"`
+	UsageShowCacheRate            *bool   `json:"usage_show_cache_rate"`
+	UsageShowCacheRateToUsers     *bool   `json:"usage_show_cache_rate_to_users"`
 	RequestCaptureEnabled         *bool   `json:"request_capture_enabled"`
 	RequestCaptureQuotaMiB        *int64  `json:"request_capture_quota_mib"`
 	RequestCaptureRetentionDays   *int    `json:"request_capture_retention_days"`
@@ -1914,6 +1917,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.UsageShowLongContextBadge
 		}(),
+		UsageShowCacheRate: func() bool {
+			if req.UsageShowCacheRate != nil {
+				return *req.UsageShowCacheRate
+			}
+			return previousSettings.UsageShowCacheRate
+		}(),
+		UsageShowCacheRateToUsers: func() bool {
+			if req.UsageShowCacheRateToUsers != nil {
+				return *req.UsageShowCacheRateToUsers
+			}
+			return previousSettings.UsageShowCacheRateToUsers
+		}(),
 		OpsMonitoringEnabled: func() bool {
 			if req.OpsMonitoringEnabled != nil {
 				return *req.OpsMonitoringEnabled
@@ -2029,6 +2044,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.OpenAIRequestTimezoneEnabled
 			}
 			return previousSettings.OpenAIRequestTimezoneEnabled
+		}(),
+		OpenAIRequestTimezoneAuto: func() bool {
+			if req.OpenAIRequestTimezoneAuto != nil {
+				return *req.OpenAIRequestTimezoneAuto
+			}
+			return previousSettings.OpenAIRequestTimezoneAuto
 		}(),
 		OpenAICodexTicketEnabled: func() bool {
 			if req.OpenAICodexTicketEnabled != nil {
@@ -2700,6 +2721,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexClientVersionSynced:                         updatedSettings.OpenAICodexClientVersionSynced,
 		OpenAICodexVersionAutoSyncEnabled:                      updatedSettings.OpenAICodexVersionAutoSyncEnabled,
 		OpenAIRequestTimezoneEnabled:                           updatedSettings.OpenAIRequestTimezoneEnabled,
+		OpenAIRequestTimezoneAuto:                              updatedSettings.OpenAIRequestTimezoneAuto,
 		OpenAICodexTicketEnabled:                               updatedSettings.OpenAICodexTicketEnabled,
 		OpenAICodexTicketHarvestProxyURL:                       service.MaskProxyURL(updatedSettings.OpenAICodexTicketHarvestProxyURL),
 		OpenAICodexTicketStaticProxyURL:                        service.MaskProxyURL(updatedSettings.OpenAICodexTicketStaticProxyURL),
@@ -2818,6 +2840,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AccountSchedulingThresholds:       updatedSettings.AccountSchedulingThresholds,
 		AllowUserViewErrorRequests:        updatedSettings.AllowUserViewErrorRequests,
 		UsageShowLongContextBadge:         updatedSettings.UsageShowLongContextBadge,
+		UsageShowCacheRate:                updatedSettings.UsageShowCacheRate,
+		UsageShowCacheRateToUsers:         updatedSettings.UsageShowCacheRateToUsers,
 		RequestCaptureEnabled:             updatedSettings.RequestCaptureEnabled,
 		RequestCaptureQuotaMiB:            updatedSettings.RequestCaptureQuotaMiB,
 		RequestCaptureRetentionDays:       updatedSettings.RequestCaptureRetentionDays,

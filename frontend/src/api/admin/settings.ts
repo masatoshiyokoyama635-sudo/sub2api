@@ -651,6 +651,7 @@ export interface SystemSettings {
   openai_codex_client_version_synced: string;
   openai_codex_version_auto_sync_enabled: boolean;
   openai_request_timezone_enabled: boolean;
+  openai_request_timezone_auto: boolean;
   openai_codex_ticket_enabled: boolean;
   openai_codex_ticket_fail_closed: boolean;
   openai_codex_ticket_strategy?: 'fixed' | 'standby';
@@ -784,6 +785,8 @@ export interface SystemSettings {
   // Allow user view error requests
   allow_user_view_error_requests: boolean;
   usage_show_long_context_badge: boolean;
+  usage_show_cache_rate: boolean;
+  usage_show_cache_rate_to_users: boolean;
   request_capture_enabled: boolean;
   request_capture_quota_mib: number;
   request_capture_retention_days: number;
@@ -1021,6 +1024,7 @@ export interface UpdateSettingsRequest {
   openai_codex_client_version?: string;
   openai_codex_version_auto_sync_enabled?: boolean;
   openai_request_timezone_enabled?: boolean;
+  openai_request_timezone_auto?: boolean;
   openai_codex_ticket_enabled?: boolean;
   openai_codex_ticket_fail_closed?: boolean;
   openai_codex_ticket_strategy?: 'fixed' | 'standby';
@@ -1135,6 +1139,8 @@ export interface UpdateSettingsRequest {
 
   allow_user_view_error_requests?: boolean;
   usage_show_long_context_badge?: boolean;
+  usage_show_cache_rate?: boolean;
+  usage_show_cache_rate_to_users?: boolean;
   request_capture_enabled?: boolean;
   request_capture_quota_mib?: number;
   request_capture_retention_days?: number;
