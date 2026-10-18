@@ -34,6 +34,7 @@ backend/.gocache/
 # ===================
 node_modules/
 frontend/node_modules/
+.pnpm-store/
 frontend/dist/
 *.local
 *.tsbuildinfo
@@ -200,3 +201,6 @@ issues/
 /docs/screenshots/**/*.webp
 /docs/screenshots/**/*.avif
 /docs/screenshots/**/*.svg
+
+# Local macOS re-auth Worker runtime (ephemeral, never commit)
+tools/local-worker/
