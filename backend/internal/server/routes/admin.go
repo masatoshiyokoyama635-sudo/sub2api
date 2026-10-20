@@ -413,6 +413,9 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/:id", h.Admin.Account.GetByID)
 		if h.Admin.OpenAIOAuthReauth != nil {
 			accounts.GET("/:id/openai-reauth", h.Admin.OpenAIOAuthReauth.GetStatus)
+			accounts.GET("/:id/siwc", h.Admin.OpenAIOAuthReauth.SIWCStatus)
+			accounts.POST("/:id/siwc/authorize", h.Admin.OpenAIOAuthReauth.BeginSIWC)
+			accounts.POST("/:id/siwc/callback", h.Admin.OpenAIOAuthReauth.CompleteSIWC)
 			accounts.GET("/:id/totp-rotation", h.Admin.OpenAIOAuthReauth.RotationStatus)
 			accounts.POST("/:id/totp-rotation", h.Admin.OpenAIOAuthReauth.RotateTOTP)
 			accounts.POST("/:id/totp-rotation/verify", h.Admin.OpenAIOAuthReauth.RetryTOTP)
@@ -446,6 +449,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.DELETE("/:id", h.Admin.Account.Delete)
 		accounts.POST("/:id/test", h.Admin.Account.Test)
 		accounts.POST("/:id/pelican-test", h.Admin.Account.PelicanTest)
+		accounts.POST("/:id/modeltrace-test", h.Admin.Account.ModelTraceTest)
 		accounts.POST("/:id/state-probe", h.Admin.Account.StateProbe)
 		accounts.POST("/:id/recover-state", h.Admin.Account.RecoverState)
 		accounts.POST("/:id/refresh", h.Admin.Account.Refresh)
@@ -661,6 +665,13 @@ func registerPromoCodeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	adminSettings := admin.Group("/settings")
 	{
+		adminSettings.GET("/ip-risk", h.Admin.Setting.GetIPRisk)
+		adminSettings.PUT("/ip-risk", h.Admin.Setting.SaveIPRisk)
+		adminSettings.GET("/ip-risk/events", h.Admin.Setting.GetIPRiskEvents)
+		adminSettings.DELETE("/ip-risk/events", h.Admin.Setting.ClearIPRiskEvents)
+		adminSettings.GET("/ip-risk/bans", h.Admin.Setting.GetIPRiskBans)
+		adminSettings.POST("/ip-risk/unban", h.Admin.Setting.UnbanIPRisk)
+		adminSettings.POST("/ip-risk/check", h.Admin.Setting.CheckIPRisk)
 		adminSettings.GET("/astra-routing", h.Admin.Setting.GetAstraRouting)
 		adminSettings.PUT("/astra-routing", h.Admin.Setting.UpdateAstraRouting)
 		adminSettings.GET("", h.Admin.Setting.GetSettings)
