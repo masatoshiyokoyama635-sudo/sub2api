@@ -164,6 +164,12 @@ func RegisterAdminRoutes(
 }
 
 func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	penalties := admin.Group("/security-penalties")
+	penalties.GET("/config", h.Admin.PromptAudit.GetPenaltyConfig)
+	penalties.PUT("/config", h.Admin.PromptAudit.SavePenaltyConfig)
+	penalties.GET("/events", h.Admin.PromptAudit.AdminPenaltyEvents)
+	penalties.GET("/events/:id", h.Admin.PromptAudit.AdminPenaltyEvent)
+	penalties.POST("/users/:user_id/release", h.Admin.PromptAudit.ReleasePenalty)
 	promptAudit := admin.Group("/prompt-audit")
 	{
 		promptAudit.GET("/config", h.Admin.PromptAudit.GetConfig)
@@ -468,6 +474,10 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/:id/temp-unschedulable", h.Admin.Account.GetTempUnschedulable)
 		accounts.DELETE("/:id/temp-unschedulable", h.Admin.Account.ClearTempUnschedulable)
 		accounts.POST("/:id/schedulable", h.Admin.Account.SetSchedulable)
+		accounts.GET("/:id/schedulable-timers", h.Admin.Account.ListSchedulableTimers)
+		accounts.POST("/:id/schedulable-timers/preview", h.Admin.Account.PreviewSchedulableTimer)
+		accounts.POST("/:id/schedulable-timers", h.Admin.Account.SaveSchedulableTimer)
+		accounts.DELETE("/:id/schedulable-timers/:action", h.Admin.Account.CancelSchedulableTimer)
 		accounts.POST("/models/sync-upstream-preview", h.Admin.Account.SyncUpstreamModelsPreview)
 		accounts.GET("/:id/models", h.Admin.Account.GetAvailableModels)
 		accounts.GET("/:id/models/reasoning", h.Admin.Account.GetModelReasoning)
@@ -665,11 +675,14 @@ func registerPromoCodeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	adminSettings := admin.Group("/settings")
 	{
+		registerIPAuditRoutes(adminSettings, h.Admin.Setting)
 		adminSettings.GET("/ip-risk", h.Admin.Setting.GetIPRisk)
 		adminSettings.PUT("/ip-risk", h.Admin.Setting.SaveIPRisk)
 		adminSettings.GET("/ip-risk/events", h.Admin.Setting.GetIPRiskEvents)
 		adminSettings.DELETE("/ip-risk/events", h.Admin.Setting.ClearIPRiskEvents)
 		adminSettings.GET("/ip-risk/bans", h.Admin.Setting.GetIPRiskBans)
+		adminSettings.GET("/ip-risk/anonymous-bans", h.Admin.Setting.GetAnonymousAPIBans)
+		adminSettings.POST("/ip-risk/anonymous-unban", h.Admin.Setting.UnbanAnonymousAPI)
 		adminSettings.POST("/ip-risk/unban", h.Admin.Setting.UnbanIPRisk)
 		adminSettings.POST("/ip-risk/check", h.Admin.Setting.CheckIPRisk)
 		adminSettings.GET("/astra-routing", h.Admin.Setting.GetAstraRouting)
@@ -818,6 +831,8 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		usage.GET("", h.Admin.Usage.List)
 		usage.GET("/stats", h.Admin.Usage.Stats)
+		usage.GET("/connections", h.Admin.Usage.Connections)
+		usage.POST("/connections/edge", h.Admin.Usage.ImportEdgeConnections)
 		usage.GET("/:id/timing", h.Admin.Usage.Timing)
 		usage.GET("/search-users", h.Admin.Usage.SearchUsers)
 		usage.GET("/search-api-keys", h.Admin.Usage.SearchAPIKeys)
