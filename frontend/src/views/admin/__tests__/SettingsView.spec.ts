@@ -754,6 +754,24 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockResolvedValue(undefined);
   });
 
+  it("keeps the IP risk form on IP Audit without loading or saving it from Settings", async () => {
+    settingsRoute.query = { tab: 'security' };
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: {} });
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: {} });
+    try {
+      const wrapper = mountView();
+      await flushPromises();
+      expect(wrapper.find('[data-testid="ip-risk-settings"]').exists()).toBe(false);
+      expect(wrapper.find('#settings-section-registration').exists()).toBe(true);
+      expect(get.mock.calls.some(([url]) => String(url).startsWith('/admin/settings/ip-risk'))).toBe(false);
+      expect(put).not.toHaveBeenCalled();
+      expect(updateSettings).not.toHaveBeenCalled();
+    } finally {
+      get.mockRestore();
+      put.mockRestore();
+    }
+  });
+
   it("opens the risk settings from a deep link after loading without changing switches", async () => {
     settingsRoute.query = { tab: 'features' };
     settingsRoute.hash = '#settings-section-features-risk-control';
