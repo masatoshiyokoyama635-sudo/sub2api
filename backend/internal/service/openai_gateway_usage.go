@@ -704,7 +704,7 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 				modelLongContextExempt,
 			)
 			if err == nil {
-				applyModelBillingMultiplier(cost, s.settingService.modelBillingConfigForUsage(ctx), candidate)
+				applyModelBillingMultiplier(cost, s.settingService.modelBillingConfigForUsage(ctx), candidate, apiKey.GroupID)
 				tokenCost = cost
 				break
 			}
