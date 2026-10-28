@@ -22,7 +22,7 @@ func TestExcelBPSGPT61SolAttemptBillingCompatibility(t *testing.T) {
 				{"sol_sent_to_old_model", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-sol", false},
 				{"billing_and_response_labels_are_not_authoritative", "gpt-6-sol", "", "gpt-6.1-sol", false},
 			} {
-				for _, attempts := range [][]int{{140000, 140000}, {272000, 272001}} {
+				for _, attempts := range [][]int{{140000, 140000}, {272000, 272001}, {272001, 227999}, {272001, 228000}} {
 					name := fmt.Sprintf("resolver=%t/%s/%s/%v", resolved, accountType, model.name, attempts)
 					t.Run(name, func(t *testing.T) {
 						svc, logs, users := newBPSSolCompatibilityService(t)
@@ -37,9 +37,17 @@ func TestExcelBPSGPT61SolAttemptBillingCompatibility(t *testing.T) {
 						result.BillingModel = "gpt-6.1-sol"
 						wantInput, wantOutput, wantWrite, wantRead := 0.0, 0.0, 0.0, 0.0
 						wantLong := false
+						// v2.17.7：官方长上下文阶梯只豁免 OpenAI 订阅凭据（OAuth / Setup Token），
+						// 且以整条结果计入的输入 token 不超过 500,000 为前提；API Key 仍按 272,000
+						// 价卡门槛。豁免是结果级判断，附加费仍按每个 attempt 自身的 token 判断。
+						totalInput := 0
+						for _, n := range attempts {
+							totalInput += n
+						}
+						exempt := model.exempt && accountType != AccountTypeAPIKey && totalInput <= 500_000
 						for _, n := range attempts {
 							inputFactor, outputFactor := 1.0, 1.0
-							if !model.exempt && n > 272000 {
+							if !exempt && n > 272000 {
 								inputFactor, outputFactor, wantLong = 2, 1.5, true
 							}
 							wantInput += float64(n-100000) * 2e-6 * inputFactor
