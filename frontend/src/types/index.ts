@@ -103,6 +103,7 @@ export interface User {
 }
 
 export interface AdminUser extends User {
+  auto_credit_outstanding?: string
   // 管理员备注（普通用户接口不返回）
   notes: string
   last_used_at?: string | null
@@ -798,6 +799,8 @@ export interface ApiKey {
   reset_1d_at: string | null
   reset_7d_at: string | null
   group_ids?: number[]
+  model_mapping?: Record<string, string>
+  reasoning_effort?: string
 }
 
 export interface ApiKeyConcurrencySnapshot {

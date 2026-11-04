@@ -1,6 +1,11 @@
 .PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
+	src/components/settings/BalanceForecastSettings.spec.ts \
+	src/components/admin/user/__tests__/UserAutoCreditModal.spec.ts \
+	src/components/common/__tests__/VipAutoCreditNotice.spec.ts \
+	src/components/admin/user/__tests__/ApiKeyModelPolicyDialog.spec.ts \
+	src/components/admin/user/__tests__/ApiKeyModelPolicyNotices.spec.ts \
 	src/components/account/__tests__/OpenAIAuthConnections.spec.ts \
 	src/views/admin/__tests__/RiskControlView.spec.ts \
 	src/i18n/__tests__/riskControlLocales.spec.ts \
@@ -44,6 +49,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/admin/__tests__/ChannelMonitorView.modeSwitch.spec.ts \
 	src/views/admin/__tests__/AccountQualityView.spec.ts \
 	src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts \
+	src/views/admin/__tests__/AccountsView.declarationRefresh.spec.ts \
 	src/utils/__tests__/qualityRulePatch.spec.ts \
 	src/components/admin/operations/__tests__/QualityOwnershipReview.spec.ts \
 	src/utils/__tests__/accountAutoBPS.spec.ts \
