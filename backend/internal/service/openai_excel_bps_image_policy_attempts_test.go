@@ -40,7 +40,7 @@ func TestExcelBPSImagePolicyUsageAttempts(t *testing.T) {
 					require.NoError(t, err)
 					body, err = sjson.SetBytes(body, "tools", []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom", "name": "exec"}}}})
 					require.NoError(t, err)
-					compactUsage := OpenAIUsage{InputTokens: 7, OutputTokens: 3, CacheCreationInputTokens: 2, CacheReadInputTokens: 1}
+					compactUsage := OpenAIUsage{CacheReadKnown: true, InputTokens: 7, OutputTokens: 3, CacheCreationInputTokens: 2, CacheReadInputTokens: 1}
 					nativeUsage := OpenAIUsage{InputTokens: 10, OutputTokens: 2}
 					compactKind := "response.completed"
 					if scenario == "compact_failed" {

@@ -1349,6 +1349,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result), openAIForwardSucceededForScheduling(result), nil)
 		}
 
+		h.gatewayService.ObserveGroupAntiDistillationUsage(c.Request.Context(), apiKey, account, result, time.Time{}, sessionHashBody)
+
 		// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
 		submitResponsesUsage(result)
 		reqLog.Debug("openai.request_completed",
@@ -1848,6 +1850,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if h.handleAnthropicAPIKeyLongContextError(c, err, streamStarted) {
+				return
+			}
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_messages.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
@@ -1953,6 +1958,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, result), true, nil)
 		}
 
+		h.gatewayService.ObserveGroupAntiDistillationUsage(c.Request.Context(), apiKey, account, result, time.Time{}, body)
 		submitMessagesUsage(result)
 		reqLog.Debug("openai_messages.request_completed",
 			zap.Int64("account_id", account.ID),
@@ -2962,6 +2968,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
 	}
+	if err := h.gatewayService.CheckAPIKeyLongContext(c.Request.Context(), apiKey, firstMessage, reqModel, service.MapAPIKeyModel(apiKey, reqModel)); err != nil {
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, apiKeyLongContextWSCloseReason(err))
+		return
+	}
 	// Start the connection's single frame reader after the temporary
 	// first-message reader has joined and before the first key queue wait, so a
 	// client that leaves during admission is observed instead of blocking the
@@ -3098,6 +3109,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMappingWS, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, wsRouteModel)
 	wsForwardModel := openAIChannelForwardModel(channelMappingWS, wsRouteModel)
+	if err := h.gatewayService.CheckAPIKeyLongContext(ctx, apiKey, firstMessage, reqModel, wsRouteModel, wsForwardModel); err != nil {
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, apiKeyLongContextWSCloseReason(err))
+		return
+	}
 
 	var currentUserRelease func()
 	var currentAccountRelease func()
@@ -3523,6 +3539,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if turn <= 1 {
 					return nil
 				}
+				if err := h.gatewayService.CheckAPIKeyLongContext(c.Request.Context(), apiKey, raw, effectiveModel, service.MapAPIKeyModel(apiKey, effectiveModel)); err != nil {
+					service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, apiKeyLongContextWSCloseReason(err), err)
+				}
 				// One bounded fresh auth BEFORE the parser applies
 				// permission-dependent rejection/transformation. The current
 				// frame's permissions reach the revalidator here and refresh
@@ -3806,6 +3826,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				turnRecordPricingAt := turnPricing.currentOr(turnStart)
 				turnBillingAPIKey := turnBillingAPIKeys.forTurn(turn, apiKey)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+				if turnErr == nil && !cyberBlocked {
+					h.gatewayService.ObserveGroupAntiDistillationUsage(ctx, turnBillingAPIKey, account, result, turnStart, cyberBlockBody)
+				}
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 						Result:             result,

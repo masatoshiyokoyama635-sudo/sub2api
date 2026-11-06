@@ -67,6 +67,7 @@ type APIKeyUpdateFields struct {
 	// Administrator-only policy fields have independent masks to preserve concurrent edits.
 	ModelMapping     bool
 	ReasoningEffort  bool
+	AllowLongContext bool
 	ConcurrencyLimit bool
 	Name             bool
 	Status           bool
@@ -296,6 +297,7 @@ type RateLimitCacheInvalidator interface {
 }
 
 type APIKeyService struct {
+	groupAntiDistillation     *GroupAntiDistillationService
 	autoCredit                AutoCreditRepository
 	autoCreditBilling         *BillingCacheService
 	balanceRejectionNotifier  BalanceRejectionNotifier
@@ -594,6 +596,7 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		GroupIDs:         groupIDs,
 		GroupID:          req.GroupID,
 		Status:           StatusActive,
+		AllowLongContext: true,
 		IPWhitelist:      req.IPWhitelist,
 		IPBlacklist:      req.IPBlacklist,
 		Quota:            req.Quota,

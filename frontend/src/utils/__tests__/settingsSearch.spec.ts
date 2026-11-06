@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parse } from 'vue/compiler-sfc'
 import source from '@/views/admin/SettingsView.vue?raw'
+import smartOpsSource from '@/components/settings/SmartOpsSidebarSettings.vue?raw'
 import zh from '@/i18n/locales/zh'
 import en from '@/i18n/locales/en'
 import { buildFeatureSearchEntries, searchFeatures } from '../featureSearch'
@@ -44,7 +45,12 @@ describe('settings feature search', () => {
       }
       for (const child of node.children) visit(child, tab)
     }
-    for (const child of root.children) visit(child)
+    // v2.19.6 把「智能运维侧栏」搬进子组件，锚点仍在 DOM 里，解析源也要覆盖子组件。
+    const roots: Array<{ root: Node, tab: string }> = [
+      { root, tab: '' },
+      { root: parse(smartOpsSource).descriptor.template!.ast! as unknown as Node, tab: 'features' },
+    ]
+    for (const entry of roots) for (const child of entry.root.children) visit(child, entry.tab)
     expect(anchors.size).toBe(SETTINGS_SECTIONS.length)
     for (const section of SETTINGS_SECTIONS) expect(anchors.get(`settings-section-${section.id}`), section.id).toBe(section.tab)
   })
