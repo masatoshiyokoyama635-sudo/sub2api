@@ -5,6 +5,7 @@ import IPRiskSettings from '@/features/ip-risk/IPRiskSettings.vue'
 import type { IPRiskSnapshot } from '@/features/ip-risk/api'
 import { flushPromises, mount } from '@vue/test-utils'
 import { RouterView } from 'vue-router'
+import { createPinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
@@ -55,7 +56,7 @@ async function open(url: string, locale: 'en' | 'zh' = 'en') {
   i18n.global.locale.value = locale
   await router.push(url)
   await router.isReady()
-  wrapper = mount(RouterView, { global: { plugins: [router, createI18n({ legacy: false, locale, messages: { en, zh } })], stubs: { RuntimeOverview: true, EndpointPool: true, PolicyPanel: true, PenaltyPolicyPanel: true, EventWorkspace: true, EventDetailDialog: true, FilterDeleteDialog: true, ConfirmDialog: true } } })
+  wrapper = mount(RouterView, { global: { plugins: [createPinia(), router, createI18n({ legacy: false, locale, messages: { en, zh } })], stubs: { RuntimeOverview: true, EndpointPool: true, PolicyPanel: true, PenaltyPolicyPanel: true, EventWorkspace: true, EventDetailDialog: true, FilterDeleteDialog: true, ConfirmDialog: true } } })
   await flushPromises()
   return wrapper
 }
