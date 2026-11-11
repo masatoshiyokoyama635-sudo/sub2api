@@ -484,6 +484,10 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		s.metrics.recordSelect(decision)
 	}()
 
+	if err := s.checkOpenAIAgentRecoveryCooldown(ctx, req, recovery); err != nil {
+		return nil, decision, err
+	}
+
 	if priorityHardStopApplies(s.service.prioritySchedulingRuntimeConfig(), req) {
 		// Failover within this request cannot refill an already opened fallback.
 		if prior, ok := ctx.Value(prioritySelectionRequestKey{}).(OpenAIAccountScheduleRequest); ok && prior.priorityLatencyPool != nil && prior.priorityLatencyPool.fallbackActive() && prior.priorityLatencyPool.key == priorityHistoryKey(req, s.service.prioritySchedulingRuntimeConfig()) {
@@ -2909,17 +2913,21 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		if preserveGuardianParentBinding {
 			legacySessionHash = ""
 		}
+		acceptLegacyAccount := func(account *Account) bool {
+			return s.isOpenAIAccountTransportCompatible(account, requiredTransport, requestedModel) &&
+				accountSupportsOpenAICapabilitiesForRequest(ctx, account, requestedModel, requiredCapability, requiredImageCapability)
+		}
 		if requiredTransport == OpenAIUpstreamTransportAny || requiredTransport == OpenAIUpstreamTransportHTTPSSE {
 			effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
 			for {
-				selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, platform, legacySessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
+				selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, platform, legacySessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost, acceptLegacyAccount)
 				if err != nil {
 					return nil, decision, err
 				}
 				if selection == nil || selection.Account == nil {
 					return selection, decision, nil
 				}
-				if accountSupportsOpenAICapabilitiesForRequest(ctx, selection.Account, requestedModel, requiredCapability, requiredImageCapability) {
+				if acceptLegacyAccount(selection.Account) {
 					applyLegacySelectionDecision(&decision, selection)
 					return selection, decision, nil
 				}
@@ -2938,15 +2946,14 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 
 		effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
 		for {
-			selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, platform, legacySessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
+			selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, platform, legacySessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost, acceptLegacyAccount)
 			if err != nil {
 				return nil, decision, err
 			}
 			if selection == nil || selection.Account == nil {
 				return selection, decision, nil
 			}
-			if s.isOpenAIAccountTransportCompatible(selection.Account, requiredTransport, requestedModel) &&
-				accountSupportsOpenAICapabilitiesForRequest(ctx, selection.Account, requestedModel, requiredCapability, requiredImageCapability) {
+			if acceptLegacyAccount(selection.Account) {
 				applyLegacySelectionDecision(&decision, selection)
 				return selection, decision, nil
 			}
@@ -3005,11 +3012,11 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	})
 }
 
-func accountSupportsOpenAICapabilities(account *Account, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability) bool {
+func accountSupportsOpenAICapabilities(ctx context.Context, account *Account, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability) bool {
 	if account == nil {
 		return false
 	}
-	return account.SupportsOpenAIEndpointCapability(requiredCapability) &&
+	return account.supportsOpenAIEndpointCapabilityForRequest(ctx, requiredCapability) &&
 		account.SupportsOpenAIImageCapability(requiredImageCapability)
 }
 
@@ -3017,13 +3024,16 @@ func accountSupportsOpenAICapabilitiesForRequest(ctx context.Context, account *A
 	if openAIImageRequestRejection(ctx, account, requestedModel) != "" {
 		return false
 	}
-	if account != nil && requiredImageCapability == "" && account.IsExcelBPSEnabledForModel(requestedModel) {
+	// A managed parent is routed by its selected connection; legacy BPS
+	// switches left on it are replaced by prepareAuthConnection and must not
+	// admit an endpoint that connection cannot serve.
+	if account != nil && !account.HasManagedOpenAIConnections() && requiredImageCapability == "" && account.IsExcelBPSEnabledForModel(requestedModel) {
 		switch requiredCapability {
 		case OpenAIEndpointCapabilityChatCompletions, OpenAIEndpointCapabilityResponses, OpenAIEndpointCapabilityResponsesCompact:
 			return true
 		}
 	}
-	return accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability)
+	return accountSupportsOpenAICapabilities(ctx, account, requiredCapability, requiredImageCapability)
 }
 
 func cloneExcludedAccountIDs(excludedIDs map[int64]struct{}) map[int64]struct{} {
