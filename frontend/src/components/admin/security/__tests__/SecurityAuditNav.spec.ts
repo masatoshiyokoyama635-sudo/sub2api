@@ -1,3 +1,4 @@
+import { createPinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'

@@ -43,14 +43,13 @@ describe('settings feature search', () => {
         expect(anchors.has(id.value.content)).toBe(false)
         anchors.set(id.value.content, tab)
       }
+      if (node.tag === 'SmartOpsSidebarSettings') {
+        const childRoot = parse(smartOpsSource).descriptor.template!.ast!
+        for (const child of childRoot.children) visit(child, tab)
+      }
       for (const child of node.children) visit(child, tab)
     }
-    // v2.19.6 把「智能运维侧栏」搬进子组件，锚点仍在 DOM 里，解析源也要覆盖子组件。
-    const roots: Array<{ root: Node, tab: string }> = [
-      { root, tab: '' },
-      { root: parse(smartOpsSource).descriptor.template!.ast! as unknown as Node, tab: 'features' },
-    ]
-    for (const entry of roots) for (const child of entry.root.children) visit(child, entry.tab)
+    for (const child of root.children) visit(child)
     expect(anchors.size).toBe(SETTINGS_SECTIONS.length)
     for (const section of SETTINGS_SECTIONS) expect(anchors.get(`settings-section-${section.id}`), section.id).toBe(section.tab)
   })

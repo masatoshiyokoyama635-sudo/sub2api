@@ -1083,7 +1083,7 @@ describe('EditAccountModal Grok OAuth upstream config', () => {
     expect((wrapper.get('input[placeholder="admin.accounts.actualModel"]').element as HTMLInputElement).value).toBe('grok-4.7')
   })
 
-  it('persists the edited oauth base URL and appended whitelist without diagnostics', async () => {
+  it('persists the edited oauth base URL and reconciled whitelist without diagnostics', async () => {
     const account = buildGrokOAuthAccount({
       base_url: 'https://my-relay.example.com',
       model_mapping: { 'keep-local': 'keep-local' }

@@ -324,8 +324,6 @@ describe('admin AccountsView — 账号行展示', () => {
     const wrapper = mountViewWithRow()
     await flushPromises()
 
-    // v2.18.1 在页头新增了「管理上游渠道」链接（/admin/upstream-channels），
-    // 这里只统计账号名称对应的外链。
     const links = wrapper.findAll('a[target="_blank"]')
     expect(links).toHaveLength(1)
     const [link] = links

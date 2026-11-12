@@ -1,3 +1,4 @@
+import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { readFileSync } from 'node:fs'
@@ -52,6 +53,8 @@ function riskSnapshot(): IPRiskSnapshot {
 }
 let wrapper: ReturnType<typeof mount> | undefined
 async function open(url: string, locale: 'en' | 'zh' = 'en') {
+  wrapper?.unmount()
+  wrapper = undefined
   i18n.global.setLocaleMessage(locale, locale === 'en' ? en : zh)
   i18n.global.locale.value = locale
   await router.push(url)
