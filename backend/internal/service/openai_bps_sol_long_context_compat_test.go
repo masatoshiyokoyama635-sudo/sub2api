@@ -37,14 +37,11 @@ func TestExcelBPSGPT61SolAttemptBillingCompatibility(t *testing.T) {
 						result.BillingModel = "gpt-6.1-sol"
 						wantInput, wantOutput, wantWrite, wantRead := 0.0, 0.0, 0.0, 0.0
 						wantLong := false
-						// v2.17.7：官方长上下文阶梯只豁免 OpenAI 订阅凭据（OAuth / Setup Token），
-						// 且以整条结果计入的输入 token 不超过 500,000 为前提；API Key 仍按 272,000
-						// 价卡门槛。豁免是结果级判断，附加费仍按每个 attempt 自身的 token 判断。
-						totalInput := 0
-						for _, n := range attempts {
-							totalInput += n
-						}
-						exempt := model.exempt && accountType != AccountTypeAPIKey && totalInput <= 500_000
+						// v2.23.0：官方长上下文阶梯豁免 OpenAI 订阅凭据（OAuth / Setup Token）上的
+						// gpt-6.2 Sol/Astra 与 gpt-6.1 Sol/Terra，并取消了旧版 500,000 输入上限；
+						// API Key 仍按 272,000 价卡门槛。豁免是结果级判断，附加费仍按每个 attempt
+						// 自身的 token 判断。
+						exempt := model.exempt && accountType != AccountTypeAPIKey
 						for _, n := range attempts {
 							inputFactor, outputFactor := 1.0, 1.0
 							if !exempt && n > 272000 {
