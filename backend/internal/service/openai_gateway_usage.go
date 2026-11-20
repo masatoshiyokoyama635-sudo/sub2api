@@ -168,7 +168,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if s.regionalMetering != nil {
 		return errors.New("legacy billing disabled for metered request")
 	}
-	if result.UsageUnavailable {
+	if result.UsageUnavailable && !(result.ImageCount > 0 && input.APIKey != nil && imageMinimumCharge(input.APIKey.Group, input.OriginalModel, result.Model) > 0) {
 		return errors.New("upstream usage unavailable; token usage was not recorded and request was not billed")
 	}
 	if s.rateLimitService != nil && input.Account != nil && input.Account.Platform == PlatformOpenAI {
@@ -230,39 +230,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	var cost *CostBreakdown
 	// Use the rewrite captured during forwarding, never current key settings:
 	// skipped endpoints and policy changes after admission retain their price.
-	requestedBillingModel := input.OriginalModel
-	if input.APIKeyMappedModel != "" {
-		requestedBillingModel = input.APIKeyMappedModel
-	}
-	channelBillingModel := input.ChannelMappedModel
-	if !input.ChannelMappingApplied && channelBillingModel == input.OriginalModel {
-		// An unchanged channel field is the audit alias, not an explicit price
-		// override. Do not resurrect its price when the key target is unpriced.
-		channelBillingModel = requestedBillingModel
-	}
-	resultBillingModel := result.Model
-	if !input.ChannelMappingApplied && result.Model == input.OriginalModel {
-		resultBillingModel = requestedBillingModel
-	}
-	billingModel := forwardResultBillingModel(resultBillingModel, result.UpstreamModel)
-	if result.BillingModel != "" {
-		billingModel = strings.TrimSpace(result.BillingModel)
-	}
-	if input.BillingModelSource == BillingModelSourceChannelMapped && input.ChannelMappedModel != "" &&
-		((input.APIKeyMappedModel != "" && input.ChannelMappingApplied) || input.ChannelMappedModel != input.OriginalModel) {
-		billingModel = input.ChannelMappedModel
-	}
-	if input.BillingModelSource == BillingModelSourceRequested && input.OriginalModel != "" {
-		billingModel = requestedBillingModel
-	}
-	billingModels := usageBillingModelCandidates(
-		billingModel,
-		result.BillingModel,
-		channelBillingModel,
-		requestedBillingModel,
-		result.UpstreamModel,
-		resultBillingModel,
-	)
+	requestedBillingModel, billingModel, billingModels := openAIUsageBillingModels(result, input.ChannelUsageFields)
 	billingModels = s.filterCNProviderBillingModelCandidates(ctx, account, apiKey, billingModels)
 	serviceTier := ""
 	if result.ServiceTier != nil {
@@ -470,7 +438,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		if result.MiniMaxH3BaseCost != nil {
 			usageLog.VideoResolution = optionalTrimmedStringPtr(result.VideoResolution)
 		}
-		videoDurationSeconds := NormalizeVideoBillingDurationSecondsOrDefault(result.VideoDurationSeconds)
+		videoDurationSeconds := result.VideoBillingDuration()
 		usageLog.VideoDurationSeconds = &videoDurationSeconds
 	}
 	if cost != nil && result.HeaderTimeoutRetries > 0 {
@@ -484,6 +452,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			customerCostDetails.Multiplier *= factor
 			customerCostDetails.ActualCost *= factor
 		}
+	}
+	if details := applyImageMinimumCharge(cost, result.ImageCount, result.HeaderTimeoutRetries, imageMinimumCharge(apiKey.Group, requestedBillingModel, billingModel), customerCostDetails); details != nil {
+		usageLog.CustomerCostDetails = details
 	}
 	if cost != nil {
 		usageLog.InputCost = cost.InputCost
@@ -687,6 +658,12 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 		// their token path; the switch cannot replace text usage with image fees.
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil || resolved.Mode != BillingModeToken {
 			return s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier), nil
+		}
+	}
+
+	if result != nil && result.ImageCount <= 0 {
+		if p := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); p != nil && p.Mode == BillingModeImage {
+			return &CostBreakdown{BillingMode: string(BillingModeImage)}, nil
 		}
 	}
 
@@ -952,7 +929,7 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 		videoCount = 1
 	}
 	resolution := NormalizeVideoBillingResolutionOrDefault(result.VideoResolution)
-	durationSeconds := NormalizeVideoBillingDurationSecondsOrDefault(result.VideoDurationSeconds)
+	durationSeconds := result.VideoBillingDuration()
 	resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey)
 	if resolved != nil && resolved.Source == PricingSourceGroup && resolved.Mode == BillingModeVideo {
 		gid := apiKey.Group.ID
@@ -968,13 +945,13 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 	}
 	groupConfig := videoPriceConfigFromAPIKey(apiKey)
 	if apiKeyHasConfiguredVideoPrice(apiKey, billingModel, resolution) {
-		return s.billingService.CalculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
+		return s.billingService.calculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
 	}
 	if refreshed := s.apiKeyWithFreshGroupMediaPricing(ctx, apiKey); refreshed != apiKey {
 		apiKey = refreshed
 		groupConfig = videoPriceConfigFromAPIKey(apiKey)
 		if apiKeyHasConfiguredVideoPrice(apiKey, billingModel, resolution) {
-			return s.billingService.CalculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
+			return s.billingService.calculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
 		}
 	}
 	if resolved != nil && resolved.Source == PricingSourceChannel &&
@@ -1005,7 +982,7 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 		logger.LegacyPrintf("service.openai_gateway", "Calculate video channel cost failed: %v", err)
 	}
 
-	return s.billingService.CalculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
+	return s.billingService.calculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
 }
 
 func (s *OpenAIGatewayService) apiKeyWithFreshGroupMediaPricing(ctx context.Context, apiKey *APIKey) *APIKey {

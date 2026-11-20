@@ -53,7 +53,9 @@ func TestExcelBPSRepairBillingKeepsRequestPriceOnce(t *testing.T) {
 	logs := &openAIRecordUsageLogRepoStub{inserted: true}
 	svc := newOpenAIRecordUsageServiceForTest(logs, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
 	svc.resolver = newOpenAIImageChannelPricingResolverForTest(t, 1, "gpt-5.4", 0.75)
-	result := &OpenAIForwardResult{RequestID: "bps-flat", Model: "gpt-5.4", UpstreamEndpoint: "/basispoints/api/responses", Usage: OpenAIUsage{InputTokens: 280000, OutputTokens: 2000}, BasispointsUsageAttempts: []OpenAIUsage{{InputTokens: 140000, OutputTokens: 1000}, {InputTokens: 140000, OutputTokens: 1000}}}
+	// v2.23.1: 图片定价渠道在 ImageCount<=0 时不再回落到按次/按 token 计费。
+	// 这里的修复请求必须带计费图片数，才能验证「多次 attempt 只收一次请求费」。
+	result := &OpenAIForwardResult{RequestID: "bps-flat", Model: "gpt-5.4", UpstreamEndpoint: "/basispoints/api/responses", ImageCount: 1, Usage: OpenAIUsage{InputTokens: 280000, OutputTokens: 2000}, BasispointsUsageAttempts: []OpenAIUsage{{InputTokens: 140000, OutputTokens: 1000}, {InputTokens: 140000, OutputTokens: 1000}}}
 	cost, err := svc.calculateOpenAIRecordUsageCost(context.Background(), result, &APIKey{Group: &Group{ID: 1}}, []string{"gpt-5.4"}, 1, 1, 1, 1, UsageTokens{InputTokens: 280000, OutputTokens: 2000}, "", nil, false, time.Time{})
 	require.NoError(t, err)
 	require.InDelta(t, 0.75, cost.TotalCost, 1e-12, "internal repairs must not multiply request fees")
